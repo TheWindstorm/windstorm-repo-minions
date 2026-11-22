@@ -582,6 +582,34 @@
    "issue": 56,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R42",
+   "seen": "2026-11-22, a stock virtual machine: look said a tag-push release job could move here, while move left it as a publishing job.",
+   "promise": "look and move judge each job by the same rules, in the same words.",
+   "codon": "G1.15",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 60,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R43",
+   "seen": "2026-11-22, recording G3's answers: the scrubber replaced GitHub's merge committer name everywhere, ignoring case, and turned .github/workflows into a made-up path.",
+   "promise": "Scrubbing replaces names only in name fields, never inside paths.",
+   "codon": "G9.5",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 61,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
