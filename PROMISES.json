@@ -610,6 +610,20 @@
    "issue": 61,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R44",
+   "seen": "2026-11-22: G1.4's test was moved under a helper after its return, so the runner never collected it, and the plan gate still passed: it matched the test's name as text.",
+   "promise": "The gate counts only tests the runner collects and runs to a pass.",
+   "codon": "G9.6",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 63,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
