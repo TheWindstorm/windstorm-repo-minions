@@ -372,6 +372,48 @@
    "issue": 35,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R27",
+   "seen": "2026-11-22, a stock Ubuntu 24.04 virtual machine, runner 2.338.2 as a system service: systemctl stop during a job returned in 11 s and the job was cancelled; the unit's 5-minute stop timeout did not protect it.",
+   "promise": "Nothing stops, restarts or updates the service, or restarts the computer on the skill's say-so, while a job runs: drain first, stop only after both sides read idle.",
+   "codon": "G4.6",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 38,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R28",
+   "seen": "2026-11-22, the same machine: the unit the runner's own svc.sh writes has Restart=no and After=network-online.target without Wants=.",
+   "promise": "Our drop-in adds Wants=network-online.target, Restart=on-failure and our slice, read back after install.",
+   "codon": "G2.9",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 39,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R29",
+   "seen": "2026-11-22, the same machine: a job cut by a service stop or a reboot concluded 'failure' on GitHub (step cancelled, 'The operation was canceled.'), so it looks like the person's test failed.",
+   "promise": "A job cut by a stop or a boot is named as cut, never counted as a failing test, and offered again once.",
+   "codon": "G5.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.2.0",
+   "ship_in": "0.2.0",
+   "test": "",
+   "proven": "",
+   "issue": 40,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
