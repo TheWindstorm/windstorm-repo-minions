@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.5 · 2026-11-22 · The Windstorm**
+**Plan version 1.6 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -155,7 +155,8 @@ what GitHub's own page says on the day it is read, and tells the person when tha
 
 - **One skill, one tool.** `skills/repo-minions/SKILL.md` tells the agent what to run, in what order, what to say,
   and which steps are the person's. `scripts/minions.py` does the work and prints short, stable lines
-  (`ok ...`, `warn ...`, `stop ...`, `need you ...`) that the agent reads and explains.
+  (`ok ...`, `warn ...`, `stop ...`, `need you ...`, `waiting ...`) that the agent reads and explains; the exit codes
+  are G8.3's table.
 - **State** lives in one folder per minion owned by the person's account: `~/.minions/` (0700), holding
   `minions.json` (which repositories, which runners, which labels, the last reads), `journal.log` (each step written
   before it runs, INV8) and nothing secret. The runners themselves live in the runner user's home.
@@ -225,12 +226,13 @@ nothing.
 | Codon | Claim | Test |
 |---|---|---|
 | G4.1 | One job at a time per runner. More parallel jobs means more runners, each with its own folders, only when G1.6's survey allows. | planned: test_G4_1_one_job_at_a_time_per_runner |
-| G4.2 | The runner's service runs at low priority and inside a CPU and memory limit set from the survey (Linux: nice, CPU weight, CPU quota, memory high and max; macOS: what Part 7 C8 finds possible). | planned: test_G4_2_the_runner_runs_low_and_capped |
+| G4.2 | The runner's service runs at low priority and inside a CPU and memory limit set from the survey (Linux: nice, CPU weight, CPU quota, memory high and max; macOS: what Part 7 C8 finds possible). Until measured values exist, the limits are fixed defaults: half the processors (never less than one), memory high at 50 % and memory max at 60 % of the computer's memory. This row is not built while the limits are not set from the survey. | planned: test_G4_2_the_runner_runs_low_and_capped |
 | G4.3 | A disk budget: work folders are cleaned after each job and old tool caches pruned on a schedule; below a free-space floor the runners are held (G5.5) before the disk fills. | planned: test_G4_3_the_disk_never_fills_from_jobs |
 | G4.4 | The computer does not sleep while a job runs (Linux: an inhibitor while a job process exists; macOS: an assertion for the same time). It may sleep when idle; the skill tells the person that a sleeping minion takes no job. | planned: test_G4_4_no_sleep_during_a_job |
 | G4.5 | The runner keeps GitHub's own self-update on (GitHub refuses runners that are too old); `doctor` reads and reports the runner version. | planned: test_G4_5_runner_self_update_stays_on_and_is_reported |
 | G4.6 | A stop of the runner's service cancels its running job within seconds, whatever the stop timeout (seen, Part 7 C7). So nothing ever stops, restarts or updates the service, or restarts the computer on the skill's say-so, while a job runs: the drain (G5.6) comes first, every time, and the stop only after both sides read idle. | planned: test_G4_6_the_service_is_stopped_only_after_a_drain |
 | G4.7 | Every stop of a runner is SIGTERM to its listener (a runner started in the background ignores SIGINT), followed by a read-back that no process of that runner is left, before anything may start it again; two copies of one runner are never left running (Part 7 C7, seen). | planned: test_G4_7_a_stop_is_sigterm_and_read_back_never_two_copies |
+| G4.8 | The limits have floors: never less than one processor; and when the memory share is under 2 GiB, `look` says before `setup` that a job will likely be killed by the limit, and `setup` stops instead of installing. Why 2 GiB: one idle runner takes about 145 MB (Part 7 C7), but a job's build, tests and tools take far more; the number is checked when G4.2 is measured. | planned: test_G4_8_limits_have_floors_and_too_little_is_said_before_setup |
 
 ### G5 Watch and hold
 
@@ -249,6 +251,7 @@ nothing.
 | G5.11 | Before a planned restart (a system update, a reboot, a shutdown): `drain --restart` holds every runner on the computer, waits for the running job, and ends with "online and idle: safe to restart now" or names what still runs. The hold lifts by itself once the computer has restarted and both sides read the runner online. The skill tells the agent to run it before any restart it asks for, and tells the person to ask for it before theirs: a restart cancels the running job. | planned: test_G5_11_drain_before_a_planned_restart_lifts_after_the_boot |
 | G5.12 | GitHub removes a runner it has not seen connect for more than 14 days (Part 7 C5). When `watch` or `status` reads that a runner of ours is gone on GitHub's side while its service is there (a laptop away for two weeks, a computer switched off), it holds the service from restarting in a loop, says so plainly, and `setup` again re-registers it with the person's login, keeping its folders and labels. | planned: test_G5_12_a_runner_github_removed_is_named_and_registered_again |
 | G5.13 | A hold nobody notices looks like a broken project. When a job of the repository has waited longer than a threshold (default 30 minutes) while our runners are held, offline or asleep, `status` prints `warn` first: which job, how long, which hold, and that GitHub cancels it after 24 hours. | planned: test_G5_13_a_job_waiting_behind_our_hold_is_warned |
+| G5.14 | A job killed by our own memory limit (the kernel stopping a process inside `minions.slice`) shows on GitHub as a failed test. `status` names it as "stopped by this computer's memory limit", with the job and the time, never as the person's code failing, and says the one way to change the limit (G7.8). | planned: test_G5_14_a_job_killed_by_our_limit_is_named_as_such |
 
 ### G6 Remove
 
@@ -271,6 +274,7 @@ nothing.
 | G7.5 | The skill never says required checks or branch protection hold merges unless the tool read that the repository has them. | planned: test_G7_5_merge_rules_are_said_only_when_read |
 | G7.6 | Version 0.1.0 says, in the skill and at `setup`, that it serves one repository per computer and that more come in the next version (G12). | planned: test_G7_6_version_0_1_says_one_repository_and_more_next |
 | G7.7 | Before `setup` the person hears: "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that waited 24 hours." | planned: test_G7_7_waiting_checks_are_said_before_setup |
+| G7.8 | Before `setup` the person hears the limits in plain words ("at most half of this computer's processors and 60 % of its memory", with the real numbers) and the one way to change them: `setup --limits <processors>,<memory %>`. | planned: test_G7_8_the_limits_are_said_in_plain_words_before_setup |
 
 ### G8 The skill and its commands
 
@@ -278,9 +282,12 @@ nothing.
 |---|---|---|
 | G8.1 | `skills/repo-minions/SKILL.md` follows the Agent Skills format and passes `gh skill publish --dry-run`. | planned: test_G8_1_the_skill_file_passes_the_validator |
 | G8.2 | The skill's order is fixed: look, tell, setup, move, verify, status. It names each step that is the person's (INV7) and what to say there. | planned: test_G8_2_the_skill_names_the_order_and_the_persons_steps |
-| G8.3 | The tool's commands are exactly: `look`, `setup`, `move`, `lint`, `status`, `watch`, `hold`, `resume`, `drain`, `doctor`, `remove`, `self-update`. Each prints `ok`, `warn`, `stop` or `need you` lines and exits non-zero on `stop`. | planned: test_G8_3_commands_and_line_kinds_are_exactly_these |
+| G8.3 | The tool's commands are exactly: `look`, `setup`, `move`, `lint`, `status`, `watch`, `hold`, `resume`, `drain`, `doctor`, `remove`, `self-update`. Each prints lines of five kinds only: `ok`, `warn`, `stop`, `need you`, `waiting`. The exit code is the worst line's, in this order, and these are every way a command can end: **0** every line `ok` or `warn`; **2** a `stop` line; **3** a `need you` line and no `stop`; **4** a `waiting` line and neither of those (G8.7); **1** the tool itself failed (an error it did not expect: it prints a `stop` line naming the error and the journal's last step); **64** the command was typed wrong (unknown command or option: never 2, which is `stop`); **130** the person interrupted it (the journal says which step it was on). | planned: test_G8_3_commands_and_line_kinds_are_exactly_these |
 | G8.4 | `doctor` checks every promise of G2 and G4 on the computer as it is now and finishes or undoes a half-done step (INV8). | planned: test_G8_4_doctor_checks_install_and_finishes_half_done_steps |
 | G8.5 | Every `systemctl` and `journalctl` call of the tool passes `--no-pager`, so no call waits on a pager when run from a real terminal. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G8_5_no_system_call_waits_on_a_pager |
+| G8.6 | A command never hangs on `waiting`: each wait carries its own deadline, said in the line, and the command ends when it passes. | planned: test_G8_6_no_command_hangs_on_waiting |
+| G8.7 | A command that ends on `waiting` exits 4, and its last line says what it waits for and which command to run next. | planned: test_G8_7_waiting_exits_4_and_names_what_and_what_next |
+| G8.8 | The skill tells the agent that `waiting` is not done, and what to tell the person meanwhile: what is being waited for, and that nothing is broken. | planned: test_G8_8_the_skill_says_waiting_is_not_done |
 
 ### G9 Tests, CI and the promise gate
 
@@ -375,7 +382,7 @@ the branch deleted, nothing billable and nothing left. That is G1.4's start test
 
 | Version | What | Accepted when |
 |---|---|---|
-| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.7, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.13, G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
+| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.7, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.13, G5.14, G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
 | 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.7, G5.8, G5.10, G11 on macOS, G12 (many repositories on one computer). | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
 | 0.3.0 | The opt-in offline fallback (G5.9), self-update (G10), Windows if Part 11 Q4 says yes. | As above, on each OS it claims. |
 
