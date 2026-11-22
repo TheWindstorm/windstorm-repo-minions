@@ -156,11 +156,11 @@
    "codon": "G5.7",
    "owner": "maintainer",
    "first_ship_in": "0.2.0",
-   "ship_in": "0.2.0",
+   "ship_in": "0.1.0",
    "test": "",
    "proven": "",
    "issue": 17,
-   "moved_why": "",
+   "moved_why": "Moved into 0.1.0 by the milestone owner's word, 2026-11-22: 0.1.0 runs on a person's own laptop, where a closed lid or a restart during a job is the likeliest thing in week one, and GitHub would call it a failed test. The naming path is shared with G5.14.",
    "moved_by_person": ""
   },
   {
@@ -408,11 +408,11 @@
    "codon": "G5.7",
    "owner": "maintainer",
    "first_ship_in": "0.2.0",
-   "ship_in": "0.2.0",
+   "ship_in": "0.1.0",
    "test": "",
    "proven": "",
    "issue": 40,
-   "moved_why": "",
+   "moved_why": "Moved into 0.1.0 by the milestone owner's word, 2026-11-22: 0.1.0 runs on a person's own laptop, where a closed lid or a restart during a job is the likeliest thing in week one, and GitHub would call it a failed test. The naming path is shared with G5.14.",
    "moved_by_person": ""
   },
   {

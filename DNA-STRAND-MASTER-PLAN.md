@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.6 · 2026-11-22 · The Windstorm**
+**Plan version 1.7 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -232,7 +232,7 @@ nothing.
 | G4.5 | The runner keeps GitHub's own self-update on (GitHub refuses runners that are too old); `doctor` reads and reports the runner version. | planned: test_G4_5_runner_self_update_stays_on_and_is_reported |
 | G4.6 | A stop of the runner's service cancels its running job within seconds, whatever the stop timeout (seen, Part 7 C7). So nothing ever stops, restarts or updates the service, or restarts the computer on the skill's say-so, while a job runs: the drain (G5.6) comes first, every time, and the stop only after both sides read idle. | planned: test_G4_6_the_service_is_stopped_only_after_a_drain |
 | G4.7 | Every stop of a runner is SIGTERM to its listener (a runner started in the background ignores SIGINT), followed by a read-back that no process of that runner is left, before anything may start it again; two copies of one runner are never left running (Part 7 C7, seen). | planned: test_G4_7_a_stop_is_sigterm_and_read_back_never_two_copies |
-| G4.8 | The limits have floors: never less than one processor; and when the memory share is under 2 GiB, `look` says before `setup` that a job will likely be killed by the limit, and `setup` stops instead of installing. Why 2 GiB: one idle runner takes about 145 MB (Part 7 C7), but a job's build, tests and tools take far more; the number is checked when G4.2 is measured. | planned: test_G4_8_limits_have_floors_and_too_little_is_said_before_setup |
+| G4.8 | The limits have floors: never less than one processor; and when the memory max (the hard limit, where the kernel kills a job; not the high mark) would be under 2 GiB, `look` says before `setup` that a job will likely be killed by the limit, and `setup` stops instead of installing. The stop line names the way out, `setup --limits <processors>,<memory %>` with a share that reaches 2 GiB, and what it costs: while a job runs, that much less memory is left for the person's own work, so the computer may slow down or other programs may be closed by the system. Why 2 GiB: one idle runner takes about 145 MB (Part 7 C7), but a job's build, tests and tools take far more; the number is checked when G4.2 is measured. | planned: test_G4_8_limits_have_floors_and_too_little_is_said_before_setup |
 
 ### G5 Watch and hold
 
@@ -382,8 +382,8 @@ the branch deleted, nothing billable and nothing left. That is G1.4's start test
 
 | Version | What | Accepted when |
 |---|---|---|
-| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.7, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.13, G5.14, G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
-| 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.7, G5.8, G5.10, G11 on macOS, G12 (many repositories on one computer). | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
+| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.7, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.7, G5.13, G5.14, G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
+| 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.8, G5.10, G11 on macOS, G12 (many repositories on one computer). | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
 | 0.3.0 | The opt-in offline fallback (G5.9), self-update (G10), Windows if Part 11 Q4 says yes. | As above, on each OS it claims. |
 
 ---
