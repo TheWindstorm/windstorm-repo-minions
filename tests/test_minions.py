@@ -796,6 +796,326 @@ class G2(unittest.TestCase):
         self.assertIn("no job asking for `self-hosted` can land on it", lines[-1])
 
 
+# ------------------------------------------------------------------------------------------------------------ G3
+
+CI_YML = """name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest   # the person's own comment
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest -v
+  build:
+    runs-on:
+      - ubuntu-latest-8-cores
+    steps:
+      - run: make
+  huge:
+    runs-on: ubuntu-latest-32-cores
+    steps:
+      - run: make all
+  mac:
+    runs-on: macos-latest
+    steps:
+      - run: xcodebuild
+  cuda:
+    runs-on: [ubuntu-latest, gpu]
+    steps:
+      - run: nvidia-smi
+  matrix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: echo hi
+  db:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+    steps:
+      - run: psql --version
+"""
+MAC_YML = "name: mac only\non: workflow_dispatch\njobs:\n  mac:\n    runs-on: macos-latest\n    steps:\n      - run: sw_vers\n"
+RELEASE_YML = """name: release
+on:
+  push:
+    tags:
+      - 'v*'
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo release
+"""
+DEPLOY_YML = """name: deploy
+on: [push, workflow_dispatch]
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: ./deploy.sh
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm publish
+  pypi:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./upload.sh
+        env:
+          TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./lint.sh
+        env:
+          GH: ${{ secrets.GITHUB_TOKEN }}
+"""
+OURS = "minions-box-1"
+
+
+class MoveGH(StandIn):
+    """GitHub for `move`: the workflow files, our runner, the Git Data API, pull requests and runs, with every
+    write kept in `writes` as (method, path, body)."""
+
+    def __init__(self, files, runner_status="online", pr_state="open", merged_at=None, runs=None, jobs=None):
+        super().__init__([])
+        self.files, self.writes = dict(files), []
+        self.pr = {"number": 12, "state": pr_state, "merged_at": merged_at,
+                   "html_url": f"https://github.com/{REPO}/pull/12"}
+        self.runs, self.jobs = runs if runs is not None else [], jobs or {}
+        self.runner_status = runner_status
+
+    def api(self, method, path, body=None):
+        self.calls.append((method, path))
+        if method != "GET":
+            self.writes.append((method, path, body))
+        base = f"repos/{REPO}"
+        if (method, path) == ("GET", base):
+            return 200, {"default_branch": "main", "private": True, "visibility": "private"}
+        if method == "GET" and path.split("?")[0] == f"{base}/actions/runners":
+            return 200, {"total_count": 1, "runners": [{"id": 7, "name": OURS, "status": self.runner_status,
+                                                        "busy": False, "os": "unknown",
+                                                        "labels": [{"name": "minions"}, {"name": "minions-medium"}]}]}
+        if method == "GET" and path.split("?")[0] == f"{base}/contents/.github/workflows":
+            return 200, [{"name": p.rsplit("/", 1)[1], "path": p} for p in sorted(self.files)]
+        if method == "GET" and path.startswith(f"{base}/contents/"):
+            p = path[len(f"{base}/contents/"):].split("?")[0]
+            return 200, {"content": M.base64.b64encode(self.files[p].encode()).decode()}
+        if (method, path) == ("GET", f"{base}/git/ref/heads/main"):
+            return 200, {"object": {"sha": "tip0"}}
+        if (method, path) == ("GET", f"{base}/git/commits/tip0"):
+            return 200, {"tree": {"sha": "tree0"}}
+        if (method, path) == ("POST", f"{base}/git/blobs"):
+            return 201, {"sha": f"blob{len(self.writes)}"}
+        if (method, path) == ("POST", f"{base}/git/trees"):
+            return 201, {"sha": "tree1"}
+        if (method, path) == ("POST", f"{base}/git/commits"):
+            return 201, {"sha": "commit1"}
+        if (method, path) == ("POST", f"{base}/git/refs"):
+            return 201, {"ref": body["ref"]}
+        if (method, path) == ("POST", f"{base}/pulls"):
+            return 201, {"number": 12, "html_url": self.pr["html_url"]}
+        if (method, path) == ("GET", f"{base}/pulls/12"):
+            return 200, self.pr
+        if method == "GET" and "/actions/workflows/" in path and "/runs" in path:
+            wf = path.split("/actions/workflows/")[1].split("/")[0]
+            return 200, {"workflow_runs": [r for r in self.runs if r["wf"] == wf]}
+        if method == "POST" and path.endswith("/dispatches"):
+            wf = path.split("/actions/workflows/")[1].split("/")[0]
+            self.runs.append({"id": 99, "wf": wf, "status": "completed", "created_at": "2026-11-22T23:59:00Z"})
+            return 200, {"workflow_run_id": 99}
+        if method == "GET" and path.endswith("/jobs"):
+            rid = int(path.split("/runs/")[1].split("/")[0])
+            return 200, {"jobs": self.jobs.get(rid, [])}
+        self.misses.append((method, path))
+        return 404, {"message": "Not Found"}
+
+    def blobs(self):
+        return [b["content"] for m, p, b in self.writes if p.endswith("/git/blobs")]
+
+
+def move_host(runner=True):
+    host = linux_host()
+    fresh_look(host)
+    if runner:
+        d = M.load_state(host)
+        d["runners"] = {REPO: {"name": OURS, "labels": ["minions", "minions-medium"], "unit": UNIT}}
+        M.save_state(host, d)
+    return host
+
+
+def run_move(gh, host, **kw):
+    out = io.StringIO()
+    code = M.move(REPO, host=host, gh=gh, out=out, **kw)
+    return code, out.getvalue().splitlines()
+
+
+def pr_body_of(gh):
+    return next(b["body"] for m, p, b in gh.writes if p.endswith("/pulls"))
+
+
+class G3(unittest.TestCase):
+    FILES = {".github/workflows/ci.yml": CI_YML, ".github/workflows/mac.yml": MAC_YML,
+             ".github/workflows/release.yml": RELEASE_YML, ".github/workflows/deploy.yml": DEPLOY_YML}
+
+    def test_G3_1_move_opens_a_pull_request_and_never_merges(self):
+        host, gh = move_host(), MoveGH(self.FILES)
+        code, lines = run_move(gh, host)
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        self.assertTrue(lines[-1].startswith("need you: read and merge pull request #12 yourself"), lines)
+        self.assertIn("never merges", lines[-1])
+        # one branch, one commit on the tip, one pull request; never a merge, never a write to the default branch
+        kinds = [p.rsplit("/", 1)[-1] if not p.endswith("/git/refs") else "refs" for m, p, b in gh.writes]
+        self.assertEqual([k for k in kinds if k != "blobs"], ["trees", "commits", "refs", "pulls"], gh.writes)
+        self.assertFalse([w for w in gh.writes if "merge" in w[1] or w[0] in ("PUT", "PATCH")])
+        ref = next(b for m, p, b in gh.writes if p.endswith("/git/refs"))
+        self.assertRegex(ref["ref"], r"^refs/heads/minions-move-[0-9a-f]{8}$")
+        commit = next(b for m, p, b in gh.writes if p.endswith("/git/commits"))
+        self.assertEqual(commit["parents"], ["tip0"])
+        # only runs-on lines change; comments and layout stay; never self-hosted
+        (new,) = [c for c in gh.blobs() if c.startswith("name: ci")]
+        old_l, new_l = CI_YML.splitlines(), new.splitlines()
+        diff = [(a, b) for a, b in zip(old_l, new_l) if a != b]
+        self.assertEqual(diff[0], ("    runs-on: ubuntu-latest   # the person's own comment",
+                                   "    runs-on: [minions]   # the person's own comment"))
+        self.assertIn("    runs-on: [minions, minions-medium]", new_l)  # the 8-core job needs the size label
+        self.assertNotIn("      - ubuntu-latest-8-cores", new_l)
+        self.assertEqual(len(old_l) - len(new_l), 1)  # the list form became one line; nothing else moved
+        self.assertTrue(all(a == b or "runs-on:" in a for a, b in zip(old_l[:16], new_l[:16])))
+        for c in gh.blobs():
+            self.assertNotIn("self-hosted", c)
+        # a second move while that pull request is open opens no second one
+        gh2 = MoveGH(self.FILES)
+        code, lines = run_move(gh2, host)
+        self.assertEqual(code, M.EXIT_NEED)
+        self.assertIn("still open", lines[-1])
+        self.assertFalse([w for w in gh2.writes if w[1].endswith("/pulls")])
+        # no runner of ours online, or no fresh look: stop, and nothing is written
+        for h, g, want in ((move_host(runner=False), MoveGH(self.FILES), "run `setup"),
+                           (move_host(), MoveGH(self.FILES, runner_status="offline"), "is offline")):
+            code, lines = run_move(g, h)
+            self.assertEqual(code, M.EXIT_STOP)
+            self.assertIn(want, lines[-1])
+            self.assertEqual(g.writes, [])
+        h = linux_host()
+        code, lines = run_move(MoveGH(self.FILES), h)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("no look of", lines[-1])
+
+    def test_G3_2_jobs_that_cannot_move_are_left_and_named(self):
+        host, gh = move_host(), MoveGH(self.FILES)
+        code, lines = run_move(gh, host)
+        body = pr_body_of(gh)
+        left = body.split("## Left as they are (they cannot run on this computer)")[1].split("##")[0]
+        for job, why in (("huge", "asks for 32 cores"), ("mac", "macos-latest"), ("cuda", "GPU"),
+                         ("matrix", "chosen when the job runs"), ("db", "containers")):
+            self.assertRegex(left, rf"job `{job}`: [^\n]*{re.escape(why)}", body)
+        (ci,) = [c for c in gh.blobs() if c.startswith("name: ci")]
+        for keep in ("    runs-on: ubuntu-latest-32-cores", "    runs-on: macos-latest", "    runs-on: [ubuntu-latest, gpu]",
+                     "    runs-on: ${{ matrix.os }}"):
+            self.assertIn(keep, ci.splitlines())
+        self.assertEqual(ci.count("runs-on: ubuntu-latest\n"), 1)  # the db job's line is as it was
+        # a file whose every job stays is not written at all
+        self.assertFalse([c for c in gh.blobs() if c.startswith("name: mac only")])
+        self.assertIn("job `mac`", body)
+        # nothing at all can move: no branch, no pull request
+        gh2 = MoveGH({".github/workflows/mac.yml": MAC_YML})
+        code, lines = run_move(gh2, move_host())
+        self.assertEqual(code, M.EXIT_OK)
+        self.assertIn("nothing was changed", lines[-1])
+        self.assertEqual(gh2.writes, [])
+
+    def test_G3_3_publishing_jobs_are_never_moved_silently(self):
+        host, gh = move_host(), MoveGH(self.FILES)
+        run_move(gh, host)
+        body = pr_body_of(gh)
+        pub = body.split("## Left as they are (they publish or deploy)")[1].split("## ")[0]
+        for job, why in (("publish", "starts on a pushed tag"), ("site", "deploys to an environment"),
+                         ("npm", "npm publish"), ("pypi", "publishing secret (PYPI_API_TOKEN)")):
+            self.assertRegex(pub, rf"job `{job}`: [^\n]*{re.escape(why)}", body)
+        self.assertIn("--include-job", pub)
+        self.assertFalse([c for c in gh.blobs() if c.startswith("name: release")])
+        (dep,) = [c for c in gh.blobs() if c.startswith("name: deploy")]
+        self.assertEqual(dep.count("runs-on: [minions]"), 1)  # lint only: GITHUB_TOKEN is not a publishing secret
+        self.assertIn("  lint:\n    runs-on: [minions]\n", dep)
+        # the person's word for one job moves that job only
+        host, gh = move_host(), MoveGH(self.FILES)
+        run_move(gh, host, include=["release.yml:publish"])
+        (rel,) = [c for c in gh.blobs() if c.startswith("name: release")]
+        self.assertIn("  publish:\n    runs-on: [minions]\n", rel)
+        self.assertIn("with your word for this job", pr_body_of(gh))
+        (dep,) = [c for c in gh.blobs() if c.startswith("name: deploy")]
+        self.assertEqual(dep.count("runs-on: [minions]"), 1)
+
+    def test_G3_6_moved_is_said_only_after_a_real_job_ran(self):
+        files = {".github/workflows/ci.yml": CI_YML, ".github/workflows/lint.yml":
+                 "name: lint\non: [push, workflow_dispatch]\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n"
+                 "      - run: ./lint.sh\n"}
+        host, gh = move_host(), MoveGH(files)
+        run_move(gh, host)
+        merged = {p: next(c for c in gh.blobs() if c.splitlines()[0] == text.splitlines()[0]) for p, text in files.items()}
+        # not merged yet: need you, and nothing is called moved
+        code, lines = run_move(MoveGH(merged), host, verify=True)
+        self.assertEqual(code, M.EXIT_NEED)
+        self.assertIn("not merged yet", lines[-1])
+        self.assertFalse([x for x in lines if x.startswith("ok moved")])
+        job = lambda name, runner, labels, c="success": {"name": name, "runner_name": runner, "labels": labels,
+                                                          "conclusion": c, "html_url": "https://example.invalid/j"}
+        runs = [{"id": 5, "wf": "ci.yml", "status": "completed", "created_at": "2026-11-22T23:10:00Z"},
+                {"id": 4, "wf": "ci.yml", "status": "completed", "created_at": "2026-11-22T22:00:00Z"}]
+        jobs = {5: [job("Unit tests", OURS, ["minions"]), job("build", OURS, ["minions", "minions-medium"]),
+                    job("mac", "GitHub Actions 3", ["macos-latest"])],
+                4: [job("Unit tests", "GitHub Actions 1", ["ubuntu-latest"])],
+                99: [job("lint", OURS, ["minions"])]}
+        gh = MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=runs, jobs=jobs)
+        code, lines = run_move(gh, host, verify=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(f"ok moved: .github/workflows/ci.yml job test ran on {OURS} and succeeded (run 5)", lines)
+        self.assertIn(f"ok moved: every moved job of {REPO} ran on this computer", lines[-1])
+        # lint.yml had no run since the merge, every one of its jobs moved and it can be started by hand: started
+        self.assertIn(("POST", f"repos/{REPO}/actions/workflows/lint.yml/dispatches"), gh.calls)
+        # ci.yml has a job that stays on GitHub's machines: never started by the tool
+        self.assertNotIn(("POST", f"repos/{REPO}/actions/workflows/ci.yml/dispatches"), gh.calls)
+        # a moved job that ran on another runner is a stop
+        jobs2 = {**jobs, 5: [job("Unit tests", "GitHub Actions 2", ["ubuntu-latest"])]}
+        host2 = move_host()
+        d = M.load_state(host)
+        d["moves"][REPO].pop("verified", None)
+        M.save_state(host2, d)
+        code, lines = run_move(MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=list(runs),
+                                      jobs=jobs2), host2, verify=True)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertTrue([x for x in lines if x.startswith("stop ") and "did not move" in x], lines)
+        # no run yet of a workflow the tool may not start: waiting, exit 4, the deadline-free reason and what next
+        code, lines = run_move(MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=[],
+                                      jobs=jobs), host2, verify=True)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertTrue(lines[-1].startswith("waiting "), lines)
+        self.assertIn(f"`move {REPO} --verify`", lines[-1])
+        self.assertFalse([x for x in lines if x.startswith("ok moved: every")])
+        self.assertTrue([x for x in lines if x.startswith("waiting .github/workflows/ci.yml: no run since the merge")])
+        # a run still going at the deadline: the deadline is said, then waiting
+        slow = [{"id": 6, "wf": "ci.yml", "status": "in_progress", "created_at": "2026-11-22T23:10:00Z"},
+                {"id": 7, "wf": "lint.yml", "status": "queued", "created_at": "2026-11-22T23:10:00Z"}]
+        code, lines = run_move(MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=slow,
+                                      jobs=jobs), host2, verify=True, wait_s=30, poll_s=10)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertTrue([x for x in lines if re.search(r"until \d\d:\d\dZ at the latest", x)], lines)
+        self.assertTrue([x for x in lines if "still in_progress at the deadline" in x], lines)
+        self.assertIn("--verify", lines[-1])
+
+
 class Helpers(unittest.TestCase):
     def test_look_end_to_end_on_recorded_answers_reads_every_call_it_makes(self):
         gh = StandIn(load("look-recent-runs.jsonl"))

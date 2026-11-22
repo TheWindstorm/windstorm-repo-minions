@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Windstorm Repo Minions: the tool the skill's agent runs.
 
-Plan: DNA-STRAND-MASTER-PLAN.md. This version builds gene G1 (Look first) and gene G2 (Install, Linux with systemd).
+Plan: DNA-STRAND-MASTER-PLAN.md. This version builds gene G1 (Look first), gene G2 (Install, Linux with systemd) and
+the part of gene G3 (Move) due in 0.1.0.
 `look` reads and reports and changes nothing on the computer except its own record in ~/.minions/. Its one change on
 GitHub, the start test (G1.4), runs only with `--start-test` (the person's yes) and leaves nothing behind. `setup`
-installs one runner for one private repository (G2), only after a fresh, clean `look`.
+installs one runner for one private repository (G2), only after a fresh, clean `look`. `move` (G3) opens one pull
+request that changes only the `runs-on` lines of the jobs this computer can take, and never merges it; `move --verify`
+says "moved" only after a real run of each moved workflow finished on our runner.
 
 Output: one fact per line, each starting with `ok`, `warn`, `stop`, `need you` or (setup's last line, G2.10)
 `waiting`. Exit 0, or 2 after a `stop`, or 3 after a `need you` that blocks, or 4 after `waiting`.
@@ -842,18 +845,31 @@ def parse_labels(value: str) -> list[str]:
     return [v.strip("'\"")] if v else []
 
 
+PUBLISH_STEPS = (  # G3.3: a step that publishes or deploys, by what it runs or uses
+    (r"\bnpm\s+publish\b", "runs npm publish"),
+    (r"\b(?:twine\s+upload|poetry\s+publish|uv\s+publish|flit\s+publish)\b", "uploads a Python package"),
+    (r"\bdocker\s+(?:image\s+)?push\b", "pushes a container image"),
+    (r"\bgh\s+release\b", "makes a GitHub release"),
+    (r"\bcargo\s+publish\b|\bgem\s+push\b", "publishes a package"),
+    (r"uses:\s*[^@\s]*(?:deploy|publish|release|pages)[^@\s]*@", "uses a deploy or release action"),
+)
+PUBLISH_SECRET = re.compile(r"DEPLOY|PUBLISH|RELEASE|NPM|PYPI|DOCKER|REGISTRY|CARGO|GEM_HOST", re.I)
+
+
 def read_workflow(text: str) -> list[dict]:
-    """A small line reader for the parts of a workflow `look` needs, per job: its runs-on labels, setup actions,
-    sudo, container and services. Not a YAML parser: anything it cannot follow is reported as not read."""
+    """A small line reader for the parts of a workflow `look` and `move` need, per job: its runs-on labels and the
+    lines they sit on, setup actions, sudo, container and services, its name, environment, the secrets it names and
+    the steps that publish. Not a YAML parser: anything it cannot follow is reported as not read."""
     jobs: list[dict] = []
     lines = text.splitlines()
     in_jobs = False
-    jobs_indent = job_indent = None
+    job_indent = None
     job = None
     i = 0
     while i < len(lines):
         raw = lines[i]
         line = strip_comment(raw)
+        at = i
         i += 1
         if not line.strip():
             continue
@@ -862,7 +878,6 @@ def read_workflow(text: str) -> list[dict]:
         if indent == 0:
             in_jobs = body == "jobs:"
             job = None
-            jobs_indent = 0 if in_jobs else None
             job_indent = None
             continue
         if not in_jobs:
@@ -871,13 +886,26 @@ def read_workflow(text: str) -> list[dict]:
             job_indent = indent
         if indent == job_indent and re.match(r"^[A-Za-z0-9_-]+:\s*$", body):
             job = {"id": body[:-1], "runs_on": None, "setup": [], "sudo": False, "container": False,
-                   "services": False}
+                   "services": False, "name": None, "environment": False, "secrets": set(), "publishes": [],
+                   "runs_on_at": None, "key_indent": None}
             jobs.append(job)
             continue
         if job is None:
             continue
+        if job["key_indent"] is None and indent > job_indent:
+            job["key_indent"] = indent
+        top = indent == job["key_indent"]
+        job["secrets"] |= set(re.findall(r"secrets\.([A-Za-z0-9_]+)", line))
+        for pat, words in PUBLISH_STEPS:
+            if re.search(pat, line) and words not in job["publishes"]:
+                job["publishes"].append(words)
+        if top and re.match(r"^environment:", body):
+            job["environment"] = True
+        m = re.match(r"^name:\s*(.+)$", body)
+        if top and m:
+            job["name"] = m.group(1).strip().strip("'\"")
         m = re.match(r"^runs-on:\s*(.*)$", body)
-        if m:
+        if top and m:
             val = m.group(1).strip()
             if val == "":
                 labels = []
@@ -893,17 +921,59 @@ def read_workflow(text: str) -> list[dict]:
                 job["runs_on"] = "expression" if "${{" in val else "not read"
             else:
                 job["runs_on"] = parse_labels(val)
+            job["runs_on_at"] = (at, i)
             continue
         m = re.match(r"^-?\s*uses:\s*actions/(setup-[A-Za-z0-9_-]+)@", body)
         if m:
             job["setup"].append(m.group(1))
         if re.search(r"(^|[\s;&|(])sudo\s", body.lstrip("- ")):
             job["sudo"] = True
-        if re.match(r"^container:", body):
+        if top and re.match(r"^container:", body):
             job["container"] = True
-        if re.match(r"^services:", body):
+        if top and re.match(r"^services:", body):
             job["services"] = True
     return jobs
+
+
+def read_triggers(text: str) -> dict:
+    """The workflow's `on:` events, and whether a push of a tag starts it (G3.3)."""
+    events: set[str] = set()
+    tag_push = False
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = strip_comment(lines[i])
+        i += 1
+        m = re.match(r"^(?:on|\"on\"|'on'|true):\s*(.*)$", line)
+        if not m:
+            continue
+        val = m.group(1).strip()
+        if val:
+            events |= set(parse_labels(val))
+            break
+        ev_indent = None
+        current = None
+        while i < len(lines):
+            sub = strip_comment(lines[i])
+            if sub.strip() and len(sub) - len(sub.lstrip(" ")) == 0:
+                break
+            i += 1
+            if not sub.strip():
+                continue
+            ind = len(sub) - len(sub.lstrip(" "))
+            body = sub.strip()
+            if ev_indent is None:
+                ev_indent = ind
+            if ind == ev_indent:
+                if body.startswith("- "):
+                    events.add(body[2:].strip().strip("'\""))
+                    continue
+                current = body.split(":", 1)[0].strip().strip("'\"")
+                events.add(current)
+            elif current == "push" and re.match(r"^tags(?:-ignore)?:", body):
+                tag_push = True
+        break
+    return {"events": events, "tag_push": tag_push}
 
 
 HOSTED = {"ubuntu": "Linux", "macos": "Darwin", "windows": "Windows"}
@@ -1457,6 +1527,365 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     return rep.code()
 
 
+# --------------------------------------------------------------------------------------------------------- G3 move
+
+MOVE_BRANCH_PREFIX = "minions-move-"
+VERIFY_WAIT_S = 600
+
+
+def size_rank(label: str) -> int:
+    names = [x[0] for x in reversed(SIZE_RULES)]  # small, medium, large
+    return names.index(label) if label in names else -1
+
+
+def cores_asked(labels: list[str]) -> int | None:
+    """GitHub's larger runners carry the core count in the label (ubuntu-latest-8-cores, ubuntu-22.04-16core)."""
+    for x in labels:
+        m = re.search(r"(\d+)[-_]?cores?\b", x)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def plan_job(path: str, triggers: dict, job: dict, system: str, machine: str, our_labels: list[str],
+             include: set[str]) -> tuple[str, str, list[str] | None]:
+    """One job: ("move", words, new labels) | ("left", reason, None) | ("publish", reason, None) | ("here", ...)."""
+    ro = job["runs_on"]
+    if isinstance(ro, list) and ro and set(ro) <= set(our_labels):
+        return "here", f"already asks for {', '.join(ro)}", None
+    kind, words = judge_job(job, system)
+    if kind != "ok":
+        if kind == "stay":
+            return "left", words, None
+        return "left", words.replace("; can move here", ""), None
+    labels = [x.lower() for x in ro]
+    if any("gpu" in x for x in labels):
+        return "left", f"asks for a GPU ({ro[0]})", None
+    if any(re.search(r"-arm(64)?\b", x) for x in labels) and ARCH.get(machine, machine) != "arm64":
+        return "left", f"asks for an ARM machine ({ro[0]}); this computer is {machine}", None
+    publish = []
+    if triggers.get("tag_push"):
+        publish.append("its workflow starts on a pushed tag")
+    if "release" in triggers.get("events", ()):
+        publish.append("its workflow starts on a release")
+    if job["environment"]:
+        publish.append("it deploys to an environment")
+    publish += job["publishes"]
+    sec = sorted(s for s in job["secrets"] if PUBLISH_SECRET.search(s))
+    if sec:
+        publish.append("it holds a publishing secret (" + ", ".join(sec) + ")")
+    key = f"{os.path.basename(path)}:{job['id']}"
+    if publish and key not in include:
+        return "publish", "; ".join(publish), None
+    new = ["minions"]
+    cores = cores_asked(labels)
+    if cores and cores > 2:
+        need = size_label({"cores": cores, "mem": 10 ** 15})
+        have = next((x for x in our_labels if x != "minions"), "minions-small")
+        if size_rank(have) < size_rank(need):
+            return "left", f"asks for {cores} cores ({ro[0]}); this computer's runner is {have}", None
+        if need != "minions-small":
+            new.append(need)
+    assert "self-hosted" not in new
+    why = "with your word for this job (--include-job), " if publish else ""
+    return "move", f"{why}{', '.join(ro)} -> [{', '.join(new)}]", new
+
+
+def edit_runs_on(text: str, edits: list[tuple[tuple[int, int], list[str]]]) -> str:
+    """Change only the runs-on lines, by line: indent, trailing comment and every other line stay as they were."""
+    lines = text.splitlines(keepends=True)
+    for (start, end), labels in sorted(edits, reverse=True):
+        raw = lines[start]
+        nl = raw[len(raw.rstrip("\r\n")):]
+        body = raw.rstrip("\r\n")
+        code = strip_comment(body)
+        comment = body[len(code):] if "#" in body[len(code):] else ""
+        indent = code[:len(code) - len(code.lstrip(" "))]
+        value = "[" + ", ".join(labels) + "]"
+        assert "self-hosted" not in value
+        lines[start:end] = [f"{indent}runs-on: {value}{comment}{nl}"]
+    return "".join(lines)
+
+
+def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report) -> list[tuple[str, str]] | None:
+    q = f"?ref={ref}" if ref else ""
+    s, d = gh.api("GET", f"repos/{repo}/contents/.github/workflows{q}")
+    if s == 404:
+        return []
+    if s != 200 or not isinstance(d, list):
+        rep.stop(f"could not list the workflows (HTTP {s})")
+        return None
+    files = []
+    for f in d:
+        if not f.get("name", "").endswith((".yml", ".yaml")):
+            continue
+        fs, fd = gh.api("GET", f"repos/{repo}/contents/{f['path']}{q}")
+        try:
+            text = base64.b64decode((fd or {}).get("content", "")).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            text = None
+        if fs != 200 or text is None:
+            rep.stop(f"{f['path']}: could not read it, so nothing is moved")
+            return None
+        files.append((f["path"], text))
+    return files
+
+
+def our_runner_online(gh: GitHub, host: Host, repo: str, rep: Report) -> dict | None:
+    mine = (load_state(host).get("runners") or {}).get(repo)
+    if not mine:
+        rep.stop(f"no runner of ours serves {repo} on this computer: run `setup {repo}` first")
+        return None
+    s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+    listed = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == mine["name"]]
+    if not listed or listed[0].get("status") != "online":
+        seen = listed[0].get("status") if listed else "not listed"
+        rep.stop(f"GitHub says our runner {mine['name']} is {seen}: no job is moved to a runner that is not there. "
+                 f"Run `setup {repo}` (or `doctor`) first")
+        return None
+    rep.ok(f"our runner {mine['name']} is online for {repo}")
+    return mine
+
+
+def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str, str], body: str,
+                 rep: Report) -> dict | None:
+    """G3.1: one branch made through the API, one commit, one pull request. Nothing of the person's is checked out."""
+    s, ref = gh.api("GET", f"repos/{repo}/git/ref/heads/{base}")
+    head_sha = ((ref or {}).get("object") or {}).get("sha") if s == 200 else None
+    s2, com = gh.api("GET", f"repos/{repo}/git/commits/{head_sha}") if head_sha else (0, None)
+    base_tree = ((com or {}).get("tree") or {}).get("sha") if s2 == 200 else None
+    if not base_tree:
+        rep.stop(f"could not read the tip of {base} (HTTP {s}/{s2})")
+        return None
+    entries = []
+    for path, text in sorted(changed.items()):
+        bs, blob = gh.api("POST", f"repos/{repo}/git/blobs", {"content": text, "encoding": "utf-8"})
+        if bs != 201:
+            rep.stop(f"GitHub refused the changed {path} (HTTP {bs})")
+            return None
+        entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
+    ts, tree = gh.api("POST", f"repos/{repo}/git/trees", {"base_tree": base_tree, "tree": entries})
+    cs, commit = gh.api("POST", f"repos/{repo}/git/commits", {
+        "message": "Run these jobs on your own computer (Windstorm Repo Minions)\n\nOnly `runs-on` lines change.",
+        "tree": (tree or {}).get("sha"), "parents": [head_sha]}) if ts == 201 else (ts, None)
+    if cs != 201:
+        rep.stop(f"GitHub refused the commit (HTTP {ts}/{cs})")
+        return None
+    branch = MOVE_BRANCH_PREFIX + secrets.token_hex(4)
+    journal(host, "move-branch", f"{repo} {branch}")
+    rs, _ = gh.api("POST", f"repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
+    if rs != 201:
+        why = " (a workflow file needs the `workflow` right on your GitHub login: `gh auth refresh -s workflow`)" \
+            if rs in (403, 404, 422) else ""
+        rep.stop(f"GitHub refused the branch {branch} (HTTP {rs}){why}")
+        return None
+    journal(host, "move-pr", f"{repo} {branch}")
+    ps, pr = gh.api("POST", f"repos/{repo}/pulls", {
+        "title": "Run these jobs on your own computer", "head": branch, "base": base, "body": body})
+    if ps != 201:
+        gh.api("DELETE", f"repos/{repo}/git/refs/heads/{branch}")
+        rep.stop(f"GitHub refused the pull request (HTTP {ps}); the branch was deleted again")
+        return None
+    return {"number": pr["number"], "url": pr.get("html_url"), "branch": branch}
+
+
+def pr_body(moved: list, left: list, publish: list, here: list) -> str:
+    out = ["This pull request changes only `runs-on` lines, so these jobs run on your own computer's runner "
+           "(labels `minions`). Nothing else in your workflows changes. The tool that opened it never merges it: "
+           "you do.", "", "## Moved"]
+    out += [f"- `{p}` job `{j}`: {w}" for p, j, w in moved]
+    if left:
+        out += ["", "## Left as they are (they cannot run on this computer)"]
+        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in left]
+    if publish:
+        out += ["", "## Left as they are (they publish or deploy)",
+                "Each needs your word for that one job before it moves: `move <owner/repo> --include-job "
+                "<file>:<job>`."]
+        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in publish]
+    if here:
+        out += ["", "## Already on your computer"]
+        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in here]
+    out += ["", "After you merge it, `move --verify` sees one real run of each moved workflow finish on your "
+            "computer. Until then nothing is called moved."]
+    return "\n".join(out) + "\n"
+
+
+def move(repo: str, verify: bool = False, include: list[str] | None = None, host: Host | None = None,
+         gh: GitHub | None = None, out=None, wait_s: int = VERIFY_WAIT_S, poll_s: float = 10) -> int:
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        rep.stop(f"not a repository name: {repo!r} (write owner/name)")
+        return rep.code()
+    if verify:
+        move_verify(gh, host, repo, rep, wait_s, poll_s)
+        return rep.code()
+    entry = check_fresh_look(host, repo, rep)
+    if entry is None:
+        return rep.code()
+    mine = our_runner_online(gh, host, repo, rep)
+    if mine is None:
+        return rep.code()
+    last = (load_state(host).get("moves") or {}).get(repo)
+    if last and not last.get("merged"):
+        s, pr = gh.api("GET", f"repos/{repo}/pulls/{last['pr']}")
+        if s == 200 and pr.get("state") == "open":
+            rep.need(f"pull request #{last['pr']} is still open ({pr.get('html_url')}): merge it yourself, then "
+                     f"run `move {repo} --verify`; no second one is opened")
+            return rep.code()
+    s, d = gh.api("GET", f"repos/{repo}")
+    base = (d or {}).get("default_branch") if s == 200 else None
+    if not base:
+        rep.stop(f"could not read {repo} (HTTP {s})")
+        return rep.code()
+    files = read_workflow_files(gh, repo, None, rep)
+    if files is None:
+        return rep.code()
+    survey_ = entry.get("survey") or {}
+    system, machine = survey_.get("system") or host.system(), survey_.get("machine") or host.machine()
+    inc = set(include or [])
+    moved, left, publish, here, changed, plan = [], [], [], [], {}, {}
+    for path, text in files:
+        triggers = read_triggers(text)
+        edits = []
+        for job in read_workflow(text):
+            kind, words, labels = plan_job(path, triggers, job, system, machine, mine["labels"], inc)
+            row = (path, job["id"], words)
+            {"move": moved, "left": left, "publish": publish, "here": here}[kind].append(row)
+            if kind == "move":
+                edits.append((job["runs_on_at"], labels))
+                plan.setdefault(path, []).append({"id": job["id"], "name": job["name"] or job["id"]})
+            (rep.ok if kind in ("move", "here") else rep.warn)(
+                f"{path} job {job['id']}: " + {"move": "moves, ", "left": "stays: ", "publish": "stays, it "
+                                                "publishes or deploys: ", "here": ""}[kind] + words)
+        if edits:
+            changed[path] = edit_runs_on(text, edits)
+    if not moved:
+        rep.ok("no job can move to this computer now; nothing was changed")
+        return rep.code()
+    pr = open_move_pr(gh, host, repo, base, changed, pr_body(moved, left, publish, here), rep)
+    if pr is None:
+        return rep.code()
+    data = load_state(host)
+    data.setdefault("moves", {})[repo] = {"pr": pr["number"], "branch": pr["branch"], "files": plan, "base": base,
+                                          "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
+    save_state(host, data)
+    rep.ok(f"pull request #{pr['number']} opened: {len(moved)} job(s) to move, {len(left) + len(publish)} left "
+           "as they are and named in it")
+    rep.need(f"read and merge pull request #{pr['number']} yourself ({pr['url']}); this tool never merges. Then "
+             f"run `move {repo} --verify`")
+    return rep.code()
+
+
+def run_jobs_matching(jobs: list[dict], wanted: dict) -> list[dict]:
+    names = {wanted["id"], wanted["name"]}
+    return [j for j in jobs if j.get("name") in names or any(j.get("name", "").startswith(n + " (") for n in names)]
+
+
+def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, poll_s: float) -> None:
+    """G3.6: "moved" only after one real run of each moved workflow finished on a runner of ours."""
+    data = load_state(host)
+    mv = (data.get("moves") or {}).get(repo)
+    mine = (data.get("runners") or {}).get(repo)
+    if not mv or not mine:
+        rep.stop(f"no move of {repo} is written down on this computer: run `move {repo}` first")
+        return
+    s, pr = gh.api("GET", f"repos/{repo}/pulls/{mv['pr']}")
+    if s != 200:
+        rep.stop(f"could not read pull request #{mv['pr']} (HTTP {s})")
+        return
+    if not pr.get("merged_at"):
+        if pr.get("state") == "closed":
+            rep.stop(f"pull request #{mv['pr']} was closed without a merge: nothing moved. Run `move {repo}` again "
+                     "if you want a new one")
+        else:
+            rep.need(f"pull request #{mv['pr']} is not merged yet ({pr.get('html_url')}): merge it yourself first")
+        return
+    merged_at = pr["merged_at"]
+    rep.ok(f"pull request #{mv['pr']} was merged at {merged_at}")
+    files = dict(read_workflow_files(gh, repo, mv.get("base"), rep) or [])
+    all_ok = True
+    for path, wanted_jobs in sorted(mv["files"].items()):
+        text = files.get(path, "")
+        jobs_now = read_workflow(text)
+        every_job_moved = {j["id"] for j in jobs_now} <= {w["id"] for w in wanted_jobs}
+        run = find_or_start_run(gh, host, repo, path, mv.get("base"), merged_at, read_triggers(text),
+                                every_job_moved, rep, wait_s, poll_s)
+        if run is None:
+            all_ok = False
+            continue
+        jobs = jobs_of(gh, repo, run["id"])
+        for w in wanted_jobs:
+            got = run_jobs_matching(jobs, w)
+            if not got:
+                rep.warn(f"{path} job {w['id']}: not in run {run['id']} (it may be skipped by a condition)")
+                all_ok = False
+                continue
+            for j in got:
+                labels = [x.lower() for x in j.get("labels") or []]
+                where = j.get("runner_name") or "no runner"
+                if where != mine["name"] or "minions" not in labels:
+                    rep.stop(f"{path} job {w['id']} ran on {where} (labels {', '.join(labels) or 'none'}), not on our "
+                             f"runner {mine['name']}: it did not move")
+                    all_ok = False
+                elif j.get("conclusion") == "success":
+                    rep.ok(f"moved: {path} job {w['id']} ran on {where} and succeeded (run {run['id']})")
+                else:
+                    rep.warn(f"moved: {path} job {w['id']} ran on {where} and ended {j.get('conclusion')}: that is "
+                             f"the job's own result; its log is at {j.get('html_url')}")
+    if rep.waiting and not rep.stopped:
+        rep.wait(f"for one finished run of each moved workflow of {repo}; nothing is called moved before that. "
+                 f"Next: `move {repo} --verify` again after the next push or pull request")
+        return
+    if all_ok and not rep.stopped:
+        data = load_state(host)
+        data["moves"][repo].update(merged=merged_at, verified=host.now().strftime("%Y-%m-%dT%H:%M:%SZ"))
+        save_state(host, data)
+        rep.ok(f"moved: every moved job of {repo} ran on this computer")
+
+
+def find_or_start_run(gh: GitHub, host: Host, repo: str, path: str, base: str, merged_at: str, triggers: dict,
+                      every_job_moved: bool, rep: Report, wait_s: int, poll_s: float) -> dict | None:
+    wf = os.path.basename(path)
+    runs_path = f"repos/{repo}/actions/workflows/{wf}/runs?branch={base}&per_page=20"
+
+    def after_merge():
+        s, d = gh.api("GET", runs_path)
+        runs = (d or {}).get("workflow_runs", []) if s == 200 else []
+        return sorted((r for r in runs if r.get("created_at", "") >= merged_at), key=lambda r: r["created_at"])
+
+    runs = after_merge()
+    deadline = (host.now() + dt.timedelta(seconds=wait_s)).strftime("%H:%MZ")
+    if not runs:
+        if "workflow_dispatch" in triggers["events"] and every_job_moved:
+            journal(host, "verify-dispatch", f"{repo} {path}")
+            s, d = gh.api("POST", f"repos/{repo}/actions/workflows/{wf}/dispatches",
+                          {"ref": base, "return_run_details": True})
+            if s not in (200, 204):
+                rep.warn(f"{path}: GitHub refused to start it (HTTP {s})")
+        else:
+            why = ("some of its jobs stay on GitHub's machines, so the tool does not start it"
+                   if "workflow_dispatch" in triggers["events"] else "it cannot be started by hand")
+            rep.wait(f"{path}: no run since the merge yet, and {why}; its next push or pull request run will show "
+                     "it")
+            return None
+    rep.ok(f"{path}: watching for its run to finish, until {deadline} at the latest")
+    left = wait_s
+    while True:
+        runs = after_merge()
+        done = [r for r in runs if r.get("status") == "completed"]
+        if done:
+            return done[0]
+        if left <= 0:
+            break
+        host.sleep(poll_s)
+        left -= poll_s
+    state = runs[0].get("status") if runs else "not seen"
+    rep.wait(f"{path}: its run since the merge was still {state} at the deadline ({deadline})")
+    return None
+
+
 # ------------------------------------------------------------------------------------------------------------- look
 
 def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
@@ -1511,11 +1940,18 @@ def main(argv: list[str] | None = None) -> int:
                     help="with your yes: one job on a temporary branch, run on no machine, then deleted")
     st = sub.add_parser("setup", help="install one runner for one private repository on this computer (Linux)")
     st.add_argument("repo", help="owner/name; needs a look of it on this computer under an hour old")
+    mv = sub.add_parser("move", help="open a pull request that moves the jobs this computer can take; never merges")
+    mv.add_argument("repo", help="owner/name; needs a fresh look and a runner of ours online")
+    mv.add_argument("--verify", action="store_true", help="after your merge: see one real run finish here")
+    mv.add_argument("--include-job", action="append", default=[], metavar="FILE:JOB",
+                    help="your word to move one job that publishes or deploys")
     a = ap.parse_args(argv)
     if a.cmd == "look":
         return look(a.repo, a.start_test)
     if a.cmd == "setup":
         return setup(a.repo)
+    if a.cmd == "move":
+        return move(a.repo, verify=a.verify, include=a.include_job)
     return EXIT_STOP
 
 
