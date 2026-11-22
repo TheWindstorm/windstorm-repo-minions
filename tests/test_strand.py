@@ -10,11 +10,14 @@ Standard library only. Run: python tests/test_strand.py -v
 Until the plan exists (it comes in its own pull request) the plan is read as empty, so these checks pass only
 while no row and no codon test exists either.
 """
+import ast
+import atexit
 import collections
 import contextlib
 import json
 import os
 import re
+import sys
 import tempfile
 import unittest
 
@@ -92,7 +95,19 @@ def tests_that_ran(tests_dir: str = TESTS) -> set:
         with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn):
             unittest.TestSuite(tests).run(res)
         ran |= {t._testMethodName for t in res.passed}
+        for test, why in res.skipped:  # an honest skip is "not run here", never a pass
+            NOT_RUN_HERE.append(f"{name}: {test._testMethodName} ({why})")
     return ran
+
+
+NOT_RUN_HERE: list = []
+
+
+def defined_twice(path: str) -> list:
+    """G9.6: test names a file defines more than once. A later twin hides the real body, and its name still passes."""
+    seen = collections.Counter(n.name for n in ast.walk(ast.parse(fread(path)))
+                               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test"))
+    return sorted(k for k, c in seen.items() if c > 1)
 
 
 _RAN = None
@@ -140,6 +155,13 @@ class Promises(unittest.TestCase):
                               "Build it, or have its date moved (see how_to_use in PROMISES.json).")
                 self.assertIn(f"`{r['test']}`", self.plan, f"{r['id']}: its test is not named in the plan")
 
+    def test_PROMISES_every_built_row_names_a_test_that_ran_at_any_version(self):
+        """A row marked built points at a test that ran and passed today, not only once its version is due."""
+        for r in self.rows:
+            if r.get("test"):
+                self.assertIn(r["test"], self.tests, f"{r['id']}: its test {r['test']} was not collected or did not pass")
+                self.assertIn(f"`{r['test']}`", self.plan, f"{r['id']}: its test is not named in the plan")
+
     def test_PROMISES_the_version_after_needs_proof_on_a_real_machine(self):
         for r in self.rows:
             if v(r["ship_in"]) < self.version:
@@ -162,24 +184,52 @@ class Strand(unittest.TestCase):
         self.assertEqual(real - named, set(), "tests with no codon in the plan")
 
     def test_G9_6_the_gate_counts_only_tests_that_ran(self):
-        """A test the runner cannot reach (after a helper's return), one renamed out of collection, and one that
-        fails are not counted; only the test that is collected and passes is."""
+        """The gate's self-test: it plants every way a test can look present and not run, and must refuse each.
+        Not counted: a test after a helper's return, one renamed out of collection, one under `if False:`, one
+        marked skipped (listed as not run here), one that fails, one whose text sits in a string. A test shadowed by
+        a later twin of the same name is counted by name, so the twice-defined check refuses it instead."""
+        probe = (
+            "import unittest\n\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_probe_reached(self):\n"
+            "        self.assertTrue(True)\n\n"
+            "    def helper(self):\n"
+            "        return\n\n"
+            "        def test_probe_after_a_return(self):\n"
+            "            pass\n\n"
+            "    def xtest_probe_renamed(self):\n"
+            "        pass\n\n"
+            "    if False:\n"
+            "        def test_probe_under_if_false(self):\n"
+            "            pass\n\n"
+            "    @unittest.skip('a planted skip')\n"
+            "    def test_probe_skipped(self):\n"
+            "        pass\n\n"
+            "    def test_probe_fails(self):\n"
+            "        self.fail('no')\n\n"
+            "    def test_probe_shadowed(self):\n"
+            "        self.fail('the real body')\n\n"
+            "    def test_probe_shadowed(self):\n"
+            "        pass\n\n"
+            "_OLD = '''\n"
+            "    def test_probe_in_a_string(self):\n"
+            "        pass\n"
+            "'''\n")
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
-                f.write("import unittest\n\n"
-                        "class T(unittest.TestCase):\n"
-                        "    def test_probe_reached(self):\n"
-                        "        self.assertTrue(True)\n\n"
-                        "    def helper(self):\n"
-                        "        return\n\n"
-                        "        def test_probe_after_a_return(self):\n"
-                        "            pass\n\n"
-                        "    def xtest_probe_renamed(self):\n"
-                        "        pass\n\n"
-                        "    def test_probe_fails(self):\n"
-                        "        self.fail('no')\n")
+                f.write(probe)
+            before = len(NOT_RUN_HERE)
             ran = tests_that_ran(d)
-        self.assertEqual(ran, {"test_probe_reached"})
+            twice = defined_twice(os.path.join(d, "test_probe.py"))
+        self.assertEqual(ran, {"test_probe_reached", "test_probe_shadowed"})
+        self.assertEqual(twice, ["test_probe_shadowed"])
+        self.assertTrue(any("test_probe_skipped (a planted skip)" in x for x in NOT_RUN_HERE[before:]), NOT_RUN_HERE)
+        del NOT_RUN_HERE[before:]
+
+    def test_no_test_file_defines_one_name_twice(self):
+        for name in sorted(os.listdir(TESTS)):
+            if name.startswith("test_") and name.endswith(".py"):
+                self.assertEqual(defined_twice(os.path.join(TESTS, name)), [], f"{name} defines a test name twice")
 
     def test_no_codon_is_used_twice_in_the_plan(self):
         seen = collections.Counter(re.findall(r"^\| ((?:G|INV)[0-9.]+) \|", plan_text(), re.M))
@@ -196,6 +246,12 @@ class Hygiene(unittest.TestCase):
             for line in re.findall(r"runs-on:.*", text):
                 self.assertNotIn("self-hosted", line, f"{name}: {line.strip()}")
                 self.assertRegex(line, r"runs-on:\s*(ubuntu|macos|windows)-", f"{name}: {line.strip()}")
+
+
+@atexit.register
+def _say_what_did_not_run():
+    for line in NOT_RUN_HERE:
+        print(f"not run here: {line}", file=sys.stderr)
 
 
 if __name__ == "__main__":
