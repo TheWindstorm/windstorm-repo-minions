@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.1 · 2026-11-22 · The Windstorm**
+**Plan version 1.2 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -298,7 +298,7 @@ repositories. So one computer carrying many runners is the main case, not an edg
 | Codon | Claim | Test |
 |---|---|---|
 | G12.1 | One overall limit across all our runners on a computer: at most K jobs at once, K from the survey (G1.6). Linux: all our runner services in one slice with the CPU and memory limits of G4.2 applied to the slice as a whole; when K runners are busy, the idle ones are held (G5.5) until one is free. | planned: test_G12_1_at_most_k_jobs_at_once_across_all_our_runners |
-| G12.2 | How many idle runners a computer can carry is computed from one idle runner's memory as measured on that OS (Part 7 C7); `setup` refuses a runner past that number and says how many there are and why. | planned: test_G12_2_idle_runners_are_counted_against_measured_memory |
+| G12.2 | How many idle runners a computer can carry is computed from one idle runner's memory as measured on that OS (Part 7 C7); `setup` refuses a runner past that number and says how many there are and why. Seen so far (Linux x64, runner 2.338.2, a test account on a shared server, 2026-11-22): one idle runner holds about 126 MB of memory resident (about 99 MB proportional) and 683 MB of disk for its own unpacked copy. These are per runner: twenty idle runners come to about 2.5 GB of memory and about 13.7 GB of disk before any job runs, and each job's work folder comes on top. `setup` counts disk as well as memory. Other OS and versions: not measured yet. | planned: test_G12_2_idle_runners_are_counted_against_measured_memory |
 | G12.3 | `setup` takes a list of repositories; `look` runs for each; the admin step is asked once for the whole list; each repository gets its own runner, folders and registration. | planned: test_G12_3_setup_for_a_list_asks_the_admin_step_once |
 | G12.4 | `status` sums up first: runners, busy, held and why, jobs waiting and the oldest, then one line per repository. | planned: test_G12_4_status_sums_up_before_the_lines |
 
