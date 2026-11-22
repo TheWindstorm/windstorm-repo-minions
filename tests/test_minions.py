@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -537,6 +538,11 @@ def setup_host(**kw):
         ("systemctl", "show", UNIT): (0, SHOW),
         ("systemctl", "show", "minions.slice"): (0, "CPUQuotaPerSecUSec=4s\nMemoryMax=10066329600\n"),
         ("systemctl", "is-active", UNIT): (0, "active\n"),
+        ("sudo", "-n", "chown"): (0, ""),
+        ("sudo", "-n", "cat", f"{FOLDER}/.env"): (0, "LANG=C.UTF-8\n"),
+        ("sudo", "-n", "-u", "minions-runner", "--", "tee", f"{FOLDER}/.env"): (0, ""),
+        ("sudo", "-n", "stat", "-c", "%a %U", f"{M.hook_dir(REPO)}/job-started.sh"): (0, "755 root\n755 root\n"),
+        ("sudo", "-n", "-u", "minions-runner", "--", f"{FOLDER}/bin/Runner.Listener", "--version"): (0, "2.338.2\n"),
     })
     host.runs.update(extra)
     return host, sha
@@ -552,7 +558,8 @@ def setup_gh(sha, overrides=None):
 
 def fresh_look(host, minutes=5, stopped=False, survey=True):
     when = (M.dt.datetime.now(M.dt.timezone.utc) - M.dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024} if survey else {}
+    s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024,
+         "free": 100 * 1024 ** 3} if survey else {}
     M.save_state(host, {"looks": {REPO: {"time": when, "stopped": stopped, "survey": s}}})
 
 
@@ -780,7 +787,7 @@ class G2(unittest.TestCase):
         tee = max(i for i, a in enumerate(order) if a.startswith("sudo -n tee"))
         reload_ = order.index("sudo -n systemctl daemon-reload --no-pager")
         enable = order.index(f"sudo -n systemctl enable {UNIT} --no-pager")
-        start = order.index(f"sudo -n systemctl restart {UNIT} --no-pager")
+        start = order.index(f"sudo -n systemctl start {UNIT} --no-pager")
         show = next(i for i, a in enumerate(order) if a.startswith(f"systemctl show {UNIT}"))
         self.assertTrue(svc < tee < reload_ < enable < start < show, order)
         # read back not as written: stop
@@ -1184,14 +1191,320 @@ class G3(unittest.TestCase):
         self.assertIn("--verify", lines[-1])
 
 
+FAKE_INHIBIT = """#!/bin/bash
+# a stand-in for systemd-inhibit: writes down its options, then runs the rest as the real one does
+opts=()
+while [ "${1#--}" != "$1" ]; do opts+=("$1"); shift; done
+printf '%s\\n' "${opts[*]}" >> "$MINIONS_TEST_LOG"
+exec "$@"
+"""
+
+
+def held_state(host, labels=("minions", "minions-medium")):
+    M.save_state(host, {"runners": {REPO: {"name": "minions-box-1", "folder": FOLDER, "unit": UNIT,
+                                          "labels": list(labels)}}})
+
+
+class DrainGH(StandIn):
+    """GitHub for drain and resume: the runner's busy flag follows `busy` (one value per read), labels follow PUTs."""
+
+    def __init__(self, busy=(False,), status="online"):
+        super().__init__([])
+        self.busy, self.status, self.labels, self.puts = list(busy), status, ["minions", "minions-medium"], []
+
+    def api(self, method, path, body=None):
+        self.calls.append((method, path))
+        if method == "GET" and path == f"repos/{REPO}/actions/runners?per_page=100":
+            b = self.busy.pop(0) if len(self.busy) > 1 else self.busy[0]
+            return runners_answer(status=self.status, busy=b, labels=self.labels)
+        if method == "PUT" and path == f"repos/{REPO}/actions/runners/7/labels":
+            self.puts.append(list(body["labels"]))
+            self.labels = list(body["labels"])
+            return 200, {"labels": [{"name": x} for x in self.labels]}
+        return 404, {"message": "Not Found"}
+
+
+def run_drain(gh, host, **kw):
+    out = io.StringIO()
+    code = M.drain(REPO, host=host, gh=gh, out=out, **kw)
+    return code, out.getvalue().splitlines()
+
+
+class G4(unittest.TestCase):
+    def test_G4_1_one_job_at_a_time_per_runner(self):
+        # The runner takes one job at a time; setup never registers it in a way that changes that, and a second
+        # runner for the same repository is not made on top of the first (more runners come only with G12).
+        for opt in ("--ephemeral", "--jitconfig", "--disableupdate"):
+            self.assertNotIn(opt, M.CONFIG_SCRIPT)
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        configs = [a for a in host.ran if M.CONFIG_SCRIPT in a]
+        self.assertEqual(len(configs), 1)
+        self.assertEqual(list(M.load_state(host)["runners"]), [REPO])
+        host2, sha = setup_host(runs={("sudo", "-n", "test", "-e"): (0, "")})  # the runner's folder is there
+        fresh_look(host2)
+        code, lines = run_setup(setup_gh(sha), host2)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertFalse(any(M.CONFIG_SCRIPT in a for a in host2.ran))
+
+    def test_G4_3_the_disk_never_fills_from_jobs(self):
+        # setup names both hooks in the runner's .env, root-owned and 755, read back.
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        envtext = next(x for a, x in host.fed if a[-1] == f"{FOLDER}/.env")
+        self.assertIn("LANG=C.UTF-8\n", envtext)
+        self.assertIn(f"ACTIONS_RUNNER_HOOK_JOB_COMPLETED={M.hook_dir(REPO)}/job-completed.sh\n", envtext)
+        self.assertTrue(any(a[:4] == ("sudo", "-n", "chown", "root:root") for a in host.ran))
+        # The completed hook, run for real: it empties this job's work folder and nothing outside it.
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            folder = os.path.realpath(d)
+            ws = os.path.join(folder, "_work", "repo", "repo")
+            os.makedirs(os.path.join(ws, "sub"))
+            with open(os.path.join(ws, "sub", "build.out"), "w") as f:
+                f.write("x")
+            outside = os.path.join(folder, "keep.txt")
+            with open(outside, "w") as f:
+                f.write("mine")
+            script = os.path.join(folder, "done.sh")
+            for floor, low in ((0, False), (1 << 62, True)):
+                with mock.patch.object(M, "DISK_FLOOR", floor):
+                    with open(script, "w") as f:
+                        f.write(M.job_completed_script(folder))
+                env = dict(os.environ, GITHUB_WORKSPACE=ws)
+                r = subprocess.run(["bash", script], env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(os.listdir(ws), [])
+                self.assertTrue(os.path.exists(outside))
+                self.assertEqual(os.path.exists(os.path.join(folder, "_minions", "disk-low")), low)
+            # A workspace outside the runner's work folder, or one that climbs out of it, is never touched.
+            for bad in (folder, os.path.join(folder, "_work", "..")):
+                r = subprocess.run(["bash", script], env=dict(os.environ, GITHUB_WORKSPACE=bad), capture_output=True,
+                                   text=True, timeout=30)
+                self.assertTrue(os.path.exists(outside))
+        # Under the floor: setup sets nothing up, and resume does not release a held runner.
+        host, sha = setup_host(free=(1024 ** 3, 500 * 1024 ** 3))  # read at setup's time, not the look's
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("under the 5.0 GB floor", lines[-1])
+        self.assertEqual(admin_steps(host), [])
+        host = setup_host(free=(1024 ** 3, 500 * 1024 ** 3))[0]
+        held_state(host)
+        gh = DrainGH()
+        out = io.StringIO()
+        self.assertEqual(M.resume(REPO, host=host, gh=gh, out=out), M.EXIT_STOP)
+        self.assertEqual(gh.puts, [])
+
+    def _hooks_for_real(self, folder, log):
+        bindir = os.path.join(folder, "bin-stand-in")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "systemd-inhibit"), "w") as f:
+            f.write(FAKE_INHIBIT)
+        os.chmod(os.path.join(bindir, "systemd-inhibit"), 0o755)
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""), MINIONS_TEST_LOG=log,
+                   RUNNER_TRACKING_ID="github_job_1", GITHUB_WORKSPACE=os.path.join(folder, "_work", "r", "r"))
+        for name, text in (("start.sh", M.job_started_script(folder)), ("done.sh", M.job_completed_script(folder))):
+            with open(os.path.join(folder, name), "w") as f:
+                f.write(text)
+        return env
+
+    def test_G4_4_no_sleep_during_a_job(self):
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            folder = os.path.realpath(d)
+            log = os.path.join(folder, "inhibit.log")
+            env = self._hooks_for_real(folder, log)
+            pid = None
+            try:
+                r = subprocess.run(["bash", os.path.join(folder, "start.sh")], env=env, capture_output=True,
+                                   text=True, timeout=30)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("will not fall asleep by itself", r.stdout)
+                with open(os.path.join(folder, "_minions", "inhibit.pid")) as f:
+                    pid = int(f.read())
+                os.kill(pid, 0)  # the locks are held while the job runs
+                for _ in range(50):
+                    if os.path.exists(log) and len(open(log).read().splitlines()) == 2:
+                        break
+                    M.time.sleep(0.1)
+                self.assertEqual(open(log).read().splitlines(),
+                                 [" ".join(M.INHIBIT_IDLE[1:]), " ".join(M.INHIBIT_SLEEP_DELAY[1:])])
+                with open(f"/proc/{pid}/environ", "rb") as f:
+                    self.assertNotIn(b"RUNNER_TRACKING_ID=", f.read())  # its own, ended by our hook
+                self.assertEqual(os.getpgid(pid), pid)  # its own process group, so the hook ends all of it
+                r = subprocess.run(["bash", os.path.join(folder, "done.sh")], env=env, capture_output=True,
+                                   text=True, timeout=30)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                for _ in range(50):
+                    try:
+                        os.kill(pid, 0)
+                        if open(f"/proc/{pid}/stat").read().split()[2] == "Z":
+                            break
+                    except (ProcessLookupError, FileNotFoundError):
+                        break
+                    M.time.sleep(0.1)
+                else:
+                    self.fail("the lock outlived the job")
+                self.assertFalse(os.path.exists(os.path.join(folder, "_minions", "inhibit.pid")))
+                pid = None
+            finally:
+                if pid:
+                    os.kill(pid, 15)
+        # The lock ends by itself after GitHub's longest default job, if a runner dies before its hook runs.
+        self.assertEqual(M.inhibitor_argv()[-2:], ["sleep", str(6 * 3600)])
+
+    def test_G4_9_the_inhibitor_never_holds_a_sleep_the_person_or_hardware_asks_for(self):
+        argv = M.inhibitor_argv()
+        locks = []
+        for i, a in enumerate(argv):
+            if a == "systemd-inhibit":
+                opts = {}
+                for x in argv[i + 1:]:
+                    if not x.startswith("--"):
+                        break
+                    k, _, v = x[2:].partition("=")
+                    opts[k] = v
+                locks.append(opts)
+        self.assertEqual([(o["what"], o["mode"]) for o in locks], [("idle", "block"), ("sleep", "delay")])
+        for o in locks:
+            whats = o["what"].split(":")
+            self.assertFalse(any(w.startswith("handle-") or w == "shutdown" for w in whats), o)
+            self.assertFalse("sleep" in whats and o["mode"] == "block", o)
+        script = M.job_started_script(FOLDER)
+        for word in M.FORBIDDEN_INHIBIT:
+            self.assertNotIn(word, script)
+        self.assertNotIn("--mode=block --who", " ".join(M.INHIBIT_SLEEP_DELAY))
+        self.assertEqual(script.count("'systemd-inhibit'"), 2)  # the two locks it starts, nothing else
+
+    def test_G4_5_runner_self_update_stays_on_and_is_reported(self):
+        self.assertNotIn("--disableupdate", M.CONFIG_SCRIPT)
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK)
+        self.assertIn("ok runner version 2.338.2; GitHub's own self-update stays on", lines)
+        self.assertEqual(M.load_state(host)["runners"][REPO]["version"], "2.338.2")
+
+    def test_G4_6_the_service_is_stopped_only_after_a_drain(self):
+        stops = lambda h: [a for a in h.ran if "stop" in a and "systemctl" in a]
+        # A job runs past the deadline: held, waiting with its deadline and the next command, exit 4, nothing stopped.
+        host = setup_host(runs={("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.Worker"): (0, "4321\n")})[0]
+        held_state(host)
+        gh = DrainGH(busy=(True,))
+        code, lines = run_drain(gh, host, stop=True, wait_s=0)
+        self.assertEqual(code, M.EXIT_WAIT)
+        self.assertEqual(gh.puts, [["minions-held"]])
+        self.assertTrue(lines[-1].startswith("waiting for the running job to end (GitHub says busy, a job process"),
+                        lines)
+        self.assertIn(f"Next: `drain {REPO}` again", lines[-1])
+        self.assertEqual(stops(host), [])
+        self.assertEqual(M.load_state(host)["runners"][REPO]["labels_before_hold"], ["minions", "minions-medium"])
+        # Both sides idle after a while: drained, then (asked) stopped; the deadline was said in the line.
+        answers = iter([(0, "4321\n"), (1, "")])
+        host = setup_host(runs={("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.Worker"):
+                                lambda a, i: next(answers, (1, "")),
+                                ("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner."): (1, ""),
+                                ("systemctl", "is-active", UNIT): (3, "inactive\n")})[0]
+        held_state(host)
+        gh = DrainGH(busy=(True, False))
+        code, lines = run_drain(gh, host, stop=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue(any(re.search(r"waiting for it to end, until \d\d:\d\dZ at the latest", x) for x in lines))
+        self.assertIn("ok drained: minions-box-1 is held, GitHub says idle, and no job process runs here", lines)
+        self.assertEqual(len(stops(host)), 1)
+        i_drained = next(i for i, x in enumerate(lines) if x.startswith("ok drained"))
+        i_stopped = next(i for i, x in enumerate(lines) if x.startswith("ok the runner is stopped"))
+        self.assertLess(i_drained, i_stopped)
+        # resume: started again only with no process of the runner left, then our labels back.
+        code = M.resume(REPO, host=host, gh=gh, out=io.StringIO())
+        self.assertEqual(code, M.EXIT_OK)
+        self.assertEqual(gh.puts[-1], ["minions", "minions-medium"])
+        self.assertNotIn("labels_before_hold", M.load_state(host)["runners"][REPO])
+        # And the stop helper itself refuses without a drain.
+        rep = M.Report(io.StringIO())
+        self.assertFalse(M.stop_runner(host, UNIT, FOLDER, rep, drained=False))
+        self.assertIn("only after a drain", rep.lines[-1])
+
+    def test_G4_7_a_stop_is_sigterm_and_read_back_never_two_copies(self):
+        left = {"n": 0}
+
+        def pgrep(argv, _):
+            return (0, "777\n") if left["n"] == 0 else (1, "")
+
+        def kill(argv, _):
+            left["n"] += 1
+            return 0, ""
+
+        host = setup_host(runs={("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner."): pgrep,
+                                ("sudo", "-n", "kill", "-TERM"): kill,
+                                ("systemctl", "is-active", UNIT): (3, "inactive\n")})[0]
+        rep = M.Report(io.StringIO())
+        self.assertTrue(M.stop_runner(host, UNIT, FOLDER, rep, drained=True))
+        self.assertIn(("sudo", "-n", "kill", "-TERM", "777"), host.ran)  # by exact PID, SIGTERM, never SIGINT
+        self.assertFalse(any("-INT" in a or "-9" in a or "pkill" in a or "killall" in a for a in host.ran))
+        self.assertEqual(rep.lines[-1], "ok the runner is stopped: the service is inactive, and no process of it is left")
+        # A process that does not go: stop, and nothing starts the runner again (never two copies).
+        host = setup_host(runs={("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner."): (0, "777\n"),
+                                ("systemctl", "is-active", UNIT): (3, "inactive\n")})[0]
+        rep = M.Report(io.StringIO())
+        self.assertFalse(M.stop_runner(host, UNIT, FOLDER, rep, drained=True))
+        rep = M.Report(io.StringIO())
+        self.assertFalse(M.start_runner(host, UNIT, FOLDER, rep))
+        self.assertIn("two copies never run", rep.lines[-1])
+        self.assertFalse(any(a[:4] == ("sudo", "-n", "systemctl", "start") for a in host.ran))
+
+    def test_G4_8_limits_have_floors_and_too_little_is_said_before_setup(self):
+        gib = 1024 ** 3
+        # Never less than one processor.
+        self.assertEqual(M.slice_limits({"cores": 1, "mem": 16 * gib})["CPUQuota"], "100%")
+        self.assertEqual(M.slice_limits({"cores": 4, "mem": 16 * gib}, (0, 50))["CPUQuota"], "100%")
+        # A 3 GB computer: 60 % is under 2 GiB, measured against the memory MAX. look says so; setup stops.
+        small = {"system": "Linux", "machine": "x86_64", "cores": 2, "mem": 3 * gib, "free": 100 * gib}
+        lim = M.slice_limits(small)
+        self.assertLess(int(lim["MemoryMax"]), M.MEMORY_FLOOR)
+        self.assertGreaterEqual(int(M.slice_limits(small, (1, 70))["MemoryMax"]), M.MEMORY_FLOOR)
+        host, sha = setup_host()
+        M.save_state(host, {"looks": {REPO: {"time": M.dt.datetime.now(M.dt.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"), "stopped": False, "survey": small}}})
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertEqual(admin_steps(host), [])
+        self.assertIn("a job would likely be killed by the limit", lines[-1])
+        self.assertIn(f"`setup {REPO} --limits 1,67`", lines[-1])
+        self.assertIn("less memory is left for your own work", lines[-1])
+        # The way out works: --limits 1,70 sets up, and the slice has those numbers.
+        out = io.StringIO()
+        small_gh = setup_gh(sha, {("GET", f"repos/{REPO}/actions/runners?per_page=100"):
+                                  runners_answer(labels=("minions", "minions-small"))})
+        code = M.setup(REPO, host=host, gh=small_gh, out=out, limits=(1, 70))
+        self.assertEqual(code, M.EXIT_OK, out.getvalue())
+        sl = next(x for a, x in host.fed if a[-1] == "/etc/systemd/system/minions.slice")
+        self.assertIn(f"MemoryMax={int(3 * gib * 0.7)}\n", sl)
+        self.assertIn("CPUQuota=100%\n", sl)
+        # Too little memory in all: no share is offered.
+        self.assertIn("it cannot be a minion", M.memory_floor_line(REPO, M.slice_limits({"cores": 2, "mem": 2 * gib})))
+        # look says it before setup, in plain words with the way out; and the parser takes --limits.
+        self.assertIn("--limits", M.memory_floor_line(REPO, lim))
+        self.assertEqual(M.parse_limits("2,70"), (2, 70))
+        with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit) as e:
+            M.main(["setup", REPO, "--limits", "0,95"], host=linux_host())
+        self.assertEqual(e.exception.code, M.EXIT_USAGE)
+        words = M.limits_in_words(M.slice_limits({"cores": 8, "mem": 16 * gib}))
+        self.assertEqual(words, "jobs here get at most 4 of this computer's 8 processors and 60 % of its memory "
+                                "(9.6 GB); the one way to change that is `setup <owner/repo> --limits "
+                                "<processors>,<memory %>`")
+
+
 class G8(unittest.TestCase):
     def test_G8_3_commands_and_line_kinds_are_exactly_these(self):
-        # The commands built so far (look, setup, move) are the plan's first ones, in its order; more come with genes.
+        # The commands built so far are the plan's own, in its order (a subsequence of it); more come with genes.
         plan = ("look", "setup", "move", "lint", "status", "watch", "hold", "resume", "drain", "doctor", "remove",
                 "self-update")
         sub = next(a for a in M.parser()._actions if isinstance(a, M.argparse._SubParsersAction))
         self.assertEqual(tuple(sub.choices), M.COMMANDS)
-        self.assertEqual(M.COMMANDS, plan[:len(M.COMMANDS)])
+        self.assertTrue(set(M.COMMANDS) <= set(plan), M.COMMANDS)
+        self.assertEqual(list(M.COMMANDS), sorted(M.COMMANDS, key=plan.index))
         # Five line kinds; the worst decides the code: 0 ok/warn, 2 stop, 3 need you, 4 waiting.
         self.assertEqual(M.LINE_KINDS, ("ok", "warn", "stop", "need you", "waiting"))
         cases = [((), 0), (("warn",), 0), (("wait",), 4), (("wait", "need"), 3), (("wait", "need", "stop"), 2)]
