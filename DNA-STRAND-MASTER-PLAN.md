@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.7 · 2026-11-22 · The Windstorm**
+**Plan version 1.8 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -192,6 +192,7 @@ nothing.
 | G1.12 | On a computer other people also use, what is theirs is counted, never named: containers of a shared container service and runner services that do not run as the person are given as numbers only; only the person's own (rootless containers, services running as them) are named. Port numbers are given; they say nothing of whose they are. | `test_G1_12_other_peoples_things_are_counted_never_named` |
 | G1.13 | `look` names a disk kind only when the system says it for real; a virtual disk (which Linux reports as rotating) is named "disk kind not known (virtual)", never "spinning disk". Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G1_13_a_virtual_disk_is_not_called_spinning |
 | G1.14 | `look` never offers what this version's `setup` does not do: in 0.1.0 an organisation's repository is told it gets one runner for this one repository (G7.6), not a runner group. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G1_14_look_offers_only_what_this_setup_does |
+| G1.15 | `look` and `move` judge a job by the same rules and in the same words: a publishing or deploying job (G3.3) is named as such by `look` too, never "can move here"; a job asking for `self-hosted` alone or another runner's custom label is "asks for a runner that is not ours", not "cannot run on this computer". Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (G3's run). | planned: test_G1_15_look_and_move_judge_jobs_alike |
 
 ### G2 Install
 
@@ -297,6 +298,7 @@ nothing.
 | G9.2 | The plan, `PROMISES.json` and the tests agree; a version is refused while a promise due in it has no test, and the version after it until the promise was seen on a real machine. | `test_PROMISES_no_version_ships_while_a_promise_due_in_it_is_not_built` |
 | G9.3 | Tests that need GitHub use a stand-in of its API built from recorded real answers (in `tests/fixtures/`, recorded per Part 7); a row whose test leans on the stand-in is proven on a real machine and a real private repository before the tag. | planned: test_G9_3_the_github_stand_in_answers_as_recorded |
 | G9.4 | Recorded GitHub answers are scrubbed before they are committed: no token, no email address, no real person's name or login (commit authors, run actors); a test reads every fixture and refuses any of them. | `test_G9_4_fixtures_hold_no_token_no_email_no_real_names` |
+| G9.5 | The scrubber replaces a person's name or login only where it is a whole value of a name, login or author field, never inside paths or other text (a committer named like a product once turned `.github/workflows` into a made-up path); a test checks that every fixture's paths survive scrubbing. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (G3's run). | planned: test_G9_5_scrubbing_never_changes_paths |
 
 ### G10 Self-update
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Plan 1.8, from G3's run on a stock virtual machine: G1.15 (look and move judge jobs alike), G9.5 (scrubbing
+  never changes paths); rows R42 and R43.
 - Plan 1.7: G5.7 (a cut job is named as cut) moves into 0.1.0 (rows R11 and R29); G4.8 measures the 2 GiB floor
   against the memory max and its stop line names `setup --limits` and what it costs.
 - Plan 1.6: five line kinds (`waiting` joins `ok`, `warn`, `stop`, `need you`) and G8.3's whole exit-code table;
