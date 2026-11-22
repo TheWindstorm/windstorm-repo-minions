@@ -624,6 +624,20 @@
    "issue": 63,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R45",
+   "seen": "2026-11-22, the design of G4.4: a sleep lock in block mode would also refuse a sleep the person chose, and a lid-switch lock would keep a closed laptop awake in a bag.",
+   "promise": "The skill stops only the idle sleep during a job and never holds the lid switch, a low-battery sleep or a sleep the person chose.",
+   "codon": "G4.9",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 69,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
