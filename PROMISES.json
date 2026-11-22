@@ -288,6 +288,48 @@
    "issue": null,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R21",
+   "seen": "Found in review of plan 1.0: a runner carries GitHub's default labels (self-hosted, OS, architecture) unless registered without them, so a job asking only for 'self-hosted' would still land on a runner held by removing our own labels.",
+   "promise": "Runners are registered with no default labels and carry only ours; a job asking for 'self-hosted' alone is seen to wait, not land, on a real runner before any hold is built.",
+   "codon": "G2.11",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R22",
+   "seen": "Found in review of plan 1.0: a personal account allows one runner per repository, and the person this skill is for often has many private repositories; a server with one runner per repository needed one shared CPU limit for all of them.",
+   "promise": "One overall limit of K jobs at once across our runners on a computer, idle runners counted against measured memory, set-up for a list with the admin step once, and a status that sums up.",
+   "codon": "G12.1",
+   "owner": "maintainer",
+   "first_ship_in": "0.2.0",
+   "ship_in": "0.2.0",
+   "test": "",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R23",
+   "seen": "Found in review of plan 1.0: a job waits up to 24 hours for a runner and is then cancelled by GitHub; a hold nobody notices looks to a newcomer like a broken project.",
+   "promise": "status warns first when a job has waited past a threshold behind our hold, and the person hears before set-up that held checks wait and are cancelled after 24 hours.",
+   "codon": "G5.13",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

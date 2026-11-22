@@ -24,7 +24,7 @@ plainly until the test exists, and in `code` form once it does (Part 0, rule 2).
 - Part 4. Architecture
 - Part 5. The genes: G1 Look first · G2 Install · G3 Move the chores · G4 Keep it ready · G5 Watch and hold ·
   G6 Remove · G7 Words to the person · G8 The skill and its commands · G9 Tests, CI and the promise gate ·
-  G10 Self-update · G11 Laptops
+  G10 Self-update · G11 Laptops · G12 Many repositories on one computer
 - Part 6. Repository layout
 - Part 7. Platform contracts to check before coding
 - Part 8. Milestones and acceptance
@@ -128,11 +128,11 @@ what GitHub's own page says on the day it is read, and tells the person when tha
 | **Runner** | One copy of GitHub's runner program, registered to one repository, on one computer. |
 | **Minion** | A computer that carries one or more runners. |
 | **Runner user** | The account on the minion that the runners run as. It is not the person's own account and has no admin rights. |
-| **Label** | A word a runner carries; a job's `runs-on` asks for labels. Ours: `self-hosted`, the OS and architecture GitHub adds, `minions`, and `minions-<size>` (G2.7). |
-| **Hold** | The state in which a runner takes no new job. A running job finishes. Made by changing labels, never by stopping a job. |
+| **Label** | A word a runner carries; a job's `runs-on` asks for labels. Our runners are registered with no default labels (no `self-hosted`, no OS, no architecture) and carry only ours: `minions` and `minions-<size>` (G2.7, G2.11). |
+| **Hold** | The state in which a runner takes no new job. A running job finishes. Made by removing our labels, never by stopping a job, with one exception: a repository that is no longer private (G5.4). |
 | **Drain** | Hold, then wait until no job is running. |
 | **Both sides** | GitHub's view of a runner (online, busy) and the minion's view (service running, a job process present). |
-| **Dispatch test** | One tiny job sent to the repository to see whether GitHub starts jobs for it at all (G1.4). |
+| **Start test** | One job sent to the repository, on a temporary branch, that runs on no machine, to see whether GitHub starts jobs for it at all; it leaves nothing behind (G1.4). |
 
 ---
 
@@ -140,10 +140,10 @@ what GitHub's own page says on the day it is read, and tells the person when tha
 
 | Codon | Claim | Test |
 |---|---|---|
-| INV1 | Never a runner on a public repository, ours or the person's. `setup` refuses a repository that is not private; `watch` holds every runner of a repository within its interval when that repository is no longer private, and says so (G5.4). The guard lives in the tool, never only in a workflow file, because a fork's pull request runs its own copy of the workflow. | planned: test_INV1_never_a_runner_on_a_public_repository |
+| INV1 | Never a runner on a public repository, ours or the person's. `setup` refuses a repository that is not private; `watch` stops every runner of a repository within its interval when that repository is no longer private, and says so (G5.4). The guard lives in the tool, never only in a workflow file, because a fork's pull request runs its own copy of the workflow. | planned: test_INV1_never_a_runner_on_a_public_repository |
 | INV2 | No secret on a command line, in a log, on the screen or in a file another user can read. Registration and removal tokens are read from standard input or a 0600 file, used, and dropped. | planned: test_INV2_no_secret_on_argv_or_in_output |
 | INV3 | Nothing that costs money: the tool never changes a plan, a spending limit, a payment method or a billed setting, and never adds a GitHub-hosted job without the person choosing it by name (G5.9). | planned: test_INV3_nothing_that_costs_money |
-| INV4 | Never kill a running job. Every stop, restart, update and removal drains first and waits (G5.6). The one exception is the person's own explicit `remove --now`, which says what it will cut before it does. | planned: test_INV4_never_kill_a_running_job |
+| INV4 | Never kill a running job. Every stop, restart, update and removal drains first and waits (G5.6). Two exceptions, each said before it happens: the person's own explicit `remove --now`, and a repository that is no longer private (G5.4), where the service is stopped after a short drain even if a job still runs. | planned: test_INV4_never_kill_a_running_job |
 | INV5 | Say only what was seen. Every status line names the side it came from and the time it was read. "Online" is never written as "working"; a cost sentence always carries the date its source was read. | planned: test_INV5_say_only_what_was_seen |
 | INV6 | Removal leaves nothing: after `remove`, a census of runners on GitHub, services, folders, the runner user, labels in workflows and scheduled checks shows none of ours (G6). | planned: test_INV6_remove_leaves_nothing |
 | INV7 | The person's steps stay theirs: logging in to GitHub, typing their computer's admin password once, approving access, merging the pull request. The agent never presses Agree or Accept on a terms or consent screen. | planned: test_INV7_the_persons_steps_stay_theirs |
@@ -180,12 +180,14 @@ nothing.
 | G1.1 | `look <owner/repo>` reads the repository's visibility and stops with a plain reason if it is not private (INV1). | planned: test_G1_1_look_stops_on_a_repository_that_is_not_private |
 | G1.2 | `look` reads whether the owner is a personal account or an organisation and says what follows: a personal account can only have runners per repository; an organisation can use a runner group limited to chosen private repositories. | planned: test_G1_2_look_names_account_kind_and_runner_scope |
 | G1.3 | `look` checks that the person's GitHub CLI login has what the next steps need (admin on the repository to register a runner; `workflow` scope to change workflow files) and names any that is missing, with the one command the person runs to add it. | planned: test_G1_3_look_names_missing_token_rights |
-| G1.4 | `look` sends one dispatch test, only with the person's yes: a tiny workflow whose one job asks for a label no runner carries, so GitHub creates the job and it waits, running on no machine at all; `look` reads that one job exists and cancels the run. It reports whether GitHub creates jobs for this repository. A run that ends `startup_failure` with zero jobs is reported as "GitHub did not start the run; this is the account's or repository's setting or billing, not your computer", and `setup` stops there: a runner cannot fix it, and the skill is never offered as a way around it. | planned: test_G1_4_zero_job_startup_failure_is_named_and_stops_setup |
+| G1.4 | `look` runs one start test, only with the person's yes to that one change: it pushes a temporary branch `minions-start-test-<random>` whose only commit has no parent and holds one file, `.github/workflows/minions-start-test.yml`, whose one job asks for a label no runner carries. Because the commit holds no other file, none of the person's own workflows runs on it; the default branch is never touched, so a protected default branch does not matter. GitHub creates the job and it waits on no machine; `look` reads that one job exists, cancels the run, deletes the run, deletes the branch, and reads back that the branch and the run are gone (Part 7 C9). A run that ends `startup_failure` with zero jobs is reported as "GitHub did not start the run; this is the account's or repository's setting or billing, not your computer", and `setup` stops there: a runner cannot fix it, and the skill is never offered as a way around it. If the branch cannot be pushed (a rule on branch creation, no `workflow` scope), `look` says which and reads the repository's recent runs instead; with none, it says "could not test whether GitHub starts jobs here" and `setup` asks the person to decide. | planned: test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure |
 | G1.5 | `look` counts the Actions secrets a job of this repository can read (repository, environment and, where readable, organisation) and names them, so the person knows what a job on their computer can reach. Names only, never values. | planned: test_G1_5_look_names_the_secrets_a_job_could_read |
 | G1.6 | `look` surveys the computer: OS and version, architecture, cores, memory, swap in use, disk kind where it can be read, free space on the disk that will hold the work folders, whether it runs on battery or Wi-Fi only, its sleep setting. | planned: test_G1_6_look_surveys_the_computer |
 | G1.7 | `look` lists what already lives on the computer that a job could disturb or be disturbed by: running services that listen on ports, container projects, other runners. A computer that serves something live is named as such, and `setup` asks the person to choose another computer or say yes in words. | planned: test_G1_7_look_names_what_already_lives_on_the_computer |
 | G1.8 | `look` reads every workflow of the repository and lists, per job: its `runs-on`, the tools it asks for (setup actions, `sudo`, containers, browsers), and whether this computer has them. | planned: test_G1_8_look_lists_each_jobs_needs_against_the_computer |
 | G1.9 | `look` reads GitHub's billing page for Actions, finds the sentence on self-hosted runners, and prints it with the date read; if the page cannot be read or the sentence is not found, it says that, never a guess (G7.1). | planned: test_G1_9_look_reads_the_current_cost_rule_with_its_date |
+| G1.10 | The first thing `look` checks: the GitHub CLI is installed and logged in. If not: `need you: install the GitHub CLI` with the one install command for this OS, or `need you: log in to GitHub` with `gh auth login`, and nothing else runs. Logging in is the person's step (INV7). | planned: test_G1_10_no_github_cli_or_login_is_the_first_need_you |
+| G1.11 | `look` checks that the person can become admin on this computer (to make the runner user and the boot service). If not: `need you: this needs an admin of this computer` and `stop`, before anything is touched. | planned: test_G1_11_no_admin_rights_on_the_computer_stops_before_anything |
 
 ### G2 Install
 
@@ -197,20 +199,21 @@ nothing.
 | G2.4 | Each runner is a fresh unpacked copy in its own folder, with its own work folder; never a copy of another runner's folder, never a shared cache. | planned: test_G2_4_each_runner_has_its_own_folders |
 | G2.5 | The registration token is asked of GitHub through the API by the tool, passed to the runner's configuration on standard input, and never written to disk or shown (INV2). | planned: test_G2_5_the_registration_token_goes_by_stdin_only |
 | G2.6 | Each runner is registered to exactly one repository (personal accounts) or to a runner group limited to the chosen private repositories (organisations); never to a whole organisation's every repository. | planned: test_G2_6_a_runner_serves_only_chosen_private_repositories |
-| G2.7 | Labels: `minions` and `minions-small`, `minions-medium` or `minions-large`, chosen from G1.6's survey, so heavy jobs can ask for a strong computer. | planned: test_G2_7_labels_name_the_computers_size |
+| G2.7 | Each runner is registered with the runner's option for no default labels and carries only `minions` and one of `minions-small`, `minions-medium`, `minions-large` (from G1.6's survey), so heavy jobs can ask for a strong computer. | planned: test_G2_7_runners_carry_only_our_labels |
 | G2.8 | The runner's credential files are readable by the runner user only (0600), read back after install. | planned: test_G2_8_credential_files_are_the_runner_users_only |
 | G2.9 | The runner runs as a boot service that starts again by itself after a restart, ordered after the network and after our limits are in place. | planned: test_G2_9_the_runner_is_a_boot_service_started_after_its_limits |
 | G2.10 | `setup` ends with both sides read: GitHub lists the runner online and idle, and the service is running. Until both are seen, the line is `waiting`, never `ok`. | planned: test_G2_10_setup_ends_with_both_sides_read |
+| G2.11 | A job that asks for `self-hosted` alone, or for an OS or architecture label alone, never lands on our runner: it waits for another runner. Seen on a real runner (Part 7 C3) before any G5 code is written, because every hold rests on it. | planned: test_G2_11_a_job_asking_only_for_self_hosted_never_lands_on_ours |
 
 ### G3 Move the chores
 
 | Codon | Claim | Test |
 |---|---|---|
-| G3.1 | `move` makes a branch and a pull request in the repository that changes `runs-on` of each job that can move to `[self-hosted, minions]` (plus a size label where the job needs one). The person merges it; the tool never merges. | planned: test_G3_1_move_opens_a_pull_request_and_never_merges |
+| G3.1 | `move` makes a branch and a pull request in the repository that changes `runs-on` of each job that can move to `[minions]` (plus a size label where the job needs one), never to `self-hosted`. The person merges it; the tool never merges. | planned: test_G3_1_move_opens_a_pull_request_and_never_merges |
 | G3.2 | Jobs that no owned computer can take (another OS, a GPU, a tool G1.8 found missing) are left as they are and listed in the pull request's description with the reason. | planned: test_G3_2_jobs_that_cannot_move_are_left_and_named |
 | G3.3 | A job that publishes or deploys (a release, a package upload, a deploy, anything on a tag push or holding a deploy secret) is never moved silently: it is left unchanged and named, and moving it needs the person's word for that job. | planned: test_G3_3_publishing_jobs_are_never_moved_silently |
 | G3.4 | Each moved workflow gets `concurrency` with `cancel-in-progress` for pull requests, so a newer push replaces the older run instead of queueing behind it. Only where the workflow has none already. | planned: test_G3_4_moved_workflows_cancel_superseded_runs |
-| G3.5 | `move` adds a small check the person can keep (`lint`): every `runs-on` in the repository asks for labels some registered runner carries, open pull requests' heads included; a job no runner can take is named before it waits. | planned: test_G3_5_lint_names_jobs_no_runner_can_take |
+| G3.5 | `move` adds a small check the person can keep (`lint`): every `runs-on` in the repository asks for labels some registered runner carries, open pull requests' heads included; a job no runner can take is named before it waits, and so is a job that asks for `self-hosted` alone. | planned: test_G3_5_lint_names_jobs_no_runner_can_take |
 | G3.6 | After the merge, `move --verify` sees one real job of each moved workflow finish on the minion and reports its result. "Moved" is said only after that. | planned: test_G3_6_moved_is_said_only_after_a_real_job_ran |
 
 ### G4 Keep it ready
@@ -231,7 +234,7 @@ nothing.
 | G5.1 | `status` prints one line per runner: GitHub's side (online/offline, busy/idle) and the minion's side (service running, a job process present), each with the time read; then the repository's queue: jobs waiting and the age of the oldest. | planned: test_G5_1_status_reads_both_sides_and_the_queue |
 | G5.2 | "Idle" is said only when both sides agree: GitHub says not busy AND no job process runs on the minion. Otherwise the line says which side says what. | planned: test_G5_2_idle_only_when_both_sides_agree |
 | G5.3 | `watch` runs on a schedule (default every 5 minutes) and writes one line per run to the journal; a heartbeat older than three intervals is reported by `status` as "the watch is not running". | planned: test_G5_3_the_watch_runs_and_its_silence_is_noticed |
-| G5.4 | When a repository is no longer private, `watch` holds its runners within one interval and `status` says why first. Holding again is never undone by itself: `resume` after the repository is private again. | planned: test_G5_4_a_repository_turned_public_is_held_at_once |
+| G5.4 | When a repository is no longer private, `watch`, within one interval, removes our labels from its runners, drains with a short limit (default 2 minutes), then stops their service and keeps it stopped, and `status` says why first. A label change alone is not the boundary here, because a fork's copy of a workflow can ask for any label. `resume` works only once the repository is private again and the person says so. | planned: test_G5_4_a_repository_no_longer_private_is_stopped_after_a_short_drain |
 | G5.5 | Holds for low disk, high load or memory pressure (thresholds from the survey) and quiet hours the person sets are made by changing labels so no job asks for them; running jobs finish; the hold lifts by itself when the reason is gone, except G5.4. | planned: test_G5_5_holds_change_labels_and_never_stop_a_job |
 | G5.6 | `drain` holds and then waits until both sides say idle (G5.2), with a time limit; it ends with "online and idle" or says what is still running. Every restart, update and removal goes through it (INV4). | planned: test_G5_6_drain_ends_with_online_and_idle_read |
 | G5.7 | After a restart of the minion, `status` names any job that was running when it went down and was cancelled, and offers to run it again once. | planned: test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again |
@@ -240,6 +243,7 @@ nothing.
 | G5.10 | `watch` re-reads GitHub's cost rule (G1.9) once a week and tells the person, at the next `status`, when the self-hosted sentence changed, with both versions and dates. | planned: test_G5_10_a_change_in_the_cost_rule_is_told |
 | G5.11 | Before a planned restart (a system update, a reboot, a shutdown): `drain --restart` holds every runner on the computer, waits for the running job, and ends with "online and idle: safe to restart now" or names what still runs. The hold lifts by itself once the computer has restarted and both sides read the runner online. The skill tells the agent to run it before any restart it asks for, and tells the person to ask for it before theirs: a restart cancels the running job. | planned: test_G5_11_drain_before_a_planned_restart_lifts_after_the_boot |
 | G5.12 | GitHub removes a runner it has not seen connect for more than 14 days (Part 7 C5). When `watch` or `status` reads that a runner of ours is gone on GitHub's side while its service is there (a laptop away for two weeks, a computer switched off), it holds the service from restarting in a loop, says so plainly, and `setup` again re-registers it with the person's login, keeping its folders and labels. | planned: test_G5_12_a_runner_github_removed_is_named_and_registered_again |
+| G5.13 | A hold nobody notices looks like a broken project. When a job of the repository has waited longer than a threshold (default 30 minutes) while our runners are held, offline or asleep, `status` prints `warn` first: which job, how long, which hold, and that GitHub cancels it after 24 hours. | planned: test_G5_13_a_job_waiting_behind_our_hold_is_warned |
 
 ### G6 Remove
 
@@ -259,6 +263,8 @@ nothing.
 | G7.3 | The skill tells the person, before `setup`, what a job on their computer can reach (G1.5, G1.7) and that anyone who can push to the repository can run code there. | planned: test_G7_3_what_a_job_can_reach_is_said_before_setup |
 | G7.4 | The skill tells the person that a restart or sleep of the minion cancels or delays the job running on it, and that a job waits at most 24 hours for a runner before GitHub cancels it. | planned: test_G7_4_restart_and_waiting_limits_are_said |
 | G7.5 | The skill never says required checks or branch protection hold merges unless the tool read that the repository has them. | planned: test_G7_5_merge_rules_are_said_only_when_read |
+| G7.6 | Version 0.1.0 says, in the skill and at `setup`, that it serves one repository per computer and that more come in the next version (G12). | planned: test_G7_6_version_0_1_says_one_repository_and_more_next |
+| G7.7 | Before `setup` the person hears: "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that waited 24 hours." | planned: test_G7_7_waiting_checks_are_said_before_setup |
 
 ### G8 The skill and its commands
 
@@ -282,6 +288,18 @@ nothing.
 | Codon | Claim | Test |
 |---|---|---|
 | G10.1 | `self-update` installs the newest released version of the skill and tool, only while no step of the tool is running (the runner itself is updated by GitHub, G4.5), keeps the previous version beside it, and goes back to it if `doctor` fails. | planned: test_G10_1_self_update_steps_back_on_a_failed_doctor |
+
+### G12 Many repositories on one computer
+
+A personal account allows one runner per repository, and the person this skill is for often has many private
+repositories. So one computer carrying many runners is the main case, not an edge.
+
+| Codon | Claim | Test |
+|---|---|---|
+| G12.1 | One overall limit across all our runners on a computer: at most K jobs at once, K from the survey (G1.6). Linux: all our runner services in one slice with the CPU and memory limits of G4.2 applied to the slice as a whole; when K runners are busy, the idle ones are held (G5.5) until one is free. | planned: test_G12_1_at_most_k_jobs_at_once_across_all_our_runners |
+| G12.2 | How many idle runners a computer can carry is computed from one idle runner's memory as measured on that OS (Part 7 C7); `setup` refuses a runner past that number and says how many there are and why. | planned: test_G12_2_idle_runners_are_counted_against_measured_memory |
+| G12.3 | `setup` takes a list of repositories; `look` runs for each; the admin step is asked once for the whole list; each repository gets its own runner, folders and registration. | planned: test_G12_3_setup_for_a_list_asks_the_admin_step_once |
+| G12.4 | `status` sums up first: runners, busy, held and why, jobs waiting and the oldest, then one line per repository. | planned: test_G12_4_status_sums_up_before_the_lines |
 
 ### G11 Laptops
 
@@ -326,21 +344,22 @@ version and machine kind, before the code that leans on it. None is assumed.
 |---|---|---|
 | C1 | The runner registration and removal token endpoints for a repository and for an organisation; who may call them; how long a token lives. | G2.5, G6.1 |
 | C2 | The runners list endpoint: its `status` and `busy` fields, how soon they change after a job starts and ends, and after the service stops. | G2.10, G5.1, G5.2 |
-| C3 | Changing a runner's custom labels through the API while it runs: does the runner keep them across its own restart, and does a waiting job that asks for a removed label stay queued (the hold mechanism). | G5.5 |
+| C3 | On a real runner registered with no default labels: a job that asks for `self-hosted` alone waits and does not land on it; a job that asks for our labels does. Then: changing its labels through the API while it runs, whether it keeps them across its own restart, and whether a waiting job that asks for a removed label stays queued (the hold). The first part is seen before any G5 code. | G2.7, G2.11, G5.5 |
 | C4 | What a run looks like when GitHub does not start it: `startup_failure`, zero jobs, its fields; reproduced on a repository where jobs are not allowed to run. | G1.4 |
 | C5 | GitHub's rules for runners that are offline for long (removal after a time) and that are too old (forced update), as written in its docs on the day. | G4.5, G5.8 |
 | C6 | The release assets of GitHub's runner and where their checksums are published. | G2.3 |
-| C7 | Linux: the unit the runner's own service script writes, its stop behaviour while a job runs, and a drop-in for slice, CPU and memory limits. | G2.9, G4.2, G4.6 |
+| C7 | Linux: the unit the runner's own service script writes, its stop behaviour while a job runs, a drop-in for slice, CPU and memory limits, and the memory one idle runner uses (for G12.2). | G2.9, G4.2, G4.6, G12.1, G12.2 |
 | C8 | macOS: whether a LaunchDaemon can run the runner as a user with no login session; what the runner needs from a GUI session; how to keep the machine awake during a job; what limits macOS allows. | G2.9, G4.2, G4.4 |
-| C9 | The workflow-dispatch API for a tiny test workflow, and what it needs (a workflow file on the default branch). | G1.4 |
+| C9 | Starting a test run without touching the default branch: a push of a one-file orphan commit to a temporary branch, then cancel, delete the run, delete the branch. (Workflow-dispatch needs the file on the default branch, so G1.4 does not use it.) | G1.4 |
 | C10 | Organisation runner groups: limiting a group to selected private repositories, and that groups refuse public repositories by default. | G2.6 |
 | C11 | GitHub's billing page: where the self-hosted sentence is and how it is worded on the day. | G1.9, G5.10 |
 | C12 | Laptops: how long Linux's delay lock can put off a sleep; what a macOS power assertion holds and what it does not (lid closed on battery); how to read battery, mains power and lid state on each OS without admin rights. | G11.1 to G11.3 |
 
 Seen once so far (2026-11-22, a private repository of a free GitHub organisation, no runner registered): a job
 that asks for a label no runner carries is created and waits (`queued`, 1 job); cancelled, the run's timing showed
-nothing billable. That is the shape of G1.4's dispatch test; C4 and C9 still need the failing case and the API
-written down.
+nothing billable. Then (18:10Z) with a push workflow of the "person's" on the default branch: a one-file orphan
+commit pushed to a temporary branch started only its own workflow, one job, queued; cancelled, the run deleted,
+the branch deleted, nothing billable and nothing left. That is G1.4's start test, written in `docs/CONTRACTS.md`.
 
 ---
 
@@ -348,8 +367,8 @@ written down.
 
 | Version | What | Accepted when |
 |---|---|---|
-| 0.1.0 | Linux, one private repository, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.6, G5.1 to G5.4, G5.6, G5.11, G5.12, G6, G7, G8, G9, G11 on Linux, all INV. | Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
-| 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.7, G5.8, G5.10, G11 on macOS. | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
+| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.6, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.13, G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
+| 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.7, G5.8, G5.10, G11 on macOS, G12 (many repositories on one computer). | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
 | 0.3.0 | The opt-in offline fallback (G5.9), self-update (G10), Windows if Part 11 Q4 says yes. | As above, on each OS it claims. |
 
 ---
@@ -372,8 +391,11 @@ repository made for the proof and deleted after, before the tag.
 - **P5 Two jobs at once.** Two pushes: one runs, one waits, no shared folder touched by both.
 - **P6 Remove.** `remove --all`: the census is empty on GitHub and the computer, compared with a census taken
   before `setup`.
-- **P7 Turned public** (on a repository made for it, empty of code and secrets, for the minutes of the test only):
-  the runner is held within one watch interval.
+- **P7 Turned public.** This proof breaks the first rule for a few minutes, so it runs only under all of these
+  guards: a repository made for it, empty of code and secrets; fork pull requests needing approval for all outside
+  contributors; the watch interval shortened for the test; the runner on a clean test account that holds nothing
+  else of worth; public for under two minutes, then private again and deleted right after; G5.4 (stop after a
+  short drain) in force. It passes when the runner is stopped within the shortened interval and `status` says why.
 - **P8 A planned restart.** `drain --restart` while a job runs: no new job starts, the running one finishes,
   "safe to restart now" is said only then; after the restart the hold lifts by itself and the next push runs.
 - **P9 Sleep and lid** (a laptop): a sleep asked during a job is put off as far as the OS allows; a sleep forced
@@ -391,7 +413,9 @@ repository made for the proof and deleted after, before the tag.
    repository's jobs away from another's secrets.
 3. **A runner user with no admin rights and no container access by default.** Access to the container service is
    admin access by another name. Jobs that need containers are named by G1.8 and need the person's word (Part 11 Q2).
-4. **Hold by label, never by stopping a job.** A stop that kills is itself an incident.
+4. **Hold by label, never by stopping a job.** A stop that kills is itself an incident. One exception, written
+   here on purpose: a repository that is no longer private is stopped after a short drain (G5.4), because a label
+   is not a boundary against a fork's copy of a workflow.
 5. **The tool reads GitHub through the person's GitHub CLI login** and never stores a GitHub token of its own.
 6. **Never on a public repository**, checked at the tool, at setup and on a schedule, because GitHub itself
    recommends self-hosted runners for private repositories only and visibility can change after setup.
@@ -401,9 +425,9 @@ repository made for the proof and deleted after, before the tag.
 
 ## Part 11. Open questions
 
-- **Q1 The name's short line.** Working wording: "your own computers do your repo's chores". The earlier draft's
-  second half (that GitHub's meter stops) is not used: storage still counts, and GitHub has announced a charge it
-  may bring back. To be settled by the skill's owner.
+- **Q1 The name's short line. Settled 2026-11-22:** "your own computers do your repo's chores". The earlier
+  second half (that GitHub's meter stops) is gone: storage still counts, and GitHub has announced a charge it may
+  bring back.
 - **Q2 Jobs that need containers.** Options: rootless containers for the runner user; a virtual machine per job;
   refuse. Decide before 0.2.0 with what C7 and C8 show.
 - **Q3 The offline fallback.** Known patterns: a first job on GitHub's machines that asks whether a runner with our
