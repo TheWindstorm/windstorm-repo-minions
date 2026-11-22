@@ -619,7 +619,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G9_6_the_gate_counts_only_tests_that_ran",
    "proven": "",
    "issue": 63,
    "moved_why": "",
