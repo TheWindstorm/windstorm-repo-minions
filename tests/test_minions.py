@@ -91,6 +91,9 @@ class FakeHost(M.Host):
     def home(self):
         return "/home/person"
 
+    def user(self):
+        return "person"
+
     def disk_free(self, path):
         return self.free
 
@@ -221,6 +224,24 @@ class G1(unittest.TestCase):
         code, lines = look(gh, linux_host(), start=True)
         self.assertTrue(any("no run appeared within the time limit" in x for x in lines), lines)
         self.assertIn(("DELETE", f"repos/{REPO}/git/refs/heads/BRANCH"), gh.calls)
+        # 3b. The run appears only after the branch is gone: it is cancelled and deleted too.
+        seen = {"n": 0}
+
+        def late_runs(body):
+            seen["n"] += 1
+            return (500, {"message": "boom"}) if seen["n"] == 1 else (200, {"workflow_runs": [{"id": 777}]})
+        gh = StandIn(self.start, overrides={("GET", f"repos/{REPO}/actions/runs?branch=BRANCH&per_page=5"): late_runs,
+                                            ("GET", f"repos/{REPO}/actions/runs/777"): (404, {}),
+                                            ("POST", f"repos/{REPO}/actions/runs/777/cancel"): (202, {}),
+                                            ("DELETE", f"repos/{REPO}/actions/runs/777"): (204, None)})
+        start_wait = M.start_test.__defaults__
+        M.start_test.__defaults__ = (5, 5)
+        try:
+            code, lines = look(gh, linux_host(), start=True)
+        finally:
+            M.start_test.__defaults__ = start_wait
+        self.assertIn(("DELETE", f"repos/{REPO}/actions/runs/777"), gh.calls)
+        self.assertIn("ok start test: the run and the branch are deleted, read back gone", lines)
         # 4. The branch cannot be pushed (no workflow scope): said, and the recent runs are read instead.
         gh = StandIn(self.recent, overrides={("POST", f"repos/{REPO}/git/blobs"):
                                              (201, {"sha": "a" * 40}),
@@ -276,11 +297,18 @@ class G1(unittest.TestCase):
     def test_G1_7_look_names_what_already_lives_on_the_computer(self):
         host = linux_host(which=("gh", "sudo", "systemctl", "docker"),
                           runs={("docker", "ps"): (0, "shop-db\nshop-web\n"),
-                                ("systemctl", "list-units"): (0, "actions.runner.o-r.box-r.service loaded active running X\n")})
+                                ("systemctl", "list-units"): (0, "actions.runner.o-r.box-r.service loaded active running X\n"
+                                                                 "actions.runner.o-q.box-q.service loaded active running X\n"),
+                                ("systemctl", "show", "-p", "User", "--value", "actions.runner.o-r.box-r.service"): (0, "person\n"),
+                                ("systemctl", "show", "-p", "User", "--value", "actions.runner.o-q.box-q.service"): (0, "someone-else\n")})
         _, lines = look(StandIn(self.recent), host)
         self.assertIn("warn 1 port(s) open to the network here: 443", lines)
-        self.assertIn("warn 2 container(s) running: shop-db (docker), shop-web (docker)", lines)
-        self.assertIn("warn 1 other runner service(s) here: actions.runner.o-r.box-r.service", lines)
+        # On a shared computer other people's things are counted, never named.
+        self.assertIn("warn 2 container(s) running on this computer's shared container service "
+                      "(not named: they may be another person's)", lines)
+        self.assertFalse(any("shop-db" in x or "someone-else" in x or "box-q" in x for x in lines), lines)
+        self.assertIn("warn 1 other runner service(s) of yours here: actions.runner.o-r.box-r.service", lines)
+        self.assertIn("warn 1 other runner service(s) here that do not run as you (not named)", lines)
         self.assertTrue(any("serves something live" in x for x in lines), lines)
         self.assertEqual(M.listening_ports(TCP), {443}, "loopback and non-listening sockets are not counted")
         host = linux_host(files={"/proc/net/tcp": "  sl local st\n"})

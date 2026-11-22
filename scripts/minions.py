@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime as dt
+import getpass
 import grp
 import html
 import json
@@ -139,6 +140,9 @@ class Host:
 
     def home(self) -> str:
         return os.path.expanduser("~")
+
+    def user(self) -> str:
+        return getpass.getuser()
 
     def disk_free(self, path: str) -> tuple[int, int] | None:
         try:
@@ -477,6 +481,17 @@ def cleanup_start_test(gh: GitHub, host: Host, repo: str, branch: str | None, ru
         s, _ = gh.api("GET", f"repos/{repo}/git/ref/heads/{branch}")
         if s != 404:
             left.append(f"branch {branch}")
+        if not run_id:
+            # GitHub may make the run late, after the branch is gone: look once more and take it away too
+            host.sleep(10)
+            s, d = gh.api("GET", f"repos/{repo}/actions/runs?branch={branch}&per_page=5")
+            for late in ((d or {}).get("workflow_runs", []) if s == 200 else []):
+                gh.api("POST", f"repos/{repo}/actions/runs/{late['id']}/cancel")
+                host.sleep(3)
+                gh.api("DELETE", f"repos/{repo}/actions/runs/{late['id']}")
+                s2, _ = gh.api("GET", f"repos/{repo}/actions/runs/{late['id']}")
+                if s2 != 404:
+                    left.append(f"run {late['id']}")
     if branch or run_id:
         if left:
             rep.warn("start test: could not remove " + " and ".join(left) + "; remove it by hand")
@@ -684,8 +699,10 @@ def listening_ports(tcp_text: str) -> set[int]:
 
 
 def what_lives_here(host: Host, rep: Report) -> dict:
-    """G1.7: what a job could disturb or be disturbed by. Names and counts only."""
-    out = {"ports": set(), "containers": [], "runners": []}
+    """G1.7: what a job could disturb or be disturbed by. On a shared computer other users' things are counted,
+    never named: only what is the person's own is named (their rootless containers, runner services that run as
+    them). Port numbers are named; they say nothing of whose they are."""
+    out = {"ports": set(), "containers": [], "shared_containers": 0, "runners": [], "others_runners": 0}
     if host.system() == "Linux":
         for f in ("/proc/net/tcp", "/proc/net/tcp6"):
             out["ports"] |= listening_ports(host.read(f) or "")
@@ -699,15 +716,24 @@ def what_lives_here(host: Host, rep: Report) -> dict:
     for tool in ("docker", "podman"):
         if host.which(tool):
             rc, text = host.run([tool, "ps", "--format", "{{.Names}}"])
-            if rc == 0:
-                out["containers"] += [f"{x} ({tool})" for x in text.split()]
-            else:
+            if rc != 0:
                 rep.warn(f"{tool} is installed but its containers could not be listed from this account")
+            elif tool == "podman":
+                out["containers"] += [f"{x} (podman, yours)" for x in text.split()]
+            else:
+                # docker's service is shared by every account allowed to use it: counted, not named
+                out["shared_containers"] += len(text.split())
     if host.system() == "Linux" and host.which("systemctl"):
         rc, text = host.run(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--no-pager",
                              "actions.runner.*"])
         if rc == 0:
-            out["runners"] = [x.split()[0] for x in text.splitlines() if x.strip()]
+            me = host.user()
+            for unit in [x.split()[0] for x in text.splitlines() if x.strip()]:
+                urc, owner = host.run(["systemctl", "show", "-p", "User", "--value", unit])
+                if urc == 0 and owner.strip() == me:
+                    out["runners"].append(unit)
+                else:
+                    out["others_runners"] += 1
     elif host.system() == "Darwin":
         rc, text = host.run(["launchctl", "list"])
         if rc == 0:
@@ -719,10 +745,16 @@ def what_lives_here(host: Host, rep: Report) -> dict:
     else:
         rep.ok("no port open to the network")
     if out["containers"]:
-        rep.warn(f"{len(out['containers'])} container(s) running: {', '.join(out['containers'][:20])}")
+        rep.warn(f"{len(out['containers'])} container(s) of yours running: {', '.join(out['containers'][:20])}")
+    if out["shared_containers"]:
+        rep.warn(f"{out['shared_containers']} container(s) running on this computer's shared container service "
+                 "(not named: they may be another person's)")
     if out["runners"]:
-        rep.warn(f"{len(out['runners'])} other runner service(s) here: {', '.join(out['runners'][:10])}")
-    serves = bool(set(ports) & {80, 443, 5432, 3306, 6379, 27017}) or bool(out["containers"])
+        rep.warn(f"{len(out['runners'])} other runner service(s) of yours here: {', '.join(out['runners'][:10])}")
+    if out["others_runners"]:
+        rep.warn(f"{out['others_runners']} other runner service(s) here that do not run as you (not named)")
+    serves = (bool(set(ports) & {80, 443, 5432, 3306, 6379, 27017}) or bool(out["containers"])
+              or bool(out["shared_containers"]))
     out["serves"] = serves
     if serves:
         rep.warn("this computer looks like it serves something live: setup will ask you to choose another "
