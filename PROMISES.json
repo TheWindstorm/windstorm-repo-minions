@@ -479,7 +479,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G8_5_no_system_call_waits_on_a_pager",
    "proven": "",
    "issue": 47,
    "moved_why": "",

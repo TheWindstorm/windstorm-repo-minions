@@ -747,9 +747,9 @@ class G2(unittest.TestCase):
         order = [" ".join(a) for a in host.ran]
         svc = next(i for i, a in enumerate(order) if "svc.sh install" in a)
         tee = max(i for i, a in enumerate(order) if a.startswith("sudo -n tee"))
-        reload_ = order.index("sudo -n systemctl daemon-reload")
-        enable = order.index(f"sudo -n systemctl enable {UNIT}")
-        start = order.index(f"sudo -n systemctl restart {UNIT}")
+        reload_ = order.index("sudo -n systemctl daemon-reload --no-pager")
+        enable = order.index(f"sudo -n systemctl enable {UNIT} --no-pager")
+        start = order.index(f"sudo -n systemctl restart {UNIT} --no-pager")
         show = next(i for i, a in enumerate(order) if a.startswith(f"systemctl show {UNIT}"))
         self.assertTrue(svc < tee < reload_ < enable < start < show, order)
         # read back not as written: stop
@@ -1114,6 +1114,71 @@ class G3(unittest.TestCase):
         self.assertTrue([x for x in lines if re.search(r"until \d\d:\d\dZ at the latest", x)], lines)
         self.assertTrue([x for x in lines if "still in_progress at the deadline" in x], lines)
         self.assertIn("--verify", lines[-1])
+
+
+class G8(unittest.TestCase):
+    def test_G8_3_commands_and_line_kinds_are_exactly_these(self):
+        # The commands built so far (look, setup, move) are the plan's first ones, in its order; more come with genes.
+        plan = ("look", "setup", "move", "lint", "status", "watch", "hold", "resume", "drain", "doctor", "remove",
+                "self-update")
+        sub = next(a for a in M.parser()._actions if isinstance(a, M.argparse._SubParsersAction))
+        self.assertEqual(tuple(sub.choices), M.COMMANDS)
+        self.assertEqual(M.COMMANDS, plan[:len(M.COMMANDS)])
+        # Five line kinds; the worst decides the code: 0 ok/warn, 2 stop, 3 need you, 4 waiting.
+        self.assertEqual(M.LINE_KINDS, ("ok", "warn", "stop", "need you", "waiting"))
+        cases = [((), 0), (("warn",), 0), (("wait",), 4), (("wait", "need"), 3), (("wait", "need", "stop"), 2)]
+        for kinds, code in cases:
+            rep = M.Report(io.StringIO())
+            rep.ok("x")
+            for k in kinds:
+                getattr(rep, k)("x")
+            self.assertEqual(rep.code(), code, kinds)
+            for line in rep.lines:
+                self.assertTrue(any(line.startswith(k) for k in M.LINE_KINDS), line)
+        # The whole table: every way a command ends has its own code.
+        self.assertEqual((M.EXIT_OK, M.EXIT_FAILED, M.EXIT_STOP, M.EXIT_NEED, M.EXIT_WAIT, M.EXIT_USAGE,
+                          M.EXIT_INTERRUPTED), (0, 1, 2, 3, 4, 64, 130))
+        # 64: typed wrong (an unknown command, a missing name, an unknown option), never 2.
+        for argv in (["nonsense"], ["look"], ["setup", "o/r", "--no-such-option"], []):
+            with mock.patch("sys.stderr", io.StringIO()) as err, self.assertRaises(SystemExit) as e:
+                M.main(argv, host=linux_host())
+            self.assertEqual(e.exception.code, 64, argv)
+            self.assertIn("typed wrong", err.getvalue())
+        # A command's own code passes through.
+        host = linux_host()
+        with mock.patch.object(M, "look", return_value=M.EXIT_NEED):
+            self.assertEqual(M.main(["look", REPO], host=host, out=io.StringIO()), 3)
+        # 1: the tool failed. One stop line names the error and the journal's last step.
+        M.journal(host, "register", "o/r as box-1")
+        out = io.StringIO()
+        with mock.patch.object(M, "setup", side_effect=RuntimeError("a stand-in surprise")):
+            self.assertEqual(M.main(["setup", REPO], host=host, out=out), 1)
+        line = out.getvalue().strip()
+        self.assertTrue(line.startswith("stop the tool itself failed: RuntimeError: a stand-in surprise"), line)
+        self.assertIn("The journal's last step: register o/r as box-1", line)
+        # 130: interrupted. The journal says which step it was on.
+        out = io.StringIO()
+        with mock.patch.object(M, "move", side_effect=KeyboardInterrupt):
+            self.assertEqual(M.main(["move", REPO], host=host, out=out), 130)
+        self.assertIn("interrupted by you during: register o/r as box-1", out.getvalue())
+        with open(os.path.join(host.state_dir(), "journal.log"), encoding="utf-8") as f:
+            self.assertIn("interrupted by you, during: register o/r as box-1", f.read().splitlines()[-1])
+
+    def test_G8_5_no_system_call_waits_on_a_pager(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        lh = linux_host(which=("gh", "sudo", "systemctl", "docker"))
+        look(StandIn(load("look-recent-runs.jsonl")), lh)
+        calls = [a for a in host.ran + lh.ran if "systemctl" in a or "journalctl" in a]
+        self.assertTrue(calls)
+        for a in calls:
+            self.assertIn("--no-pager", a, a)
+        # And in the source: systemctl and journalctl are only ever called through the two helpers.
+        with open(M.__file__, encoding="utf-8") as f:
+            src = f.read()
+        self.assertEqual(re.findall(r'\[\s*"(?:systemctl|journalctl)"', src), ['["systemctl"', '["journalctl"'])
 
 
 class Helpers(unittest.TestCase):

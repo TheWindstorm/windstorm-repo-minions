@@ -36,7 +36,10 @@ import urllib.request
 
 VERSION = "0.0.0"
 
-EXIT_OK, EXIT_STOP, EXIT_NEED, EXIT_WAIT = 0, 2, 3, 4
+# G8.3: every way a command can end. The worst line decides among 0, 2, 3 and 4.
+EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 64, 130
+LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting")
+COMMANDS = ("look", "setup", "move")  # built so far, in G8.3's order
 RUNNER_USER = "minions-runner"
 SLICE = "minions.slice"
 DROPIN = "50-minions.conf"
@@ -729,7 +732,7 @@ def sleep_setting(host: Host) -> str | None:
             return None
         return "off (never sleeps by itself)" if m.group(1) == "0" else f"after {m.group(1)} min idle"
     if host.system() == "Linux" and host.which("systemctl"):
-        rc, out = host.run(["systemctl", "is-enabled", "sleep.target", "suspend.target"])
+        rc, out = host.run(systemctl("is-enabled", "sleep.target", "suspend.target"))
         states = out.split()
         if states and all(x == "masked" for x in states[:2]):
             return "off (sleep and suspend masked)"
@@ -780,12 +783,12 @@ def what_lives_here(host: Host, rep: Report) -> dict:
                 # docker's service is shared by every account allowed to use it: counted, not named
                 out["shared_containers"] += len(text.split())
     if host.system() == "Linux" and host.which("systemctl"):
-        rc, text = host.run(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--no-pager",
-                             "actions.runner.*"])
+        rc, text = host.run(systemctl("list-units", "--all", "--plain", "--no-legend",
+                                     "actions.runner.*"))
         if rc == 0:
             me = host.user()
             for unit in [x.split()[0] for x in text.splitlines() if x.strip()]:
-                urc, owner = host.run(["systemctl", "show", "-p", "User", "--value", unit])
+                urc, owner = host.run(systemctl("show", "-p", "User", "--value", unit))
                 if urc == 0 and owner.strip() == me:
                     out["runners"].append(unit)
                 else:
@@ -1108,6 +1111,29 @@ def save_state(host: Host, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def systemctl(*args: str) -> list[str]:
+    """G8.5: every systemctl call of the tool, with --no-pager (last, so the command reads as it is typed)."""
+    return ["systemctl", *args, "--no-pager"]
+
+
+def journalctl(*args: str) -> list[str]:
+    """G8.5: every journalctl call of the tool, with --no-pager."""
+    return ["journalctl", *args, "--no-pager"]
+
+
+def last_journal_step(host: Host) -> str:
+    """The journal's last step, for a stop line when the tool fails or is interrupted (G8.3)."""
+    try:
+        with open(os.path.join(host.state_dir(), "journal.log"), encoding="utf-8") as f:
+            lines = [x.strip() for x in f if x.strip()]
+    except OSError:
+        return "none written yet"
+    if not lines:
+        return "none written yet"
+    parts = lines[-1].split(" ", 2)
+    return " ".join(parts[1:]) if len(parts) > 1 else lines[-1]
+
+
 def journal(host: Host, step: str, detail: str = "") -> None:
     """INV8, first half: each step is written down BEFORE it runs. Never a secret."""
     ensure_state_dir(host)
@@ -1428,14 +1454,14 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report) -> str 
         if rc != 0:
             rep.stop(f"could not write {path}: {tail(out)}")
             return None
-    for argv in (["systemctl", "daemon-reload"], ["systemctl", "enable", unit], ["systemctl", "restart", unit]):
+    for argv in (systemctl("daemon-reload"), systemctl("enable", unit), systemctl("restart", unit)):
         journal(host, " ".join(argv))
         rc, out = sudo(host, argv)
         if rc != 0:
             rep.stop(f"`{' '.join(argv)}` failed: {tail(out)}")
             return None
-    rc, out = host.run(["systemctl", "show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
-                        "-p", "Wants", "-p", "UnitFileState", "-p", "User"])
+    rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
+                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User"))
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
             "User": RUNNER_USER}
@@ -1445,7 +1471,7 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report) -> str 
     if bad:
         rep.stop(f"the runner's service is not as written: {', '.join(bad)}")
         return None
-    rc, out = host.run(["systemctl", "show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax"])
+    rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax"))
     rep.ok(f"boot service {unit}: enabled, in {SLICE} ({limits['CPUQuota']} CPU, memory at most "
            f"{gb(int(limits['MemoryMax']))}), nice 10, restarts on failure, after the network; read back")
     return unit
@@ -1459,7 +1485,7 @@ def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: 
     while True:
         s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
         mine = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == name]
-        rc, active = host.run(["systemctl", "is-active", unit])
+        rc, active = host.run(systemctl("is-active", unit))
         active = active.strip()
         if mine:
             r = mine[0]
@@ -1931,9 +1957,18 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
     return rep.code()
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="minions.py", description="Windstorm Repo Minions " + VERSION)
-    sub = ap.add_subparsers(dest="cmd", required=True)
+class Parser(argparse.ArgumentParser):
+    """G8.3: a command typed wrong exits 64, never 2 (2 is `stop`)."""
+
+    def error(self, message: str):
+        self.print_usage(sys.stderr)
+        print(f"{self.prog}: the command was typed wrong: {message}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
+
+
+def parser() -> Parser:
+    ap = Parser(prog="minions.py", description="Windstorm Repo Minions " + VERSION)
+    sub = ap.add_subparsers(dest="cmd", required=True, parser_class=Parser)
     lk = sub.add_parser("look", help="read the repository and this computer; change nothing")
     lk.add_argument("repo", help="owner/name of a private GitHub repository")
     lk.add_argument("--start-test", action="store_true",
@@ -1945,14 +1980,35 @@ def main(argv: list[str] | None = None) -> int:
     mv.add_argument("--verify", action="store_true", help="after your merge: see one real run finish here")
     mv.add_argument("--include-job", action="append", default=[], metavar="FILE:JOB",
                     help="your word to move one job that publishes or deploys")
-    a = ap.parse_args(argv)
-    if a.cmd == "look":
-        return look(a.repo, a.start_test)
-    if a.cmd == "setup":
-        return setup(a.repo)
-    if a.cmd == "move":
-        return move(a.repo, verify=a.verify, include=a.include_job)
-    return EXIT_STOP
+    return ap
+
+
+def main(argv: list[str] | None = None, host: Host | None = None, out=None) -> int:
+    """G8.3's table: the command's own code (0, 2, 3, 4); 64 typed wrong; 1 the tool failed; 130 interrupted."""
+    a = parser().parse_args(argv)
+    host = host or Host()
+    out = out or sys.stdout
+    try:
+        if a.cmd == "look":
+            return look(a.repo, a.start_test, host=host)
+        if a.cmd == "setup":
+            return setup(a.repo, host=host)
+        if a.cmd == "move":
+            return move(a.repo, verify=a.verify, include=a.include_job, host=host)
+        return EXIT_USAGE
+    except KeyboardInterrupt:
+        step = last_journal_step(host)
+        try:
+            journal(host, "interrupted", f"by you, during: {step}")
+        except OSError:
+            pass
+        print(f"stop interrupted by you during: {step}. Run the same command again; `doctor` finishes or undoes a "
+              "half-done step", file=out, flush=True)
+        return EXIT_INTERRUPTED
+    except Exception as e:  # noqa: BLE001 -- G8.3: an error the tool did not expect still ends in one clear line
+        print(f"stop the tool itself failed: {type(e).__name__}: {e}. The journal's last step: "
+              f"{last_journal_step(host)}", file=out, flush=True)
+        return EXIT_FAILED
 
 
 if __name__ == "__main__":
