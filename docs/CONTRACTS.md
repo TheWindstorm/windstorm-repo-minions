@@ -30,6 +30,16 @@ through the GitHub CLI's REST calls. Date: 2026-11-22, between 17:51Z and 17:57Z
 - So `look` (G1.4) can tell "your workflow file is broken" (failure, the file's path) from "GitHub did not start
   the run" (startup_failure). A runner cannot fix the second.
 
+## C5 Offline removal and updates (GitHub's documentation, read 2026-11-22)
+
+- "A self-hosted runner is automatically removed from GitHub if it has not connected to GitHub Actions for more
+  than 14 days." An ephemeral runner is removed after a shorter time offline. (docs: manage runners, remove runners)
+- Self-hosted runners "receive automatic updates for the self-hosted runner application only", and automatic
+  updates may be disabled. (docs: concepts, self-hosted runners)
+- Not found on the day: a current rule for how far behind a runner may fall before GitHub refuses it jobs. Until
+  it is seen, G4.5 keeps the runner's own updates on and the doctor reports the version; it makes no claim about a
+  deadline.
+
 ## C6 The runner's releases and checksums
 
 - `GET /repos/actions/runner/releases/latest` on 2026-11-22: `v2.338.2`, published 2026-10-26. It has assets for
@@ -64,6 +74,6 @@ through the GitHub CLI's REST calls. Date: 2026-11-22, between 17:51Z and 17:57Z
 
 ## Not seen yet
 
-C2's busy and status changes, C3 (labels as the hold), C5 (offline removal and forced updates, from GitHub's docs),
+C2's busy and status changes, C3 (labels as the hold), C5's update deadline,
 C7 and C8 (services on Linux and macOS), C10 (organisation runner groups), C12 (laptops). Each needs a runner on a
 booked test machine, or a read of the docs, before its code.
