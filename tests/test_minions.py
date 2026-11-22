@@ -1289,6 +1289,53 @@ class Helpers(unittest.TestCase):
             emails = set(re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", t))
             self.assertLessEqual(emails, {"person@example.invalid"}, name)
 
+    def test_G9_5_scrubbing_never_changes_paths(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("scrub", os.path.join(FIX, "scrub.py"))
+        S = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(S)
+        repo = "Some-Org/some-repo"
+        rows = [{"method": "GET", "path": "repos/Some-Org/some-repo/commits/main", "status": 200, "data": {
+            # GitHub's own merge committer: the name that once broke a path. It is not a person and stays.
+            "committer": {"name": "GitHub", "login": "web-flow", "email": "noreply@github.com"},
+            "author": {"name": "Pat Example-Real", "login": "patx", "email": "pat@real.example.com"},
+            "files": [{"filename": ".github/workflows/ci.yml"}, {"filename": "GitHub/notes.md"}],
+            "message": "patxyz is not patx; see .github/workflows/ci.yml",
+            "html_url": "https://github.com/Some-Org/some-repo/commit/abc",
+            "author_url": "https://github.com/patx",
+            "full_name": "Some-Org/some-repo", "name": "some-repo"}},
+            {"method": "GET", "path": "repos/Some-Org/some-repo/contents/.github/workflows", "status": 200,
+             "data": [{"name": "ci.yml", "path": ".github/workflows/ci.yml"}]}]
+        (a, b) = S.scrub_rows(rows, repo)
+        d = a["data"]
+        self.assertEqual([f["filename"] for f in d["files"]], [".github/workflows/ci.yml", "GitHub/notes.md"])
+        self.assertEqual(b["data"][0]["path"], ".github/workflows/ci.yml")
+        self.assertEqual(b["path"], "repos/example-org/example-repo/contents/.github/workflows")
+        self.assertEqual(d["committer"]["name"], "GitHub")
+        self.assertEqual(d["author"]["name"], "Example Person")
+        self.assertEqual(d["author"]["login"], "example-person")
+        self.assertEqual(d["author"]["email"], "person@example.invalid")
+        self.assertEqual(d["author_url"], "https://github.com/example-person")
+        self.assertEqual(d["message"], "patxyz is not patx; see .github/workflows/ci.yml")  # text is not a name field
+        self.assertEqual(d["html_url"], "https://github.com/example-org/example-repo/commit/abc")
+        self.assertEqual((d["full_name"], d["name"]), ("example-org/example-repo", "example-repo"))
+        # Every committed fixture: scrubbing it again changes no path.
+        for name in [x for x in os.listdir(FIX) if x.endswith(".jsonl")]:
+            with open(os.path.join(FIX, name), encoding="utf-8") as f:
+                fixture = [json.loads(x) for x in f if x.strip()]
+            again = S.scrub_rows(fixture, "example-org/example-repo")
+
+            def paths(o, out):
+                if isinstance(o, dict):
+                    for k, v in o.items():
+                        (out.append(v) if k in ("path", "filename") and isinstance(v, str) else paths(v, out))
+                elif isinstance(o, list):
+                    for v in o:
+                        paths(v, out)
+                return out
+            self.assertEqual(paths(again, []), paths(fixture, []), name)
+            self.assertFalse([p for p in paths(fixture, []) if "example-person" in p], name)
+
     def test_the_start_workflow_asks_for_no_permission_and_an_unserved_label(self):
         self.assertIn("permissions: {}", M.START_WORKFLOW)
         self.assertIn("timeout-minutes: 1", M.START_WORKFLOW)
