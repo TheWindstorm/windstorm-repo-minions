@@ -246,6 +246,34 @@
    "issue": null,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R18",
+   "seen": "Seen many times over months: restarts of machines that carry runners (planned test restarts, a system updater, a reset) cancelled the job running at that moment; the safe practice that grew up was to hold the runner, wait for its job, and hand it back only as 'online and idle', read after the restart.",
+   "promise": "drain --restart holds, waits for the running job, says 'safe to restart now' only then, and the hold lifts by itself after the restart once both sides read the runner online.",
+   "codon": "G5.11",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R19",
+   "seen": "Seen: a laptop used as a runner ran hot and throttled under a job, its disk went read-only under load, and runners on a flaky home uplink lost their jobs; a person's own computer is often a laptop that sleeps, closes its lid, runs on battery and changes networks.",
+   "promise": "A laptop is named before setup with what it means; on battery the runners are held by default; a sleep during a job is put off where the OS allows and what cannot be put off is said; after a wake or network change the runner is seen back on both sides.",
+   "codon": "G11.1",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
