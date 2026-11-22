@@ -1,0 +1,13 @@
+{
+ "about": "What real machines, and the people using them, showed must change in Windstorm Repo Minions, and the version each change is due in. A lesson here is a gate, not a note: tests/test_strand.py (class Promises) refuses a version while a row due in it has no test, and refuses the version after it until the row says where it was proven on a real machine.",
+ "how_to_use": [
+  "A new lesson gets a row the day it is learned: what was seen, the promise, a codon in DNA-STRAND-MASTER-PLAN.md, the version it is due in, and a tracking issue.",
+  "When it is built: put the name of its test in 'test'. The test must exist and be named in the plan next to the codon.",
+  "When it has been seen to work on a real machine: say which kind of machine, which version and when in 'proven'.",
+  "'ship_in' moves only with a reason in 'moved_why'. A row whose owner is 'person' was seen by the person the skill is for, on their own machine: its date moves only by their word, restated in 'moved_by_person'.",
+  "A row is never deleted. A promise that turns out wrong is closed by a row that says why.",
+  "A lesson that was heard and not taken goes under 'declined' with the reason, so that nothing is dropped without a word."
+ ],
+ "rows": [],
+ "declined": []
+}

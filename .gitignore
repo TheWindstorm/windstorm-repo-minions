@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# private reader notes never enter the repository
+research/
+notes/
