@@ -144,6 +144,43 @@ Seen:
   cannot be read from it (G1.13).
 - After removal: GitHub's runners list showed `total_count: 0`, and no user, unit, slice or runner process was left.
 
+## C9, a move's pull request and its merge (seen 2026-11-22, 22:57Z to 23:00Z)
+
+Where: a fresh disk on Ubuntu 24.04.5's cloud image, with one runner registered by `setup` to a throwaway private
+repository, and `move` run there.
+
+- **The pull request runs the moved line.** The pull request that `move` opened started a `pull_request` run before
+  any merge. That run used the moved `runs-on: [minions]` line and ran on our runner. So the person sees the change
+  work before they merge it.
+- **The merge starts a run.** The merge's push run on the default branch started 2 s after the merge. `move --verify`
+  found that run and did not have to start one.
+- Both runs: `billable: {}`.
+
+## C7 Linux, keeping the runner ready (seen 2026-11-22, 23:21Z to 23:30Z)
+
+Where: the same kind of fresh disk, 4 cores, 8 GB; and a second one with 3 GB for the memory floor.
+
+- **Job hooks.** The runner ran our scripts named by `ACTIONS_RUNNER_HOOK_JOB_STARTED` and
+  `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` in its `.env`. The job's log says "A job started hook has been configured by
+  the self-hosted runner administrator", and the same for the completed hook. After the job, its work folder was
+  empty, although the job had written a file there.
+- **A started hook must wait for its locks.** The hook first returned before `systemd-inhibit` held its locks, so
+  the job's first step saw none of them. The hook now waits until both locks are held.
+- **Sleep locks from the runner user.** Stock polkit allowed the runner user, with no admin rights, to take both of
+  them:
+  - `systemd-inhibit --what=idle --mode=block`;
+  - `systemd-inhibit --what=sleep --mode=delay`.
+  `systemd-inhibit --list` showed them during the job, held by the runner user, beside the image's own delay locks.
+- **The delay is 30 s on this image.** logind's `InhibitDelayMaxSec` defaults to 5 s, and a drop-in on the image sets
+  it to 30 s. A suspend asked during a job waited on our delay lock for 30.2 s. The machine then slept and woke on a
+  timer. The job passed: the sleep was delayed, not refused, and a 30 s sleep did not cut that job.
+- `LidSwitchIgnoreInhibited` was logind's default, `yes`: the lid switch is not held by sleep locks.
+- **The hold through a job.** The label hold was set while a job ran. The job went on to the end and passed. No new job
+  landed until the hold was lifted, and the next job landed after it was.
+- **A cleanup that enters the runner user's home as the person is refused** (that home is closed, G2.2). The
+  runner's own removal must run as root or as that user (G6.6).
+- **`gh auth logout` leaves its file.** After logout, `~/.config/gh/hosts.yml` was still there, with the token gone.
+
 ## C4 What a run looks like when no job is made
 
 - **A workflow file that is invalid** (a step with both `run` and `uses`), pushed: one run, `conclusion: failure`,
