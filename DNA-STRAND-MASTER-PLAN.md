@@ -239,6 +239,7 @@ nothing.
 | G5.9 | Opt-in, off by default: a fallback for when the minion is offline. Each choice says in plain words that it runs a small job on GitHub's machines, which counts against the included usage (INV3); the person picks it by name. Design in Part 11, Q3. | planned: test_G5_9_the_offline_fallback_is_opt_in_and_says_its_cost |
 | G5.10 | `watch` re-reads GitHub's cost rule (G1.9) once a week and tells the person, at the next `status`, when the self-hosted sentence changed, with both versions and dates. | planned: test_G5_10_a_change_in_the_cost_rule_is_told |
 | G5.11 | Before a planned restart (a system update, a reboot, a shutdown): `drain --restart` holds every runner on the computer, waits for the running job, and ends with "online and idle: safe to restart now" or names what still runs. The hold lifts by itself once the computer has restarted and both sides read the runner online. The skill tells the agent to run it before any restart it asks for, and tells the person to ask for it before theirs: a restart cancels the running job. | planned: test_G5_11_drain_before_a_planned_restart_lifts_after_the_boot |
+| G5.12 | GitHub removes a runner it has not seen connect for more than 14 days (Part 7 C5). When `watch` or `status` reads that a runner of ours is gone on GitHub's side while its service is there (a laptop away for two weeks, a computer switched off), it holds the service from restarting in a loop, says so plainly, and `setup` again re-registers it with the person's login, keeping its folders and labels. | planned: test_G5_12_a_runner_github_removed_is_named_and_registered_again |
 
 ### G6 Remove
 
@@ -347,7 +348,7 @@ written down.
 
 | Version | What | Accepted when |
 |---|---|---|
-| 0.1.0 | Linux, one private repository, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.6, G5.1 to G5.4, G5.6, G5.11, G6, G7, G8, G9, G11 on Linux, all INV. | Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
+| 0.1.0 | Linux, one private repository, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.6, G5.1 to G5.4, G5.6, G5.11, G5.12, G6, G7, G8, G9, G11 on Linux, all INV. | Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
 | 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.7, G5.8, G5.10, G11 on macOS. | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
 | 0.3.0 | The opt-in offline fallback (G5.9), self-update (G10), Windows if Part 11 Q4 says yes. | As above, on each OS it claims. |
 

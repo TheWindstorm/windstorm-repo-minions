@@ -274,6 +274,20 @@
    "issue": null,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R20",
+   "seen": "GitHub's documentation (read 2026-11-22): a self-hosted runner is removed automatically if it has not connected for more than 14 days. Seen on test machines: runners whose registrations had been removed on the server side restarted in a loop on refused credentials after the machine came back.",
+   "promise": "A runner GitHub removed is named plainly, its service does not restart in a loop, and setup registers it again with the person's login.",
+   "codon": "G5.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
