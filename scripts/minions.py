@@ -39,7 +39,7 @@ VERSION = "0.0.0"
 # G8.3: every way a command can end. The worst line decides among 0, 2, 3 and 4.
 EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 64, 130
 LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting")
-COMMANDS = ("look", "setup", "move", "resume", "drain")  # built so far, in G8.3's order
+COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain")  # built so far, in G8.3's order
 RUNNER_USER = "minions-runner"
 SLICE = "minions.slice"
 DROPIN = "50-minions.conf"
@@ -1616,6 +1616,10 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
         interactive = host.isatty()
     if not ask_admin_once(host, rep, interactive):
         return rep.code()
+    known = load_state(host)
+    if ((known.get("runners") or {}).get(repo) or {}).get("gone_on_github"):
+        reregister(gh, host, repo, known, rep)  # G5.12
+        return rep.code()
     if not ensure_runner_user(host, rep):
         return rep.code()
     owner, name_ = repo.split("/", 1)
@@ -1642,6 +1646,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
                                                                            "MemoryMax")},
                                             "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
     save_state(host, data)
+    if not install_watch(host, rep):
+        return rep.code()
     both_sides(gh, host, repo, runner_name, unit, labels, rep)
     return rep.code()
 
@@ -1852,32 +1858,31 @@ def start_runner(host: Host, unit: str, folder: str, rep: Report) -> bool:
     return True
 
 
-def drain(repo: str, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
-          host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
-    """G4.6 (and G5.6's first part): hold by label, then wait until GitHub says not busy AND no job process runs
-    here, with a deadline (G8.6); `--stop` stops the service only after that."""
-    host = host or Host()
-    gh = gh or GitHub(host)
-    rep = Report(out)
-    data = load_state(host)
-    mine = (data.get("runners") or {}).get(repo)
-    if not mine:
-        rep.stop(f"no runner of ours serves {repo} on this computer")
-        return rep.code()
+def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why: str = "drain") -> dict | None:
+    """The hold (Part 7 C3): our runner carries only `minions-held`, so no new job lands on it. Labels kept to lift it."""
+    mine = data["runners"][repo]
     r = listed_runner(gh, repo, mine["name"])
     if r is None:
-        rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}: nothing to drain")
-        return rep.code()
+        rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}: nothing to hold")
+        return None
     labels = sorted(x.get("name") for x in r.get("labels", []))
     if labels != [HELD_LABEL]:
-        journal(host, "hold", f"{repo} {mine['name']} (labels were {','.join(labels)})")
+        journal(host, "hold", f"{repo} {mine['name']} for {why} (labels were {','.join(labels)})")
         mine["labels_before_hold"] = labels
-        data["runners"][repo] = mine
+        mine["held_for"] = why
+        mine["held_at"] = host.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         save_state(host, data)
         if set_labels(gh, repo, r["id"], [HELD_LABEL]) != [HELD_LABEL]:
             rep.stop("GitHub did not take the hold label: nothing else was changed")
-            return rep.code()
+            return None
     rep.ok(f"held: {mine['name']} now carries only `{HELD_LABEL}`, so no new job lands on it; jobs wait on GitHub")
+    return r
+
+
+def wait_idle(gh: GitHub, host: Host, repo: str, mine: dict, wait_s: int, poll_s: float, rep: Report,
+              next_cmd: str) -> str:
+    """G5.2, G5.6: wait until both sides say idle, with a deadline said in the line (G8.6). Returns "idle",
+    "offline" (no job process here and GitHub says offline) or "running" (the deadline passed: a `waiting` line)."""
     deadline = host.now() + dt.timedelta(seconds=wait_s)
     said = False
     while True:
@@ -1885,26 +1890,72 @@ def drain(repo: str, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: flo
         busy = bool(r.get("busy"))
         worker = runner_pids(host, mine["folder"], "Runner.Worker")
         if not busy and not worker:
-            break
+            return "idle" if r.get("status") == "online" else "offline"
         if host.now() >= deadline:
             side = ", ".join(x for x in (("GitHub says busy" if busy else ""),
                                          (f"a job process runs here ({worker[0]})" if worker else "")) if x)
-            rep.wait(f"for the running job to end ({side}); held, nothing stopped. Next: `drain {repo}` again")
-            return rep.code()
+            rep.wait(f"for the running job to end ({side}); held, nothing stopped. Next: `{next_cmd}` again")
+            return "running"
         if not said:
             rep.ok(f"a job is running ({'GitHub says busy' if busy else 'a job process runs here'}): waiting for it "
                    f"to end, until {deadline.strftime('%H:%MZ')} at the latest")
             said = True
         host.sleep(poll_s)
-    rep.ok(f"drained: {mine['name']} is held, GitHub says idle, and no job process runs here")
+
+
+def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
+          host: Host | None = None, gh: GitHub | None = None, out=None, restart: bool = False) -> int:
+    """G4.6, G5.6: hold by label, then wait until both sides say idle, with a deadline (G8.6); `--stop` stops the
+    service only after that. G5.11: `--restart` does it for every runner here and says when a restart is safe."""
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    data = load_state(host)
+    runners = data.get("runners") or {}
+    if restart:
+        repos = sorted(runners)
+        if repo:
+            repos = [repo] if repo in runners else []
+    else:
+        repos = [repo] if repo in runners else []
+    if not repos:
+        rep.stop(f"no runner of ours serves {repo} on this computer" if repo else "no runner of ours on this computer")
+        return rep.code()
+    states = {}
+    for rp in repos:
+        if hold_runner(gh, host, rp, data, rep, "a restart" if restart else "drain") is None:
+            return rep.code()
+    for rp in repos:
+        mine = runners[rp]
+        nxt = "drain --restart" if restart else f"drain {rp}"
+        states[rp] = wait_idle(gh, host, rp, mine, wait_s, poll_s, rep, nxt)
+        if states[rp] == "running":
+            return rep.code()
+        if states[rp] == "idle":
+            rep.ok(f"drained: online and idle: {mine['name']} is held, GitHub says online and not busy, and no job "
+                   "process runs here")
+        else:
+            rep.warn(f"drained: no job process runs here, but GitHub says {mine['name']} is offline, so nothing can "
+                     "be running on it")
+    if restart:
+        data["restart_hold"] = {"time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ"), "boot_id": boot_id(host),
+                                "repos": repos}
+        save_state(host, data)
+        journal(host, "restart hold", ",".join(repos))
+        rep.ok("online and idle: safe to restart now. The hold lifts by itself once this computer has restarted and "
+               "GitHub reads the runner online again (the watch does it)")
+        return rep.code()
     if stop:
-        stop_runner(host, mine["unit"], mine["folder"], rep, drained=True)
+        stop_runner(host, runners[repo]["unit"], runners[repo]["folder"], rep, drained=True)
     rep.ok(f"`resume {repo}` lets jobs land here again")
     return rep.code()
 
 
-def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
-    """G4.6's other half: lift the hold (and start the service if a drain stopped it), never under the disk floor."""
+def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
+           private_again: bool = False) -> int:
+    """G4.6's other half: lift the hold (and start the service if a drain stopped it), never under the disk floor.
+    G5.4: a runner stopped because its repository was no longer private resumes only once the repository is
+    private again AND the person says so (`--private-again`)."""
     host = host or Host()
     gh = gh or GitHub(host)
     rep = Report(out)
@@ -1913,30 +1964,377 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
     if not mine:
         rep.stop(f"no runner of ours serves {repo} on this computer")
         return rep.code()
+    if mine.get("public_stop"):
+        if not private_again:
+            rep.stop(f"{repo} was not private at {mine['public_stop']['time']}, so its runner was stopped and kept "
+                     f"stopped. Once you have made it private again: `resume {repo} --private-again`")
+            return rep.code()
+        s, d = gh.api("GET", f"repos/{repo}")
+        if s != 200 or not (d or {}).get("private"):
+            rep.stop(f"GitHub does not say {repo} is private (HTTP {s}): the runner stays stopped")
+            return rep.code()
+        rep.ok(f"GitHub says {repo} is private again, and you said so")
+        journal(host, "enable", mine["unit"])
+        sudo(host, systemctl("enable", mine["unit"]))
+    if mine.get("gone_on_github"):
+        rep.stop(f"GitHub no longer lists our runner {mine['name']}: run `setup {repo}` again to register it")
+        return rep.code()
     free = host.disk_free(mine["folder"]) or host.disk_free(host.home())
     if not check_disk_floor(free[0] if free else None, rep, "the runner stays held"):
         return rep.code()
     if not start_runner(host, mine["unit"], mine["folder"], rep):
         return rep.code()
+    if not lift_hold(gh, host, repo, data, rep):
+        return rep.code()
+    mine.pop("public_stop", None)
+    save_state(host, data)
+    return rep.code()
+
+
+def lift_hold(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, tries: int = 9) -> bool:
+    """Our labels back, once GitHub lists the runner online."""
+    mine = data["runners"][repo]
     want = sorted(mine.get("labels_before_hold") or mine.get("labels") or [])
     r = None
-    for _ in range(9):
+    for i in range(tries):
         r = listed_runner(gh, repo, mine["name"])
         if r and r.get("status") == "online":
             break
-        host.sleep(5)
+        if i < tries - 1:
+            host.sleep(5)
     if not r:
         rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}")
-        return rep.code()
+        return False
+    if r.get("status") != "online":
+        rep.wait(f"for GitHub to read {mine['name']} online before the hold is lifted. Next: `resume {repo}` again")
+        return False
     journal(host, "resume", f"{repo} {mine['name']} labels {','.join(want)}")
     if set_labels(gh, repo, r["id"], want) != want:
         rep.stop("GitHub did not take our labels back: the runner is still held")
-        return rep.code()
-    mine.pop("labels_before_hold", None)
-    data["runners"][repo] = mine
+        return False
+    for k in ("labels_before_hold", "held_for", "held_at"):
+        mine.pop(k, None)
     save_state(host, data)
     rep.ok(f"resumed: {mine['name']} carries {', '.join(want)} again, so jobs land here")
+    return True
+
+
+# ------------------------------------------------------------------------------------------------ G5 watch and hold
+
+WATCH_EVERY_S = 300  # G5.3: the watch's default interval
+WATCH_UNIT = "minions-watch"
+TOOL_COPY = f"{HOOKS_ROOT}/minions.py"  # the copy the watch runs: root's, so neither the runner nor a job can change it
+PUBLIC_DRAIN_S = 120  # G5.4: the short drain before a runner of a repository no longer private is stopped
+WAIT_WARN_S = 1800  # G5.13: a job waiting longer than this behind our hold is a `warn`, first
+GITHUB_GIVES_UP_H = 24  # GitHub cancels a job that waited this long for a runner
+
+
+def stamp(t: dt.datetime) -> str:
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def hms(t: dt.datetime) -> str:
+    return t.strftime("%H:%M:%SZ")
+
+
+def parse_stamp(s: str | None) -> dt.datetime | None:
+    if not s:
+        return None
+    try:
+        return dt.datetime.strptime(s.replace(".000", ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+
+
+def minutes(seconds: float) -> str:
+    m = int(seconds // 60)
+    return f"{m // 60} h {m % 60} min" if m >= 60 else f"{m} min"
+
+
+def boot_id(host: Host) -> str:
+    return (host.read("/proc/sys/kernel/random/boot_id") or "").strip()
+
+
+def survey_words(data: dict, repo: str) -> str:
+    """G5.1: the minion's OS and architecture from its own survey, never from GitHub's list (`unknown` there)."""
+    s = ((data.get("looks") or {}).get(repo) or {}).get("survey") or {}
+    os_ = s.get("os") or s.get("system") or "OS not surveyed"
+    return f"{os_} {s.get('machine') or ''}".strip() + " (from this computer's own survey)"
+
+
+def computer_side(host: Host, mine: dict) -> tuple[str, list[int], dt.datetime]:
+    rc, active = host.run(systemctl("is-active", mine["unit"]))
+    return active.strip() or "not read", runner_pids(host, mine["folder"], "Runner.Worker"), host.now()
+
+
+def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int], at: dt.datetime) -> tuple[str, str]:
+    """G5.1, G5.2: one line, both sides with the time each was read; "idle" only when both agree."""
+    if r is None:
+        gh_side = f"GitHub does not list it (read {hms(gh_at)})"
+    else:
+        gh_side = f"GitHub says {r.get('status', 'not read')}, {'busy' if r.get('busy') else 'not busy'} (read {hms(gh_at)})"
+    here = f"this computer: service {active}, {'a job process runs (' + str(worker[0]) + ')' if worker else 'no job process'} (read {hms(at)})"
+    if r is not None and r.get("status") == "online" and not r.get("busy") and not worker and active == "active":
+        word = "idle"
+    elif r is not None and (r.get("busy") or worker) and active == "active":
+        word = "busy" if (r.get("busy") and worker) else "the two sides disagree"
+    else:
+        word = "not ready"
+    return word, f"{gh_side}; {here}"
+
+
+def queued_jobs(gh: GitHub, repo: str) -> list[dict]:
+    """The repository's jobs waiting for a runner, with the labels they ask for and when they were made."""
+    s, d = gh.api("GET", f"repos/{repo}/actions/runs?status=queued&per_page=50")
+    out = []
+    for run in ((d or {}).get("workflow_runs", []) if s == 200 else []):
+        s2, d2 = gh.api("GET", f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
+        for j in ((d2 or {}).get("jobs", []) if s2 == 200 else []):
+            if j.get("status") == "queued":
+                out.append({"id": j.get("id"), "name": j.get("name"), "workflow": run.get("name") or run.get("path"),
+                            "labels": j.get("labels") or [], "created": parse_stamp(j.get("created_at"))})
+    return out
+
+
+def watch_heartbeat(data: dict, now: dt.datetime) -> tuple[bool, str]:
+    """G5.3: a heartbeat older than three intervals is "the watch is not running"."""
+    w = data.get("watch") or {}
+    every = int(w.get("every_s") or WATCH_EVERY_S)
+    last = parse_stamp(w.get("time"))
+    if last is None:
+        return False, "the watch is not running: it has never written a heartbeat"
+    age = (now - last).total_seconds()
+    if age > 3 * every:
+        return False, (f"the watch is not running: its last heartbeat was {minutes(age)} ago, at {hms(last)} "
+                       f"(it runs every {minutes(every)})")
+    return True, f"the watch ran {minutes(age)} ago, at {hms(last)} (every {minutes(every)})"
+
+
+def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None = None, out=None,
+           wait_warn_s: int = WAIT_WARN_S, rerun: int | None = None) -> int:
+    """G5.1 to G5.4, G5.12, G5.13 (and G5.7, G5.14 through name_cut_jobs): read only, unless `--rerun JOB`."""
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    data = load_state(host)
+    runners = data.get("runners") or {}
+    repos = [repo] if repo else sorted(runners)
+    if not repos or any(r not in runners for r in repos):
+        rep.stop(f"no runner of ours serves {repo} on this computer" if repo else "no runner of ours on this computer")
+        return rep.code()
+    first, rest = [], []  # G5.4's why, then G5.13's warns, come first
+    now = host.now()
+    for rp in repos:
+        mine = runners[rp]
+        ps = mine.get("public_stop")
+        if ps:
+            first.append(("stop", f"{rp} was not private at {ps['time']}: its runner was held, drained for at most "
+                                  f"{PUBLIC_DRAIN_S // 60} minutes and stopped, and stays stopped, because anyone's "
+                                  f"fork can ask a public repository's runner for a job. Once it is private again: "
+                                  f"`resume {rp} --private-again`"))
+        r = listed_runner(gh, rp, mine["name"])
+        gh_at = host.now()
+        active, worker, at = computer_side(host, mine)
+        if r is None:
+            if mine.get("gone_on_github") or active in ("active", "activating"):
+                first.append(("warn", gone_words(rp, mine)))
+        word, sides = both_sides_words(r, gh_at, active, worker, at)
+        held = r is not None and sorted(x.get("name") for x in r.get("labels", [])) == [HELD_LABEL]
+        hold_words = ""
+        if held:
+            why = mine.get("held_for") or "a hold"
+            hold_words = f"; held for {why} since {mine.get('held_at', 'a time not written')}"
+        rest.append(("ok", f"{mine['name']} for {rp}: {word}. {sides}; {survey_words(data, rp)}{hold_words}"))
+        # The queue (G5.1) and the jobs waiting behind our hold (G5.13).
+        q = [j for j in queued_jobs(gh, rp) if set(j["labels"]) & set(mine.get("labels") or ["minions"])]
+        if q:
+            oldest = min((j["created"] for j in q if j["created"]), default=None)
+            rest.append(("ok", f"queue for {rp}: {len(q)} job(s) waiting for our runner, the oldest for "
+                               f"{minutes((now - oldest).total_seconds()) if oldest else 'a time not read'}"))
+        else:
+            rest.append(("ok", f"queue for {rp}: no job waiting for our runner"))
+        blocked_by = ("our hold (" + (mine.get("held_for") or "a hold") + ")" if held else
+                      "our runner being offline or asleep" if r is None or r.get("status") != "online" else None)
+        if blocked_by:
+            for j in q:
+                age = (now - j["created"]).total_seconds() if j["created"] else 0
+                if age > wait_warn_s:
+                    first.append(("warn", f"job '{j['name']}' ({j['workflow']}) of {rp} has waited {minutes(age)} behind "
+                                          f"{blocked_by}; GitHub cancels a job that waits {GITHUB_GIVES_UP_H} hours. "
+                                          + (f"`resume {rp}` lets it land here" if held else
+                                             "Start this computer's runner, or `drain` and move the job back")))
+        rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
+    ok_, words = watch_heartbeat(data, now)
+    rest.append(("ok" if ok_ else "warn", words))
+    rh = data.get("restart_hold")
+    if rh:
+        rest.append(("ok", f"held for a restart since {rh['time']}: the hold lifts by itself once this computer has "
+                           "restarted and GitHub reads the runner online"))
+    for kind, text in first + rest:
+        {"ok": rep.ok, "warn": rep.warn, "stop": rep.stop, "need": rep.need}[kind](text)
     return rep.code()
+
+
+def gone_words(repo: str, mine: dict) -> str:
+    return (f"GitHub no longer lists our runner {mine['name']} for {repo}. GitHub removes a runner it has not seen "
+            "connect for more than 14 days (a computer away or switched off that long). Its service is held so it does "
+            f"not restart in a loop. Run `setup {repo}` again: it registers the runner again with your login, keeping "
+            "its folders and labels")
+
+
+def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rerun: int | None) -> list:
+    """G5.7 and G5.14 come in their own part; until then nothing is named."""
+    return [("stop", "naming cut jobs comes in the next part: nothing was run again")] if rerun is not None else []
+
+
+def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
+    """G5.3: one pass, run by the timer every WATCH_EVERY_S; one journal line per pass, and the heartbeat."""
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    data = load_state(host)
+    runners = data.get("runners") or {}
+    said = []
+    for rp in sorted(runners):
+        said.append(watch_one(gh, host, rp, data, rep))
+    lift_after_restart(gh, host, data, rep)
+    data = load_state(host)
+    data["watch"] = {"time": stamp(host.now()), "every_s": int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S)}
+    save_state(host, data)
+    journal(host, "watch", "; ".join(said) or "no runner of ours here")
+    return rep.code()
+
+
+def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> str:
+    mine = data["runners"][repo]
+    if mine.get("public_stop"):
+        return f"{repo}: stopped, not private at {mine['public_stop']['time']}"
+    s, d = gh.api("GET", f"repos/{repo}")
+    if s == 200 and d is not None and (d.get("private") is False or d.get("visibility") == "public"):
+        public_guard(gh, host, repo, data, rep)
+        return f"{repo}: no longer private: held, drained, stopped"
+    r = listed_runner(gh, repo, mine["name"])
+    if r is None and s == 200:
+        if not mine.get("gone_on_github"):
+            gone_on_github(host, repo, data, rep)
+        return f"{repo}: GitHub no longer lists {mine['name']}"
+    if r is None:
+        return f"{repo}: GitHub not read (HTTP {s})"
+    return f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}"
+
+
+def public_guard(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None:
+    """G5.4 (INV1): a repository no longer private: our labels off at once, a short drain, then stopped and kept so."""
+    mine = data["runners"][repo]
+    journal(host, "public", f"{repo} is no longer private")
+    hold_runner(gh, host, repo, data, rep, "the repository being no longer private")
+    state = wait_idle(gh, host, repo, mine, PUBLIC_DRAIN_S, 10, rep, f"status {repo}")
+    journal(host, "public stop", f"{repo} after a drain that ended {state}")
+    stop_runner(host, mine["unit"], mine["folder"], rep, drained=True)  # the short drain was the drain (G5.4)
+    sudo(host, systemctl("disable", mine["unit"]))
+    mine["public_stop"] = {"time": stamp(host.now()), "drain": state}
+    save_state(host, data)
+    rep.stop(f"{repo} is no longer private: its runner is stopped and kept stopped (`status {repo}` says why)")
+
+
+def gone_on_github(host: Host, repo: str, data: dict, rep: Report) -> None:
+    """G5.12: GitHub removed the runner; its service would restart in a loop. Held stopped, named plainly."""
+    mine = data["runners"][repo]
+    if runner_pids(host, mine["folder"], "Runner.Worker"):
+        return  # a job process still runs here: nothing is stopped under it
+    journal(host, "gone on GitHub", f"{repo} {mine['name']}")
+    stop_runner(host, mine["unit"], mine["folder"], rep, drained=True)  # GitHub can give it no job: nothing to cut
+    mine["gone_on_github"] = stamp(host.now())
+    save_state(host, data)
+    rep.warn(gone_words(repo, mine))
+
+
+def lift_after_restart(gh: GitHub, host: Host, data: dict, rep: Report) -> None:
+    """G5.11: the restart hold lifts by itself once the computer has restarted and GitHub reads the runner online."""
+    rh = data.get("restart_hold")
+    if not rh or boot_id(host) == rh.get("boot_id"):
+        return
+    left = []
+    for rp in rh.get("repos", []):
+        if rp in (data.get("runners") or {}):
+            r = listed_runner(gh, rp, data["runners"][rp]["name"])
+            if r and r.get("status") == "online":
+                if not lift_hold(gh, host, rp, data, rep, tries=1):
+                    left.append(rp)
+            else:
+                left.append(rp)
+    if left:
+        rh["repos"] = left
+    else:
+        data.pop("restart_hold", None)
+        journal(host, "restart hold lifted", "every runner online again after the restart")
+    save_state(host, data)
+
+
+def watch_units(user: str, every_s: int) -> tuple[str, str]:
+    """G5.3: a system timer whose service runs as the person (User=), not a user timer: a user timer runs only while
+    the person is logged in, unless lingering is turned on for their whole account, which changes more of their
+    computer than this skill needs. Runs the tool's root-owned copy."""
+    svc = ("# Windstorm Repo Minions: the watch (G5.3), run by minions-watch.timer as you.\n"
+           "[Unit]\nDescription=Windstorm Repo Minions watch\nWants=network-online.target\n"
+           "After=network-online.target\n\n"
+           f"[Service]\nType=oneshot\nUser={user}\nExecStart=/usr/bin/python3 {TOOL_COPY} watch\nNice=10\n")
+    tmr = ("# Windstorm Repo Minions: the watch's schedule (G5.3).\n"
+           f"[Unit]\nDescription=Windstorm Repo Minions watch, every {every_s // 60} minutes\n\n"
+           f"[Timer]\nOnBootSec=2min\nOnUnitActiveSec={every_s}s\nAccuracySec=30s\n\n"
+           "[Install]\nWantedBy=timers.target\n")
+    return svc, tmr
+
+
+def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: str | None = None) -> bool:
+    """G5.3: the watch's units and the tool's copy it runs, read back."""
+    src = src or os.path.abspath(__file__)
+    journal(host, "write", f"{TOOL_COPY}, /etc/systemd/system/{WATCH_UNIT}.service and .timer")
+    sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", HOOKS_ROOT])
+    rc, out = sudo(host, ["install", "-o", "root", "-g", "root", "-m", "0755", src, TOOL_COPY])
+    if rc != 0:
+        rep.stop(f"could not copy the tool for the watch: {tail(out)}")
+        return False
+    svc, tmr = watch_units(host.user(), every_s)
+    for path, text in ((f"/etc/systemd/system/{WATCH_UNIT}.service", svc),
+                       (f"/etc/systemd/system/{WATCH_UNIT}.timer", tmr)):
+        rc, out = sudo(host, ["tee", path], input=text)
+        if rc != 0:
+            rep.stop(f"could not write {path}: {tail(out)}")
+            return False
+    for argv in (systemctl("daemon-reload"), systemctl("enable", "--now", f"{WATCH_UNIT}.timer")):
+        journal(host, " ".join(argv))
+        sudo(host, argv)
+    rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
+    if active.strip() != "active":
+        rep.stop(f"the watch's timer is not active ({active.strip() or 'not read'})")
+        return False
+    data = load_state(host)
+    data["watch"] = dict(data.get("watch") or {}, every_s=every_s)
+    save_state(host, data)
+    rep.ok(f"the watch runs every {every_s // 60} minutes as you (a system timer, read back); `status` says when it "
+           "last ran")
+    return True
+
+
+def reregister(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> bool:
+    """G5.12: `setup` again for a runner GitHub removed: registered again in place, its folders and labels kept."""
+    mine = data["runners"][repo]
+    folder = mine["folder"]
+    journal(host, "re-register", f"{repo} {mine['name']} in {folder}")
+    as_runner(host, ["rm", "-f", f"{folder}/.runner", f"{folder}/.credentials", f"{folder}/.credentials_rsaparams"])
+    if not register(gh, host, repo, folder, mine["name"], mine["labels"], rep):
+        return False
+    if not lock_credentials(host, folder, rep):
+        return False
+    for argv in (systemctl("enable", mine["unit"]), systemctl("start", mine["unit"])):
+        journal(host, " ".join(argv))
+        sudo(host, argv)
+    for k in ("gone_on_github", "labels_before_hold", "held_for", "held_at"):
+        mine.pop(k, None)
+    save_state(host, data)
+    rep.ok(f"registered again in place: {mine['name']}, its folders and labels kept")
+    return both_sides(gh, host, repo, mine["name"], mine["unit"], mine["labels"], rep)
 
 
 # --------------------------------------------------------------------------------------------------------- G3 move
@@ -2376,10 +2774,19 @@ def parser() -> Parser:
     mv.add_argument("--verify", action="store_true", help="after your merge: see one real run finish here")
     mv.add_argument("--include-job", action="append", default=[], metavar="FILE:JOB",
                     help="your word to move one job that publishes or deploys")
+    sa = sub.add_parser("status", help="both sides of each runner, the queue, the watch, and jobs a cut or limit stopped")
+    sa.add_argument("repo", nargs="?", help="owner/name (default: every runner of ours here)")
+    sa.add_argument("--wait-warn-minutes", type=int, default=WAIT_WARN_S // 60,
+                    help="warn first about a job waiting longer than this behind our hold")
+    sa.add_argument("--rerun", type=int, metavar="JOB_ID", help="your word: run one job a cut or our limit stopped again, once")
+    sub.add_parser("watch", help="one pass of the watch (its timer runs it every 5 minutes)")
     rs = sub.add_parser("resume", help="lift a hold so jobs land on this computer again")
     rs.add_argument("repo", help="owner/name")
+    rs.add_argument("--private-again", action="store_true",
+                    help="your word that a repository that was not private is private again")
     dr = sub.add_parser("drain", help="hold the runner and wait until no job runs here; nothing is cut")
-    dr.add_argument("repo", help="owner/name")
+    dr.add_argument("repo", nargs="?", help="owner/name (with --restart: default every runner here)")
+    dr.add_argument("--restart", action="store_true", help="before a planned restart: hold every runner here, wait")
     dr.add_argument("--stop", action="store_true", help="then stop the runner's service (only after the drain)")
     dr.add_argument("--wait-minutes", type=int, default=DRAIN_WAIT_S // 60, help="how long to wait for a job to end")
     return ap
@@ -2396,9 +2803,15 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None) -> i
         if a.cmd == "setup":
             return setup(a.repo, host=host, limits=a.limits)
         if a.cmd == "drain":
-            return drain(a.repo, stop=a.stop, wait_s=max(0, a.wait_minutes) * 60, host=host)
+            if not a.repo and not a.restart:
+                parser().error("drain needs owner/name, or --restart")
+            return drain(a.repo, stop=a.stop, wait_s=max(0, a.wait_minutes) * 60, host=host, restart=a.restart)
         if a.cmd == "resume":
-            return resume(a.repo, host=host)
+            return resume(a.repo, host=host, private_again=a.private_again)
+        if a.cmd == "status":
+            return status(a.repo, host=host, wait_warn_s=max(0, a.wait_warn_minutes) * 60, rerun=a.rerun)
+        if a.cmd == "watch":
+            return watch(host=host)
         if a.cmd == "move":
             return move(a.repo, verify=a.verify, include=a.include_job, host=host)
         return EXIT_USAGE

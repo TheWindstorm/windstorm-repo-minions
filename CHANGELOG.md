@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- G5 Watch and hold, first part (Linux): `status` (both sides of each runner with the time each was read, "idle"
+  only when both agree, the queue, the watch's heartbeat), `watch` (a system timer every 5 minutes, run as you),
+  the guard for a repository no longer private (held, a 2-minute drain, stopped and kept stopped until you say it
+  is private again), `drain --restart` (lifts by itself after the boot), a runner GitHub removed (named, held from a
+  restart loop, registered again in place by `setup`), and a warning first for a job waiting behind our hold.
 - The skill file, `skills/repo-minions/SKILL.md`: the fixed order, the person's steps, the five line kinds and
   exit codes, what `waiting` means, the sentences said before setup, the cost rule and the safety rules
   (G7.1 to G7.5, G7.7, G7.8, G8.1, G8.2, G8.8).
