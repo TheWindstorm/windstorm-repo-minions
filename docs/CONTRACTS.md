@@ -71,6 +71,52 @@ The hold:
 - **Not seen yet.** The system unit the runner's own service script writes; its stop while a job runs; slice
   limits; a reboot.
 
+## C7 Linux, as a boot service, on a stock virtual machine (seen 2026-11-22, 22:22Z to 22:26Z)
+
+Where:
+- A fresh Ubuntu 24.04.5 server cloud image, checksum and signature checked, 4 vCPU, 8 GiB.
+- Nothing on it but a login key for the image's own default user.
+- Runner 2.338.2 under its own user `minions-runner`, made with `useradd --create-home` (no extra groups).
+- Registered with no default labels to a throwaway private repository.
+- Installed with the runner's own `svc.sh install minions-runner`.
+
+- **The user's home is 750 on this release.** The person's own account cannot enter it. That is good isolation,
+  but the install must therefore run inside `sudo`.
+- **The credential files are 664 again** (`.credentials`, `.runner`), as on the first Linux machine. They are set
+  to 600.
+- **The unit `svc.sh` writes**, `actions.runner.<owner>-<repo>.<name>.service` in `/etc/systemd/system`:
+
+  | Setting | Value |
+  |---|---|
+  | `After` | `network-online.target` (with no `Wants=`, so it may not wait for the network) |
+  | `ExecStart` | `runsvc.sh` |
+  | `User` | the runner user |
+  | `KillMode` | `process` |
+  | `KillSignal` | `SIGTERM` |
+  | `TimeoutStopSec` | `5min` |
+  | `Restart` | **`no`**: a runner that crashes stays down until the next boot |
+  | `Nice` | 0 |
+  | `CPUWeight` | not set |
+  | `Slice` | `system.slice` |
+  | `WantedBy` | `multi-user.target` |
+
+- **Our drop-in and slice, read back after `daemon-reload` and a restart.** The drop-in is
+  `50-minions.conf`: `Wants=network-online.target`, `Slice=minions.slice`, `Nice=10`, `CPUWeight=50`,
+  `Restart=on-failure`, `RestartSec=30`. The slice `minions.slice` has `CPUQuota=300%`, `MemoryHigh=5G` and
+  `MemoryMax=6G`. The runner connected and listened again within 3 s.
+- **A stop during a job does NOT wait for the job.** `systemctl stop` returned after 11 s. The runner's script
+  stopped its listener ("Sending SIGKILL to runner listener"), and the job ended "Canceled" on the machine. No
+  process of the runner user was left. On GitHub, the job and the run concluded **`failure`**, the running step
+  `cancelled`, with the annotation "The operation was canceled." `TimeoutStopSec` does not protect a job: only a
+  drain before the stop does.
+- **A reboot during a job.** Rebooted 25 s into a 2-minute job. The machine was back 20 s later, and the runner
+  was "Listening for Jobs" and online on GitHub 24 s after the reboot was asked. The service is enabled, so nobody
+  had to start it. The job concluded exactly as for a stop: `failure`, step `cancelled`, "The operation was canceled."
+- **A job cut this way therefore looks like a failed job.** The signs: a step `cancelled`, that annotation, the run
+  not cancelled by a person, and the cut falling in a stop or a boot of the machine.
+- **Idle as a service:** 3 processes, about 145 MB resident (about 129 MB proportional); the slice counted 148 MB.
+  Disk 683 MB.
+
 ## C4 What a run looks like when no job is made
 
 - **A workflow file that is invalid** (a step with both `run` and `uses`), pushed: one run, `conclusion: failure`,
@@ -147,6 +193,6 @@ The hold:
 
 ## Not seen yet
 
-C2's busy and status changes during a job, C5's update deadline, the rest of C7,
+C2's busy and status changes during a job (busy=true was read within 5 s of a dispatch), C5's update deadline,
 C7 and C8 (services on Linux and macOS), C10 (organisation runner groups), C12 (laptops). Each needs a runner on a
 booked test machine, or a read of the docs, before its code.
