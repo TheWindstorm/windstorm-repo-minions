@@ -20,6 +20,57 @@ through the GitHub CLI's REST calls. Date: 2026-11-22, between 17:51Z and 17:57Z
 - Not seen yet: `status` and `busy` while a job starts, runs and ends, and after the service stops. That needs a
   runner on a test machine.
 
+## C3 Labels: our labels only, and the hold (seen 2026-11-22, 18:16Z to 18:26Z)
+
+Where:
+- One GitHub runner, 2.338.2, on a Linux test account of a shared server.
+- Run as a user-scope process with CPU and memory limits, not as a boot service.
+- Registered to a throwaway private repository with `--no-default-labels --labels minions-c3`.
+- Jobs started by workflow-dispatch.
+
+Registration:
+- GitHub then listed the runner with one label, `minions-c3` (type `custom`), and no `self-hosted`, OS or
+  architecture labels.
+- The token went from the API through standard input into the environment variable `ACTIONS_RUNNER_INPUT_TOKEN`.
+  The runner reads any `ACTIONS_RUNNER_INPUT_<NAME>` variable as its `--<name>` input
+  (`src/Runner.Listener/CommandSettings.cs`). The token was never on a command line. Removal used the same way.
+- **The runner wrote `.credentials` and `.runner` with mode 664** (`.credentials_rsaparams` 600). G2.8 sets them to
+  600 and reads them back.
+
+With the runner online and idle:
+
+| `runs-on` | After 75 s |
+|---|---|
+| `self-hosted` | waited, `queued`, no runner |
+| `[linux]` | waited, `queued`, no runner |
+| `[self-hosted, minions-c3]` | waited, `queued`, no runner |
+| `[minions-c3]` | ran on our runner: started 4 s after dispatch, succeeded in 2 s, nothing billable |
+
+So G2.11 holds for this runner version, and moved workflows must ask for `[minions]` alone (G3.1). A workflow
+that adds `self-hosted` to our label would never run.
+
+The hold:
+- **Hold.** `PUT /repos/{owner}/{repo}/actions/runners/{id}/labels` with `{"labels":["minions-held"]}` replaced
+  the label. A job asking for `[minions-c3]` then waited with the runner online and idle.
+- **Restart.** After the runner was stopped and started again, GitHub still listed `minions-held`: the label set
+  through the API survived the runner's restart. The job still waited.
+- **Lift.** The same call with `{"labels":["minions-c3"]}` lifted the hold. The waiting job started 48 s later and
+  succeeded.
+
+## C7 Linux, first part (same run)
+
+- **Stopping.** A runner started in the background by a non-interactive shell ignores SIGINT. A shell does that
+  for background jobs.
+  - The first stop, by SIGINT, left the runner running.
+  - A second start then gave "A session for this runner already exists" and "Conflict": two copies of one runner.
+  - SIGTERM stopped both copies, and their helper scripts, in 2 s.
+  - So every stop is SIGTERM to the listener, followed by a read-back that no process of the runner is left, before
+    anything else starts it. GitHub's own service file also stops with SIGTERM.
+- **Idle cost.** One idle runner: 3 processes, about 126 MB resident (about 99 MB proportional), 1 s of CPU in 8
+  minutes, 683 MB of disk for its unpacked copy. G12.2 counts both memory and disk.
+- **Not seen yet.** The system unit the runner's own service script writes; its stop while a job runs; slice
+  limits; a reboot.
+
 ## C4 What a run looks like when no job is made
 
 - **A workflow file that is invalid** (a step with both `run` and `uses`), pushed: one run, `conclusion: failure`,
@@ -96,6 +147,6 @@ through the GitHub CLI's REST calls. Date: 2026-11-22, between 17:51Z and 17:57Z
 
 ## Not seen yet
 
-C2's busy and status changes, C3 (labels as the hold), C5's update deadline,
+C2's busy and status changes during a job, C5's update deadline, the rest of C7,
 C7 and C8 (services on Linux and macOS), C10 (organisation runner groups), C12 (laptops). Each needs a runner on a
 booked test machine, or a read of the docs, before its code.
