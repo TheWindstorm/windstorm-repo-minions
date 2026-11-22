@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Plan 1.9: G9.6, the gate counts only tests the runner collects and runs to a pass (row R44).
 - Plan 1.8, from G3's run on a stock virtual machine: G1.15 (look and move judge jobs alike), G9.5 (scrubbing
   never changes paths); rows R42 and R43.
 - Plan 1.7: G5.7 (a cut job is named as cut) moves into 0.1.0 (rows R11 and R29); G4.8 measures the 2 GiB floor
