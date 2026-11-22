@@ -295,6 +295,19 @@ class G1(unittest.TestCase):
         self.assertTrue(any("disk kind not read" in x for x in lines), lines)
 
     def test_G1_7_look_names_what_already_lives_on_the_computer(self):
+        host = linux_host(which=("gh", "sudo", "systemctl", "podman"),
+                          runs={("podman", "ps"): (0, "my-db\n")})
+        _, lines = look(StandIn(self.recent), host)
+        self.assertIn("warn 1 port(s) open to the network here: 443", lines)
+        self.assertIn("warn 1 container(s) of yours running: my-db (podman, yours)", lines)
+        self.assertTrue(any("serves something live" in x for x in lines), lines)
+        self.assertEqual(M.listening_ports(TCP), {443}, "loopback and non-listening sockets are not counted")
+        host = linux_host(files={"/proc/net/tcp": "  sl local st\n"})
+        _, lines = look(StandIn(self.recent), host)
+        self.assertIn("ok no port open to the network", lines)
+        self.assertFalse(any("serves something live" in x for x in lines))
+
+    def test_G1_12_other_peoples_things_are_counted_never_named(self):
         host = linux_host(which=("gh", "sudo", "systemctl", "docker"),
                           runs={("docker", "ps"): (0, "shop-db\nshop-web\n"),
                                 ("systemctl", "list-units"): (0, "actions.runner.o-r.box-r.service loaded active running X\n"
@@ -302,19 +315,12 @@ class G1(unittest.TestCase):
                                 ("systemctl", "show", "-p", "User", "--value", "actions.runner.o-r.box-r.service"): (0, "person\n"),
                                 ("systemctl", "show", "-p", "User", "--value", "actions.runner.o-q.box-q.service"): (0, "someone-else\n")})
         _, lines = look(StandIn(self.recent), host)
-        self.assertIn("warn 1 port(s) open to the network here: 443", lines)
-        # On a shared computer other people's things are counted, never named.
         self.assertIn("warn 2 container(s) running on this computer's shared container service "
                       "(not named: they may be another person's)", lines)
         self.assertFalse(any("shop-db" in x or "someone-else" in x or "box-q" in x for x in lines), lines)
         self.assertIn("warn 1 other runner service(s) of yours here: actions.runner.o-r.box-r.service", lines)
         self.assertIn("warn 1 other runner service(s) here that do not run as you (not named)", lines)
         self.assertTrue(any("serves something live" in x for x in lines), lines)
-        self.assertEqual(M.listening_ports(TCP), {443}, "loopback and non-listening sockets are not counted")
-        host = linux_host(files={"/proc/net/tcp": "  sl local st\n"})
-        _, lines = look(StandIn(self.recent), host)
-        self.assertIn("ok no port open to the network", lines)
-        self.assertFalse(any("serves something live" in x for x in lines))
 
     def test_G1_8_look_lists_each_jobs_needs_against_the_computer(self):
         wf = """name: ci
@@ -440,7 +446,7 @@ class Helpers(unittest.TestCase):
         self.assertEqual(M.classify_run({"status": "queued"}, [{"status": "queued"}])[0], "ok")
         self.assertEqual(M.classify_run(None, [])[0], "warn")
 
-    def test_fixtures_hold_no_token_no_email_no_real_names(self):
+    def test_G9_4_fixtures_hold_no_token_no_email_no_real_names(self):
         for name in [x for x in os.listdir(FIX) if x.endswith((".jsonl", ".html"))]:
             with open(os.path.join(FIX, name), encoding="utf-8") as f:
                 t = f.read()
