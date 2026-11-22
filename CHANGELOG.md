@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Plan 1.10: G4.9, only the idle sleep is held during a job, never the lid switch, a low-battery sleep or a
+  sleep the person chose; G4.4 says "falls asleep by itself" (row R45).
 - Plan 1.9: G9.6, the gate counts only tests the runner collects and runs to a pass (row R44).
 - Plan 1.8, from G3's run on a stock virtual machine: G1.15 (look and move judge jobs alike), G9.5 (scrubbing
   never changes paths); rows R42 and R43.
