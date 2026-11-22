@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Plan 1.11, from G4's run on a stock virtual machine: G6.6 (remove runs as the runner, GitHub first), G5.7 (a job
+  that came through a short sleep is not cut), G4.9 (the real sleep delay, 30 s on Ubuntu 24.04); rows R46 to R48.
 - G4 Keep ready (Linux): `drain` (hold, wait until no job runs, then optionally `--stop`) and `resume`; `setup
   --limits <processors>,<memory %>`; the memory floor (a memory max under 2 GiB stops setup, with the way out); each
   job's work folder emptied after it; the runner's version read with its self-update left on. **Sleep, in plain

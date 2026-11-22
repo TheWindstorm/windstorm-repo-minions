@@ -638,6 +638,48 @@
    "issue": 69,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R46",
+   "seen": "2026-11-22, a stock virtual machine: a cleanup entered the runner user's closed home as the person, was refused, so the runner's own removal never ran, and the user was deleted with the runner still registered.",
+   "promise": "remove runs the runner's removal as root or the runner user, GitHub's side first, with an API delete as the fallback.",
+   "codon": "G6.6",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 72,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R47",
+   "seen": "2026-11-22, a stock virtual machine: a job ran through a 30 s suspend and passed.",
+   "promise": "A job is named cut only when GitHub's result and this computer's record agree; a job that came through a short sleep is not called cut.",
+   "codon": "G5.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 73,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R48",
+   "seen": "2026-11-22, a stock Ubuntu 24.04 virtual machine: a requested suspend waited 30 s on our delay lock, because a drop-in sets InhibitDelayMaxSec=30 (logind's default is 5 s).",
+   "promise": "The skill says the real delay this computer gives, read from logind, not a fixed number.",
+   "codon": "G4.9",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 74,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
