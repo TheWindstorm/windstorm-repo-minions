@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.0 · 2026-11-22 · The Windstorm**
+**Plan version 1.1 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -226,6 +226,7 @@ nothing.
 | G4.4 | The computer does not sleep while a job runs (Linux: an inhibitor while a job process exists; macOS: an assertion for the same time). It may sleep when idle; the skill tells the person that a sleeping minion takes no job. | planned: test_G4_4_no_sleep_during_a_job |
 | G4.5 | The runner keeps GitHub's own self-update on (GitHub refuses runners that are too old); `doctor` reads and reports the runner version. | planned: test_G4_5_runner_self_update_stays_on_and_is_reported |
 | G4.6 | A stop of the service waits long enough for a running job to finish or be cancelled cleanly (stop timeout at least as long as the runner's own), never the system's short default. | planned: test_G4_6_service_stop_waits_for_the_job |
+| G4.7 | Every stop of a runner is SIGTERM to its listener (a runner started in the background ignores SIGINT), followed by a read-back that no process of that runner is left, before anything may start it again; two copies of one runner are never left running (Part 7 C7, seen). | planned: test_G4_7_a_stop_is_sigterm_and_read_back_never_two_copies |
 
 ### G5 Watch and hold
 
@@ -367,7 +368,7 @@ the branch deleted, nothing billable and nothing left. That is G1.4's start test
 
 | Version | What | Accepted when |
 |---|---|---|
-| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.6, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.13, G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
+| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.7, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.13, G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
 | 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.7, G5.8, G5.10, G11 on macOS, G12 (many repositories on one computer). | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
 | 0.3.0 | The opt-in offline fallback (G5.9), self-update (G10), Windows if Part 11 Q4 says yes. | As above, on each OS it claims. |
 
