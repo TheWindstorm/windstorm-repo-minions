@@ -11,7 +11,7 @@
  "rows": [
   {
    "id": "R1",
-   "seen": "Seen by the skill's maintainers over months: private-repository runs that ended 'startup_failure' with zero jobs while the repository's own self-hosted runner was online and idle. A test on a public repository had been taken as proof that a private one would work; it did not.",
+   "seen": "GitHub's documentation says a lock on an account can block GitHub Actions. A run that GitHub does not start ends 'startup_failure' with zero jobs, and no runner of the person's can change that. A test on another repository proves nothing about this one.",
    "promise": "Before installing, look tests whether GitHub creates jobs for THIS repository and names a zero-job startup_failure as an account or repository matter; setup stops there and the skill is never offered as a way around it.",
    "codon": "G1.4",
    "owner": "maintainer",
