@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.4 · 2026-11-22 · The Windstorm**
+**Plan version 1.5 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -189,6 +189,8 @@ nothing.
 | G1.10 | The first thing `look` checks: the GitHub CLI is installed and logged in. If not: `need you: install the GitHub CLI` with the one install command for this OS, or `need you: log in to GitHub` with `gh auth login`, and nothing else runs. Logging in is the person's step (INV7). | `test_G1_10_no_github_cli_or_login_is_the_first_need_you` |
 | G1.11 | `look` checks that the person can become admin on this computer (to make the runner user and the boot service). If not: `need you: this needs an admin of this computer` and `stop`, before anything is touched. | `test_G1_11_no_admin_rights_on_the_computer_stops_before_anything` |
 | G1.12 | On a computer other people also use, what is theirs is counted, never named: containers of a shared container service and runner services that do not run as the person are given as numbers only; only the person's own (rootless containers, services running as them) are named. Port numbers are given; they say nothing of whose they are. | `test_G1_12_other_peoples_things_are_counted_never_named` |
+| G1.13 | `look` names a disk kind only when the system says it for real; a virtual disk (which Linux reports as rotating) is named "disk kind not known (virtual)", never "spinning disk". Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G1_13_a_virtual_disk_is_not_called_spinning |
+| G1.14 | `look` never offers what this version's `setup` does not do: in 0.1.0 an organisation's repository is told it gets one runner for this one repository (G7.6), not a runner group. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G1_14_look_offers_only_what_this_setup_does |
 
 ### G2 Install
 
@@ -205,6 +207,7 @@ nothing.
 | G2.9 | The runner runs as a boot service that starts again by itself after a restart, ordered after the network and after our limits are in place. The unit the runner's own script writes has `Restart=no` and orders after the network without asking for it (seen, Part 7 C7), so our drop-in adds `Wants=network-online.target`, `Restart=on-failure` and our slice. | `test_G2_9_the_runner_is_a_boot_service_started_after_its_limits` |
 | G2.10 | `setup` ends with both sides read: GitHub lists the runner online and idle, and the service is running. Until both are seen, the line is `waiting`, never `ok`. | `test_G2_10_setup_ends_with_both_sides_read` |
 | G2.11 | A job that asks for `self-hosted` alone, or for an OS or architecture label alone, never lands on our runner: it waits for another runner. Seen on a real runner (Part 7 C3) before any G5 code is written, because every hold rests on it. | `test_G2_11_a_job_asking_only_for_self_hosted_never_lands_on_ours` |
+| G2.12 | The admin password is asked once and every admin step runs from that same terminal; sudo's permission belongs to one terminal, and a second one is asked again. A `setup` cut part-way says to run it again from the same terminal. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked |
 
 ### G3 Move the chores
 
@@ -233,7 +236,7 @@ nothing.
 
 | Codon | Claim | Test |
 |---|---|---|
-| G5.1 | `status` prints one line per runner: GitHub's side (online/offline, busy/idle) and the minion's side (service running, a job process present), each with the time read; then the repository's queue: jobs waiting and the age of the oldest. | planned: test_G5_1_status_reads_both_sides_and_the_queue |
+| G5.1 | `status` prints one line per runner: GitHub's side (online/offline, busy/idle) and the minion's side (service running, a job process present), each with the time read; then the repository's queue: jobs waiting and the age of the oldest. The minion's OS and architecture come from its own survey, never from GitHub's runners list, which says `unknown` for a runner with no default labels (seen, Part 7 C7). | planned: test_G5_1_status_reads_both_sides_and_the_queue |
 | G5.2 | "Idle" is said only when both sides agree: GitHub says not busy AND no job process runs on the minion. Otherwise the line says which side says what. | planned: test_G5_2_idle_only_when_both_sides_agree |
 | G5.3 | `watch` runs on a schedule (default every 5 minutes) and writes one line per run to the journal; a heartbeat older than three intervals is reported by `status` as "the watch is not running". | planned: test_G5_3_the_watch_runs_and_its_silence_is_noticed |
 | G5.4 | When a repository is no longer private, `watch`, within one interval, removes our labels from its runners, drains with a short limit (default 2 minutes), then stops their service and keeps it stopped, and `status` says why first. A label change alone is not the boundary here, because a fork's copy of a workflow can ask for any label. `resume` works only once the repository is private again and the person says so. | planned: test_G5_4_a_repository_no_longer_private_is_stopped_after_a_short_drain |
@@ -255,6 +258,7 @@ nothing.
 | G6.2 | `remove --all` also deletes the runner user, the watch, and `~/.minions/`, and opens a pull request that puts each moved `runs-on` back as it was before `move`. | planned: test_G6_2_remove_all_leaves_nothing_and_offers_the_workflows_back |
 | G6.3 | `remove` ends with a census (INV6): runners on GitHub for the repository, services, folders, user, scheduled checks; each "none" or named. | planned: test_G6_3_remove_ends_with_a_census |
 | G6.4 | A removal interrupted part-way is finished by running `remove` again; it never fails on a step already done. | planned: test_G6_4_remove_again_finishes_an_interrupted_removal |
+| G6.5 | `remove` stops `minions.slice` before deleting its file and reads back that it is gone: a slice whose file is deleted stays loaded and active after a reload until it is stopped. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G6_5_remove_stops_the_slice_before_deleting_it |
 
 ### G7 Words to the person
 
@@ -276,6 +280,7 @@ nothing.
 | G8.2 | The skill's order is fixed: look, tell, setup, move, verify, status. It names each step that is the person's (INV7) and what to say there. | planned: test_G8_2_the_skill_names_the_order_and_the_persons_steps |
 | G8.3 | The tool's commands are exactly: `look`, `setup`, `move`, `lint`, `status`, `watch`, `hold`, `resume`, `drain`, `doctor`, `remove`, `self-update`. Each prints `ok`, `warn`, `stop` or `need you` lines and exits non-zero on `stop`. | planned: test_G8_3_commands_and_line_kinds_are_exactly_these |
 | G8.4 | `doctor` checks every promise of G2 and G4 on the computer as it is now and finishes or undoes a half-done step (INV8). | planned: test_G8_4_doctor_checks_install_and_finishes_half_done_steps |
+| G8.5 | Every `systemctl` and `journalctl` call of the tool passes `--no-pager`, so no call waits on a pager when run from a real terminal. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G8_5_no_system_call_waits_on_a_pager |
 
 ### G9 Tests, CI and the promise gate
 
