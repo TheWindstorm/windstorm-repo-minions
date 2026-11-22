@@ -3,12 +3,16 @@
 GitHub is stood in for by answers recorded from a real private repository (tests/fixtures/*.jsonl, scrubbed by
 tests/fixtures/scrub.py); the computer by FakeHost. Run: python tests/test_minions.py -v
 """
+import atexit
 import copy
+import hashlib
 import io
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -17,6 +21,8 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import minions as M  # noqa: E402
 
 FIX = os.path.join(ROOT, "tests", "fixtures")
+TMP = tempfile.mkdtemp(prefix="minions-test-")
+atexit.register(shutil.rmtree, TMP, True)
 REPO = "example-org/example-repo"
 BRANCH = re.compile(r"minions-start-test-[0-9a-f]{8}")
 
@@ -55,17 +61,50 @@ class FakeHost(M.Host):
         self._system, self.files, self.runs = system, dict(files or {}), dict(runs or {})
         self._which, self._uid, self._groups = set(which), uid, list(groups)
         self.dirs, self.links, self.page, self.free = dict(dirs or {}), dict(links or {}), page, free
-        self.ran = []
+        self.ran, self.fed = [], []  # every argv run; (argv, standard input) of every run_in
+        self._state = tempfile.mkdtemp(dir=TMP)
+        self.home_mode, self.download, self.validated, self.tty = 0o750, b"a stand-in runner archive", 0, False
+
+    def _answer(self, argv, input=None):
+        for k in sorted(self.runs, key=len, reverse=True):
+            if tuple(argv[:len(k)]) == k:
+                a = self.runs[k]
+                return a(argv, input) if callable(a) else a
+        return 1, ""
+
+    def run_in(self, argv, input, timeout=600):
+        self.ran.append(tuple(argv))
+        self.fed.append((tuple(argv), input))
+        return self._answer(argv, input)
+
+    def state_dir(self):
+        return self._state
+
+    def hostname(self):
+        return "box-1"
+
+    def fetch_to(self, url, path, timeout=300):
+        self.fetched = url
+        with open(path, "wb") as f:
+            f.write(self.download)
+
+    def isatty(self):
+        return self.tty
+
+    def sudo_validate(self):
+        self.validated += 1
+        self.runs[("sudo", "-n", "true")] = (0, "")
+        return 0
+
+    def mode_of(self, path):
+        return self.home_mode if path == self.home() else 0o700
 
     def which(self, name):
         return f"/usr/bin/{name}" if name in self._which else None
 
     def run(self, argv, timeout=20):
         self.ran.append(tuple(argv))
-        for k in sorted(self.runs, key=len, reverse=True):
-            if tuple(argv[:len(k)]) == k:
-                return self.runs[k]
-        return 1, ""
+        return self._answer(argv)
 
     def read(self, path):
         return self.files.get(path)
@@ -412,6 +451,349 @@ jobs:
         out = io.StringIO()
         M.check_admin(mac, M.Report(out))
         self.assertIn("member of admin", out.getvalue())
+
+
+# ------------------------------------------------------------------------------------------------------------ G2
+
+FOLDER = "/home/minions-runner/runners/example-org-example-repo"
+UNIT = "actions.runner.example-org-example-repo.minions-box-1.service"
+TOKEN = "AB" + "FAKE" + "REGISTRATION" + "TOKEN" + "0123"  # built from pieces, so no recorded file holds it whole
+
+
+def setup_rows(sha):
+    """The recorded downloads list and release notes, with linux-x64's checksum set to the stand-in archive's."""
+    rows = copy.deepcopy(load("setup-release.jsonl"))
+    real = next(x["sha256_checksum"] for x in rows[0]["data"] if (x["os"], x["architecture"]) == ("linux", "x64"))
+    for r in rows:
+        r["data"] = json.loads(json.dumps(r["data"]).replace(real, sha))
+    return rows
+
+
+def runners_answer(status="online", busy=False, labels=("minions", "minions-medium")):
+    return 200, {"total_count": 1, "runners": [{"id": 7, "name": "minions-box-1", "os": "Linux", "status": status,
+                                                "busy": busy, "labels": [{"name": x, "type": "custom"} for x in labels]}]}
+
+
+SHOW = ("Slice=minions.slice\nNice=10\nCPUWeight=50\nRestart=on-failure\n"
+        "Wants=network-online.target\nUnitFileState=enabled\nUser=minions-runner\n")
+
+
+def setup_host(**kw):
+    """A Linux computer where every admin step works, as a stand-in for the VM run."""
+    extra = kw.pop("runs", {})
+    host = linux_host(**kw)
+    sha = hashlib.sha256(host.download).hexdigest()
+    creds = "".join(f"600 minions-runner {FOLDER}/{n}\n" for n in (".credentials", ".runner", ".credentials_rsaparams"))
+    host.runs.update({
+        ("id", "-u", "minions-runner"): (1, "id: 'minions-runner': no such user"),
+        ("id", "-nG", "minions-runner"): (0, "minions-runner\n"),
+        ("sudo", "-n", "useradd"): (0, ""),
+        ("sudo", "-n", "chmod"): (0, ""),
+        ("sudo", "-n", "stat", "-c", "%a", "/home/minions-runner"): (0, "750\n"),
+        ("sudo", "-n", "stat", "-c", "%a %U %n"): (0, creds),
+        ("sudo", "-n", "test", "-e"): (1, ""),
+        ("sudo", "-n", "install"): (0, ""),
+        ("sudo", "-n", "-u", "minions-runner", "--", "sha256sum"): (0, f"{sha}  {FOLDER}/runner.tgz\n"),
+        ("sudo", "-n", "-u", "minions-runner", "--", "tar"): (0, ""),
+        ("sudo", "-n", "-u", "minions-runner", "--", "rm"): (0, ""),
+        ("sudo", "-n", f"{FOLDER}/bin/installdependencies.sh"): (0, "-----\nlibicu found\n"),
+        ("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT):
+            (0, "√ Connected to GitHub\n√ Runner successfully added\n√ Settings Saved.\n"),
+        ("sudo", "-n", "bash", "-c"): (0, "Creating launch runner in /etc/systemd/system/" + UNIT + "\n"),
+        ("sudo", "-n", "cat", f"{FOLDER}/.service"): (0, UNIT + "\n"),
+        ("sudo", "-n", "tee"): (0, ""),
+        ("sudo", "-n", "systemctl"): (0, ""),
+        ("systemctl", "show", UNIT): (0, SHOW),
+        ("systemctl", "show", "minions.slice"): (0, "CPUQuotaPerSecUSec=4s\nMemoryMax=10066329600\n"),
+        ("systemctl", "is-active", UNIT): (0, "active\n"),
+    })
+    host.runs.update(extra)
+    return host, sha
+
+
+def setup_gh(sha, overrides=None):
+    o = {("POST", f"repos/{REPO}/actions/runners/registration-token"): (201, {"token": TOKEN,
+                                                                           "expires_at": "2026-11-22T23:00:00Z"}),
+         ("GET", f"repos/{REPO}/actions/runners?per_page=100"): runners_answer()}
+    o.update(overrides or {})
+    return StandIn(setup_rows(sha), o)
+
+
+def fresh_look(host, minutes=5, stopped=False, survey=True):
+    when = (M.dt.datetime.now(M.dt.timezone.utc) - M.dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024} if survey else {}
+    M.save_state(host, {"looks": {REPO: {"time": when, "stopped": stopped, "survey": s}}})
+
+
+def run_setup(gh, host, interactive=False):
+    out = io.StringIO()
+    code = M.setup(REPO, host=host, gh=gh, out=out, interactive=interactive)
+    return code, out.getvalue().splitlines()
+
+
+def admin_steps(host):
+    return [a for a in host.ran if a[:1] == ("sudo",) and a[:3] != ("sudo", "-n", "true")]
+
+
+class G2(unittest.TestCase):
+    def test_G2_1_setup_needs_a_fresh_clean_look(self):
+        host, sha = setup_host()
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertTrue(lines[-1].startswith(f"stop no look of {REPO}"), lines)
+        for kw, want in ((dict(minutes=61), "minutes old"), (dict(stopped=True), "ended with a `stop`"),
+                         (dict(survey=False), "did not reach its end")):
+            host, sha = setup_host()
+            fresh_look(host, **kw)
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual((code, len(lines)), (M.EXIT_STOP, 1), lines)
+            self.assertIn(want, lines[0])
+            self.assertEqual(admin_steps(host), [], "nothing is touched before the look is checked")
+        # look writes itself down: 0700 folder, 0600 file, the survey kept, nothing secret
+        host = linux_host()
+        look(StandIn(load("look-recent-runs.jsonl")), host)
+        self.assertEqual(os.stat(host.state_dir()).st_mode & 0o777, 0o700)
+        path = os.path.join(host.state_dir(), "minions.json")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        with open(path) as f:
+            entry = json.load(f)["looks"][REPO]
+        self.assertFalse(entry["stopped"])
+        self.assertEqual(entry["survey"]["cores"], 8)
+        self.assertEqual(set(entry["survey"]), {"system", "machine", "cores", "mem", "disk", "free", "battery", "os"})
+        # a look of a public repository is a look with a stop: setup refuses it (with G1.1)
+        host2, sha = setup_host()
+        host2._state = host.state_dir()
+        look(StandIn(with_repo(load("look-recent-runs.jsonl"), lambda d: d.update(visibility="public",
+                                                                                   private=False))), host2)
+        code, lines = run_setup(setup_gh(sha), host2)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("ended with a `stop`", lines[-1])
+
+    def test_G2_2_the_runner_user_has_no_admin_rights(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(("sudo", "-n", "useradd", "--create-home", "--user-group", "--shell", "/bin/bash",
+                       "minions-runner"), host.ran)
+        self.assertIn(("sudo", "-n", "chmod", "0750", "/home/minions-runner"), host.ran)
+        self.assertTrue(all(a[1] == "-n" for a in admin_steps(host)), "every admin step is sudo -n")
+        self.assertFalse(any("-G" in a or "usermod" in a or "sudoers" in " ".join(a) for a in host.ran))
+        # the password is asked once, by sudo itself, after a need-you line
+        host, sha = setup_host(runs={("sudo", "-n", "true"): (1, "sudo: a password is required")})
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host, interactive=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertEqual(host.validated, 1)
+        need = [x for x in lines if x.startswith("need you:")]
+        self.assertTrue(need[0].startswith("need you: type this computer's admin password once"), lines)
+        self.assertLess(lines.index(need[0]), lines.index("ok admin rights ready (asked once)"))
+        self.assertEqual(sum(x.startswith("need you:") for x in lines), 1)
+        # not on a terminal: a blocking need-you, nothing touched
+        host, sha = setup_host(runs={("sudo", "-n", "true"): (1, "sudo: a password is required")})
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual((code, host.validated, admin_steps(host)), (M.EXIT_NEED, 0, []))
+        self.assertIn("run `sudo -v` in your terminal", lines[-1])
+        # a runner user that is in an admin group is refused
+        for groups in ("minions-runner sudo", "minions-runner docker", "minions-runner wheel", "minions-runner users"):
+            host, sha = setup_host(runs={("id", "-nG", "minions-runner"): (0, groups + "\n"),
+                                         ("id", "-u", "minions-runner"): (0, "998\n")})
+            fresh_look(host)
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_STOP)
+            self.assertIn("own group only", lines[-1])
+            self.assertFalse(any("useradd" in a for a in host.ran))
+        # a home closed to others is read back, and the person's own home must not be open to every user
+        host, sha = setup_host(runs={("sudo", "-n", "stat", "-c", "%a", "/home/minions-runner"): (0, "755\n")})
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_STOP)
+        host, sha = setup_host()
+        host.home_mode = 0o755
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual((code, admin_steps(host)), (M.EXIT_NEED, []))
+        self.assertIn("chmod 750 /home/person", lines[-1])
+
+    def test_G2_3_the_runner_release_is_checked_before_use(self):
+        rep = M.Report(io.StringIO())
+        rel = M.runner_release(StandIn(load("setup-release.jsonl")), REPO, linux_host(), rep)
+        self.assertEqual(rel["version"], "2.338.2")
+        self.assertEqual(rel["sha256"], "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40")
+        self.assertTrue(rel["url"].startswith("https://github.com/actions/runner/releases/download/v2.338.2/"))
+        # the two published checksums disagree: stop before anything is downloaded
+        rows = load("setup-release.jsonl")
+        rows[1]["data"]["body"] = rows[1]["data"]["body"].replace(rel["sha256"], "0" * 64)
+        rep = M.Report(io.StringIO())
+        self.assertIsNone(M.runner_release(StandIn(rows), REPO, linux_host(), rep))
+        self.assertIn("disagree", rep.lines[-1])
+        rows[1]["data"]["body"] = "no markers here"
+        rep = M.Report(io.StringIO())
+        self.assertIsNone(M.runner_release(StandIn(rows), REPO, linux_host(), rep))
+        # the downloaded file is not the published one: deleted, nothing installed
+        host, sha = setup_host()
+        host.download = b"something else"
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("checksum is not the one GitHub publishes", lines[-1])
+        self.assertFalse(any(a[2:3] == ("install",) for a in host.ran))
+        self.assertEqual([x for x in os.listdir(host.state_dir()) if x.endswith(".tar.gz")], [])
+        # the version is written down
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        self.assertEqual(M.load_state(host)["runners"][REPO]["version"], "2.338.2")
+
+    def test_G2_4_each_runner_has_its_own_folders(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        self.assertIn(("sudo", "-n", "install", "-d", "-o", "minions-runner", "-g", "minions-runner", "-m", "0700",
+                       FOLDER), host.ran)
+        self.assertIn(("sudo", "-n", "-u", "minions-runner", "--", "tar", "xzf", f"{FOLDER}/runner.tgz", "-C",
+                       FOLDER), host.ran)
+        self.assertIn('--work _work', M.CONFIG_SCRIPT)
+        config = [a for a, _ in host.fed if "bash" in a and M.CONFIG_SCRIPT in a][0]
+        self.assertEqual(config[-4], FOLDER)
+        self.assertFalse(any(a[3:4] == ("cp",) or "cp" in a[:5] for a in host.ran), "unpacked fresh, never copied")
+        # a folder that is there already is never reused
+        host, sha = setup_host(runs={("sudo", "-n", "test", "-e"): (0, "")})
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("exists already", lines[-1])
+        self.assertFalse(any("tar" in a for a in host.ran))
+
+    def test_G2_5_the_registration_token_goes_by_stdin_only(self):
+        host, sha = setup_host()
+        echo = host.runs[("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT)]
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT)] = \
+            lambda argv, input: (echo[0], echo[1] + f"token was {input.strip()}\n")  # a runner that echoes it
+        fresh_look(host)
+        out = io.StringIO()
+        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, interactive=False)
+        self.assertEqual(code, M.EXIT_OK, out.getvalue())
+        self.assertFalse([a for a in host.ran if any(TOKEN in x for x in a)], "the token is on a command line")
+        fed = [(a, i) for a, i in host.fed if i and TOKEN in i]
+        self.assertEqual(len(fed), 1)
+        self.assertEqual(fed[0][1], TOKEN + "\n")
+        self.assertIn("read -r T", fed[0][0][7])
+        self.assertNotIn("--token", " ".join(fed[0][0]))
+        self.assertFalse(re.search(r"\benv\b", M.CONFIG_SCRIPT))
+        self.assertNotIn(TOKEN, out.getvalue())
+        for name in os.listdir(host.state_dir()):
+            with open(os.path.join(host.state_dir(), name), errors="replace") as f:
+                self.assertNotIn(TOKEN, f.read(), name)
+
+    def test_G2_6_a_runner_serves_only_chosen_private_repositories(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        gh = setup_gh(sha)
+        self.assertEqual(run_setup(gh, host)[0], M.EXIT_OK)
+        config = [a for a, _ in host.fed if M.CONFIG_SCRIPT in a][0]
+        self.assertEqual(config[-3], f"https://github.com/{REPO}")
+        self.assertIn(("POST", f"repos/{REPO}/actions/runners/registration-token"), gh.calls)
+        self.assertFalse([c for c in gh.calls if c[1].startswith("orgs/")], "never an organisation runner")
+        self.assertIn(REPO, M.load_state(host)["runners"])
+
+    def test_G2_7_runners_carry_only_our_labels(self):
+        gbs = 1024 ** 3
+        self.assertEqual(M.size_label({"cores": 2, "mem": 4 * gbs}), "minions-small")
+        self.assertEqual(M.size_label({"cores": 8, "mem": 16384000 * 1024}), "minions-medium")
+        self.assertEqual(M.size_label({"cores": 32, "mem": 64 * gbs}), "minions-large")
+        self.assertEqual(M.size_label({"cores": 32, "mem": 4 * gbs}), "minions-small")
+        self.assertEqual(M.size_label({}), "minions-small")
+        self.assertEqual({r[0] for r in M.SIZE_RULES}, {"minions-small", "minions-medium", "minions-large"})
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        config = [a for a, _ in host.fed if M.CONFIG_SCRIPT in a][0]
+        self.assertEqual(config[-1], "minions,minions-medium")
+        self.assertIn("--no-default-labels", M.CONFIG_SCRIPT)
+
+    def test_G2_8_credential_files_are_the_runner_users_only(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        self.assertIn(("sudo", "-n", "chmod", "0600", f"{FOLDER}/.credentials", f"{FOLDER}/.runner",
+                       f"{FOLDER}/.credentials_rsaparams"), host.ran)
+        chmod = host.ran.index(("sudo", "-n", "chmod", "0600", f"{FOLDER}/.credentials", f"{FOLDER}/.runner",
+                                f"{FOLDER}/.credentials_rsaparams"))
+        readback = [i for i, a in enumerate(host.ran) if a[:5] == ("sudo", "-n", "stat", "-c", "%a %U %n")]
+        self.assertTrue(readback and readback[0] > chmod)
+        # the runner's own 664, as seen (C3), left as it was: stop
+        host, sha = setup_host(runs={("sudo", "-n", "stat", "-c", "%a %U %n"): (
+            0, f"664 minions-runner {FOLDER}/.credentials\n664 minions-runner {FOLDER}/.runner\n"
+               f"600 minions-runner {FOLDER}/.credentials_rsaparams\n")})
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("credential files are not its own only", lines[-1])
+        self.assertFalse(any("svc.sh" in " ".join(a) for a in host.ran), "no service before the files are closed")
+
+    def test_G2_9_the_runner_is_a_boot_service_started_after_its_limits(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        tees = {a[-1]: i for a, i in host.fed if a[:3] == ("sudo", "-n", "tee")}
+        dropin = tees[f"/etc/systemd/system/{UNIT}.d/50-minions.conf"]
+        for line in ("Wants=network-online.target", "Slice=minions.slice", "Nice=10", "CPUWeight=50",
+                     "Restart=on-failure", "RestartSec=30"):
+            self.assertIn(line + "\n", dropin)
+        sl = tees["/etc/systemd/system/minions.slice"]
+        self.assertIn("CPUQuota=400%\n", sl)  # half of 8 cores
+        self.assertIn(f"MemoryMax={int(16384000 * 1024 * 0.6)}\n", sl)
+        order = [" ".join(a) for a in host.ran]
+        svc = next(i for i, a in enumerate(order) if "svc.sh install" in a)
+        tee = max(i for i, a in enumerate(order) if a.startswith("sudo -n tee"))
+        reload_ = order.index("sudo -n systemctl daemon-reload")
+        enable = order.index(f"sudo -n systemctl enable {UNIT}")
+        start = order.index(f"sudo -n systemctl restart {UNIT}")
+        show = next(i for i, a in enumerate(order) if a.startswith(f"systemctl show {UNIT}"))
+        self.assertTrue(svc < tee < reload_ < enable < start < show, order)
+        # read back not as written: stop
+        host, sha = setup_host(runs={("systemctl", "show", UNIT): (0, SHOW.replace("Slice=minions.slice",
+                                                                                   "Slice=system.slice"))})
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("Slice='system.slice'", lines[-1])
+        self.assertNotIn("runners", M.load_state(host))
+
+    def test_G2_10_setup_ends_with_both_sides_read(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK)
+        self.assertTrue(lines[-1].startswith("ok both sides: GitHub lists minions-box-1 online and idle"), lines)
+        for gh_says, active in ((runners_answer(status="offline"), "active\n"),
+                                ((200, {"total_count": 0, "runners": []}), "active\n"),
+                                (runners_answer(), "activating\n")):
+            host, sha = setup_host(runs={("systemctl", "is-active", UNIT): (0, active)})
+            fresh_look(host)
+            code, lines = run_setup(setup_gh(sha, {("GET", f"repos/{REPO}/actions/runners?per_page=100"): gh_says}),
+                                    host)
+            self.assertEqual(code, M.EXIT_WAIT, lines)
+            self.assertTrue(lines[-1].startswith("waiting "), lines)
+        # the journal has each step, written before it ran
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            steps = [x.split(" ", 2)[1] for x in f]
+        for s in ("useradd", "download", "unpack", "register", "chmod", "svc.sh"):
+            self.assertIn(s, steps)
+
+    def test_G2_11_a_job_asking_only_for_self_hosted_never_lands_on_ours(self):
+        for s in ({"cores": 1}, {"cores": 8, "mem": 16 * 1024 ** 3}, {"cores": 64, "mem": 256 * 1024 ** 3}):
+            labels = M.runner_labels(s)
+            self.assertEqual(labels[0], "minions")
+            self.assertFalse(set(labels) & {"self-hosted", "linux", "Linux", "x64", "X64", "macos", "arm64"})
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha, {("GET", f"repos/{REPO}/actions/runners?per_page=100"):
+                                               runners_answer(labels=("self-hosted", "Linux", "X64", "minions",
+                                                                      "minions-medium"))}), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("no job asking for `self-hosted` can land on it", lines[-1])
 
 
 class Helpers(unittest.TestCase):
