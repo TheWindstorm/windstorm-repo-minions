@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- G4 Keep ready (Linux): `drain` (hold, wait until no job runs, then optionally `--stop`) and `resume`; `setup
+  --limits <processors>,<memory %>`; the memory floor (a memory max under 2 GiB stops setup, with the way out); each
+  job's work folder emptied after it; the runner's version read with its self-update left on. **Sleep, in plain
+  words:** while a job runs, the runner takes exactly two locks. One blocks only the computer's own idle sleep. The
+  other only delays a sleep you ask for, by logind's delay (5 s by default, 30 s on Ubuntu 24.04); it never refuses
+  it. Neither holds the lid switch, the power or suspend keys, a low-battery sleep or a shutdown: closing the lid or
+  choosing to sleep still puts the computer to sleep, and a job running then is cut.
 - Plan 1.10: G4.9, only the idle sleep is held during a job, never the lid switch, a low-battery sleep or a
   sleep the person chose; G4.4 says "falls asleep by itself" (row R45).
 - Plan 1.9: G9.6, the gate counts only tests the runner collects and runs to a pass (row R44).

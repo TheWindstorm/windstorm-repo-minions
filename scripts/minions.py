@@ -39,7 +39,7 @@ VERSION = "0.0.0"
 # G8.3: every way a command can end. The worst line decides among 0, 2, 3 and 4.
 EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 64, 130
 LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting")
-COMMANDS = ("look", "setup", "move")  # built so far, in G8.3's order
+COMMANDS = ("look", "setup", "move", "resume", "drain")  # built so far, in G8.3's order
 RUNNER_USER = "minions-runner"
 SLICE = "minions.slice"
 DROPIN = "50-minions.conf"
@@ -1218,12 +1218,53 @@ def runner_labels(survey_: dict) -> list[str]:
     return ["minions", size_label(survey_)]
 
 
-def slice_limits(survey_: dict) -> dict:
-    """G2.9 / G4.2, simple for now: all our runners together get half the cores (at least one) and at most 60 % of
-    the memory (soft limit at 50 %). G4.2's measured values replace these."""
-    cores = max(1, (survey_.get("cores") or 2) // 2)
+DEFAULT_MEMORY_PCT = 60  # G4.2: interim fixed defaults until measured values exist (memory high 10 points lower)
+MEMORY_FLOOR = 2 * 1024 ** 3  # G4.8: a memory max under this is too little for a job's build, tests and tools
+MEMORY_PCT_MOST = 90  # --limits never gives jobs more than this share: something stays the person's
+
+
+def slice_limits(survey_: dict, chosen: tuple[int, int] | None = None) -> dict:
+    """G2.9 / G4.2 / G4.8: what all our runners together may use. Interim fixed defaults (G4.2 is not built): half
+    the processors, never less than one (G4.8), memory high at 50 % and max at 60 %. `setup --limits` (G7.8)
+    chooses other shares."""
+    total = survey_.get("cores") or 2
     mem = survey_.get("mem") or 4 * 1024 ** 3
-    return {"CPUQuota": f"{cores * 100}%", "MemoryHigh": str(int(mem * 0.5)), "MemoryMax": str(int(mem * 0.6))}
+    cores, pct = chosen if chosen else (total // 2, DEFAULT_MEMORY_PCT)
+    cores = max(1, min(cores, total))
+    pct = max(10, min(pct, MEMORY_PCT_MOST))
+    return {"CPUQuota": f"{cores * 100}%", "MemoryHigh": str(int(mem * (pct - 10) / 100)),
+            "MemoryMax": str(int(mem * pct / 100)), "cores": cores, "total_cores": total, "pct": pct, "mem": mem}
+
+
+def limits_in_words(lim: dict) -> str:
+    """G7.8: the limits as the person hears them, with the real numbers and the one way to change them."""
+    return (f"jobs here get at most {lim['cores']} of this computer's {lim['total_cores']} processors and "
+            f"{lim['pct']} % of its memory ({gb(int(lim['MemoryMax']))}); the one way to change that is "
+            "`setup <owner/repo> --limits <processors>,<memory %>`")
+
+
+def memory_floor_line(repo: str, lim: dict) -> str | None:
+    """G4.8: None when the memory max reaches the floor; else the stop/warn text with the way out and its cost."""
+    if int(lim["MemoryMax"]) >= MEMORY_FLOOR:
+        return None
+    need = -(-MEMORY_FLOOR * 100 // lim["mem"])  # the smallest whole share that reaches the floor
+    head = (f"at most {lim['pct']} % of this computer's memory is {gb(int(lim['MemoryMax']))}, under the "
+            f"{gb(MEMORY_FLOOR)} a job needs at the least, so a job would likely be killed by the limit")
+    if need > MEMORY_PCT_MOST:
+        return head + (f". This computer has {gb(lim['mem'])} in all: too little to give a job "
+                       f"{gb(MEMORY_FLOOR)} and keep some for you; it cannot be a minion")
+    return head + (f". The way out: `setup {repo} --limits {lim['cores']},{need}` gives jobs up to {need} % "
+                   f"({gb(lim['mem'] * need / 100)}); while a job runs, that much less memory is left for your own "
+                   "work, so the computer may slow down or the system may close other programs")
+
+
+def parse_limits(raw: str) -> tuple[int, int]:
+    """`--limits <processors>,<memory %>`, e.g. `2,70`."""
+    m = re.fullmatch(r"\s*(\d+)\s*,\s*(\d+)\s*%?\s*", raw or "")
+    if not m or int(m.group(1)) < 1 or not 10 <= int(m.group(2)) <= MEMORY_PCT_MOST:
+        raise argparse.ArgumentTypeError(f"write --limits <processors>,<memory %>, e.g. 2,70 (processors at least "
+                                         f"1, memory between 10 and {MEMORY_PCT_MOST} %)")
+    return int(m.group(1)), int(m.group(2))
 
 
 def dropin_text() -> str:
@@ -1471,7 +1512,7 @@ def lock_credentials(host: Host, folder: str, rep: Report) -> bool:
     return True
 
 
-def install_service(host: Host, folder: str, survey_: dict, rep: Report) -> str | None:
+def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits: dict | None = None) -> str | None:
     """G2.9: the runner's own unit, then our drop-in and slice, read back."""
     journal(host, "svc.sh install", folder)
     rc, out = sudo(host, ["bash", "-c", 'cd "$1" && ./svc.sh install "$2"', "minions-svc", folder, RUNNER_USER])
@@ -1483,7 +1524,7 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report) -> str 
     if rc != 0 or not re.fullmatch(r"actions\.runner\.[A-Za-z0-9_.@-]+\.service", unit):
         rep.stop("could not read the name of the runner's unit")
         return None
-    limits = slice_limits(survey_)
+    limits = limits or slice_limits(survey_)
     journal(host, "write", f"/etc/systemd/system/{SLICE} and {unit}.d/{DROPIN}")
     for path, text in ((f"/etc/systemd/system/{SLICE}", slice_text(limits)),
                        (f"/etc/systemd/system/{unit}.d/{DROPIN}", dropin_text())):
@@ -1492,7 +1533,7 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report) -> str 
         if rc != 0:
             rep.stop(f"could not write {path}: {tail(out)}")
             return None
-    for argv in (systemctl("daemon-reload"), systemctl("enable", unit), systemctl("restart", unit)):
+    for argv in (systemctl("daemon-reload"), systemctl("enable", unit), systemctl("start", unit)):
         journal(host, " ".join(argv))
         rc, out = sudo(host, argv)
         if rc != 0:
@@ -1546,7 +1587,7 @@ def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: 
 
 
 def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
-          interactive: bool | None = None) -> int:
+          interactive: bool | None = None, limits: tuple[int, int] | None = None) -> int:
     host = host or Host()
     gh = gh or GitHub(host)
     rep = Report(out)
@@ -1558,6 +1599,16 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
         return rep.code()
     if host.system() != "Linux" or not host.which("systemctl"):
         rep.stop("this version sets up Linux with systemd only; macOS comes in the next version")
+        return rep.code()
+    survey_ = entry.get("survey") or {}
+    lim = slice_limits(survey_, limits)
+    floor = memory_floor_line(repo, lim)
+    if floor:
+        rep.stop(floor)
+        return rep.code()
+    rep.ok(limits_in_words(lim))
+    now_free = host.disk_free(host.home())  # read now, not the look's number
+    if not check_disk_floor(now_free[0] if now_free else survey_.get("free"), rep, "no runner is set up"):
         return rep.code()
     if not check_persons_home(host, rep):
         return rep.code()
@@ -1572,22 +1623,319 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     rel = runner_release(gh, repo, host, rep)
     if rel is None or not unpack_runner(host, rel, folder, rep):
         return rep.code()
-    survey_ = entry.get("survey") or {}
     labels = runner_labels(survey_)
     runner_name = f"minions-{re.sub(r'[^A-Za-z0-9-]', '-', host.hostname())}"[:60]
     if not register(gh, host, repo, folder, runner_name, labels, rep):
         return rep.code()
     if not lock_credentials(host, folder, rep):
         return rep.code()
-    unit = install_service(host, folder, survey_, rep)
+    if not install_hooks(host, repo, folder, rep):
+        return rep.code()
+    version = runner_version(host, folder, rep) or rel["version"]
+    unit = install_service(host, folder, survey_, rep, lim)
     if unit is None:
         return rep.code()
     data = load_state(host)
     data.setdefault("runners", {})[repo] = {"name": runner_name, "folder": folder, "unit": unit, "labels": labels,
-                                            "version": rel["version"],
+                                            "version": version, "hooks": hook_dir(repo),
+                                            "limits": {k: lim[k] for k in ("cores", "pct", "CPUQuota", "MemoryHigh",
+                                                                           "MemoryMax")},
                                             "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
     save_state(host, data)
     both_sides(gh, host, repo, runner_name, unit, labels, rep)
+    return rep.code()
+
+
+# ---------------------------------------------------------------------------------------------------- G4 keep ready
+
+HOOKS_ROOT = "/usr/local/lib/windstorm-repo-minions"
+DISK_FLOOR = 5 * 1024 ** 3  # G4.3: under this much free space for the work folders, the runner is to be held
+JOB_HOURS_MOST = 6  # GitHub's default job time limit; a lock left by a runner that died ends by itself after this
+HELD_LABEL = "minions-held"
+DRAIN_WAIT_S = 1800
+# G4.4 and G4.9: exactly two locks while a job runs, both nested in one process group the hooks start and end.
+# `idle` in block mode stops only the computer's own idle sleep; `sleep` in DELAY mode only delays a sleep that was
+# asked for (logind's InhibitDelayMaxSec), never refuses it. Never the lid, the keys, shutdown, or sleep in block mode.
+INHIBIT_IDLE = ["systemd-inhibit", "--what=idle", "--mode=block", "--who=Windstorm Repo Minions",
+                "--why=a job is running; this holds only the computer's own idle sleep"]
+INHIBIT_SLEEP_DELAY = ["systemd-inhibit", "--what=sleep", "--mode=delay", "--who=Windstorm Repo Minions",
+                       "--why=a job is running; a sleep you ask for still happens, a few seconds later"]
+FORBIDDEN_INHIBIT = ("handle-lid-switch", "handle-suspend-key", "handle-hibernate-key", "handle-power-key",
+                     "handle-reboot-key", "shutdown")
+
+
+def inhibitor_argv() -> list[str]:
+    """The one command the job-started hook runs to hold the two locks, ending by itself after JOB_HOURS_MOST."""
+    return INHIBIT_IDLE + INHIBIT_SLEEP_DELAY + ["sleep", str(JOB_HOURS_MOST * 3600)]
+
+
+def sh_quote(argv: list[str]) -> str:
+    return " ".join("'" + a.replace("'", "'\\''") + "'" for a in argv)
+
+
+def hook_dir(repo: str) -> str:
+    owner, name = repo.split("/", 1)
+    return f"{HOOKS_ROOT}/{owner}-{name}"
+
+
+def job_started_script(folder: str) -> str:
+    """G4.4: written by setup, owned by root, read-only to the runner user; runs as the runner user at each job's start."""
+    return f"""#!/bin/bash
+# Windstorm Repo Minions, job started (G4.4, G4.9). Written by setup; owned by root.
+# It holds the computer's own idle sleep off and delays (never refuses) a sleep you ask for, while this job runs.
+FOLDER={sh_quote([folder])}
+STATE="$FOLDER/_minions"
+mkdir -p "$STATE" && chmod 700 "$STATE"
+if command -v systemd-inhibit >/dev/null 2>&1; then
+  env -u RUNNER_TRACKING_ID setsid {sh_quote(inhibitor_argv())} </dev/null >/dev/null 2>&1 &
+  pid="$!"
+  echo "$pid" > "$STATE/inhibit.pid"
+  # Each systemd-inhibit takes its lock before it starts what it runs: once the last one's `sleep` runs, both
+  # locks are held. Wait for that (5 s at most), so the job's first step already runs under them.
+  for _ in $(seq 50); do pgrep -g "$pid" -x sleep >/dev/null 2>&1 && break; sleep 0.1; done
+  if pgrep -g "$pid" -x sleep >/dev/null 2>&1; then
+    echo "minions: this computer will not fall asleep by itself during this job (a sleep you ask for still happens)"
+  else
+    echo "minions: the locks against sleep were not seen taken; this computer may fall asleep by itself during this job"
+  fi
+else
+  echo "minions: systemd-inhibit is missing, so this computer may fall asleep by itself during this job"
+fi
+exit 0
+"""
+
+
+def job_completed_script(folder: str) -> str:
+    """G4.3 and G4.4: ends the locks, empties this job's work folder, and marks a disk under the floor."""
+    return f"""#!/bin/bash
+# Windstorm Repo Minions, job completed (G4.3, G4.4). Written by setup; owned by root.
+FOLDER={sh_quote([folder])}
+STATE="$FOLDER/_minions"
+mkdir -p "$STATE" && chmod 700 "$STATE"
+if [ -f "$STATE/inhibit.pid" ]; then
+  pid="$(cat "$STATE/inhibit.pid")"
+  case "$pid" in ''|*[!0-9]*) ;; *) kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null ;; esac
+  rm -f "$STATE/inhibit.pid"
+fi
+ws="$(realpath -e -- "${{GITHUB_WORKSPACE:-/nonexistent}}" 2>/dev/null)"
+case "$ws" in
+  "$FOLDER/_work/"?*) find "$ws" -mindepth 1 -delete 2>/dev/null; echo "minions: this job's work folder was emptied" ;;
+esac
+[ -d "$FOLDER/_work/_temp" ] && find "$FOLDER/_work/_temp" -mindepth 1 -delete 2>/dev/null
+avail="$(df --output=avail -B1 "$FOLDER" 2>/dev/null | tail -n 1 | tr -d ' ')"
+case "$avail" in
+  ''|*[!0-9]*) ;;
+  *) if [ "$avail" -lt {DISK_FLOOR} ]; then date -u +%Y-%m-%dT%H:%M:%SZ > "$STATE/disk-low"
+       echo "minions: less than {DISK_FLOOR // 1024 ** 3} GB free for the work folders: run \\`drain\\` before the disk fills"
+     else rm -f "$STATE/disk-low"; fi ;;
+esac
+exit 0
+"""
+
+
+def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
+    """G4.3, G4.4: the two job hooks, root-owned and read-only to the runner; named in the runner's .env."""
+    d = hook_dir(repo)
+    journal(host, "write", f"{d}/job-started.sh, {d}/job-completed.sh and their lines in {folder}/.env")
+    sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", HOOKS_ROOT, d])
+    for name, text in (("job-started.sh", job_started_script(folder)), ("job-completed.sh", job_completed_script(folder))):
+        rc, out = sudo(host, ["tee", f"{d}/{name}"], input=text)
+        if rc != 0:
+            rep.stop(f"could not write {d}/{name}: {tail(out)}")
+            return False
+        sudo(host, ["chown", "root:root", f"{d}/{name}"])
+        sudo(host, ["chmod", "0755", f"{d}/{name}"])
+    rc, env = sudo(host, ["cat", f"{folder}/.env"])
+    keep = [x for x in (env.splitlines() if rc == 0 else []) if not x.startswith("ACTIONS_RUNNER_HOOK_JOB_")]
+    keep += [f"ACTIONS_RUNNER_HOOK_JOB_STARTED={d}/job-started.sh", f"ACTIONS_RUNNER_HOOK_JOB_COMPLETED={d}/job-completed.sh"]
+    rc, out = as_runner(host, ["tee", f"{folder}/.env"], input="\n".join(keep) + "\n")
+    if rc != 0:
+        rep.stop(f"could not name the job hooks in {folder}/.env: {tail(out)}")
+        return False
+    rc, out = sudo(host, ["stat", "-c", "%a %U", f"{d}/job-started.sh", f"{d}/job-completed.sh"])
+    if rc != 0 or [x.strip() for x in out.splitlines() if x.strip()] != ["755 root", "755 root"]:
+        rep.stop(f"the job hooks are not root's and read-only to the runner: {tail(out)}")
+        return False
+    rep.ok("after each job its work folder is emptied, and during a job this computer does not fall asleep by "
+           "itself; a sleep you ask for, or the lid, still puts it to sleep (job hooks, owned by root, read back)")
+    return True
+
+
+def check_disk_floor(free: int | None, rep: Report, what: str) -> bool:
+    """G4.3: under DISK_FLOOR free, no runner is started or released to take jobs."""
+    if free is None:
+        rep.warn("free space for the work folders: not read")
+        return True
+    if free < DISK_FLOOR:
+        rep.stop(f"only {gb(free)} free for the work folders, under the {gb(DISK_FLOOR)} floor: {what}. Free some "
+                 "space first")
+        return False
+    return True
+
+
+def runner_version(host: Host, folder: str, rep: Report) -> str | None:
+    """G4.5: the runner's own self-update stays on (setup never passes --disableupdate); its version is read."""
+    rc, out = as_runner(host, [f"{folder}/bin/Runner.Listener", "--version"])
+    v = out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else None
+    if v and re.fullmatch(r"\d+\.\d+\.\d+", v):
+        rep.ok(f"runner version {v}; GitHub's own self-update stays on")
+        return v
+    rep.warn("could not read the runner's version; GitHub's own self-update stays on")
+    return None
+
+
+def listed_runner(gh: GitHub, repo: str, name: str) -> dict | None:
+    s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+    mine = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == name]
+    return mine[0] if mine else None
+
+
+def runner_pids(host: Host, folder: str, part: str = "Runner.") -> list[int]:
+    """Processes of THIS runner (its own folder's programs), by exact PID. Read only; never a broad kill."""
+    rc, out = host.run(["pgrep", "-u", RUNNER_USER, "-f", f"{folder}/bin/{part}"])
+    return [int(x) for x in out.split() if x.isdigit()] if rc == 0 else []
+
+
+def set_labels(gh: GitHub, repo: str, runner_id, labels: list[str]) -> list[str] | None:
+    s, d = gh.api("PUT", f"repos/{repo}/actions/runners/{runner_id}/labels", {"labels": labels})
+    if s != 200:
+        return None
+    return sorted(x.get("name") for x in (d or {}).get("labels", []))
+
+
+def stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool) -> bool:
+    """G4.6, G4.7: the one way the tool stops a runner. Only after a drain; SIGTERM, then read back that no process
+    of this runner is left, before anything may start it again."""
+    if not drained:
+        rep.stop("the runner is stopped only after a drain (a stop cancels a running job within seconds): run "
+                 "`drain <owner/repo>` first")
+        return False
+    journal(host, "stop", unit)
+    sudo(host, systemctl("stop", unit))  # systemd sends SIGTERM to the runner's processes
+    left = runner_pids(host, folder)
+    for _ in range(10):
+        if not left:
+            break
+        host.sleep(1)
+        left = runner_pids(host, folder)
+    for pid in left:  # still there: SIGTERM by exact PID, then read back again
+        journal(host, "SIGTERM", str(pid))
+        sudo(host, ["kill", "-TERM", str(pid)])
+    if left:
+        host.sleep(2)
+        left = runner_pids(host, folder)
+    rc, active = host.run(systemctl("is-active", unit))
+    if left:
+        rep.stop(f"the runner did not stop: process(es) {', '.join(map(str, left))} are left; nothing will start "
+                 "it again until they are gone")
+        return False
+    rep.ok(f"the runner is stopped: the service is {active.strip() or 'not read'}, and no process of it is left")
+    return True
+
+
+def start_runner(host: Host, unit: str, folder: str, rep: Report) -> bool:
+    """G4.7: started only when no process of this runner is left, so two copies never run."""
+    rc, active = host.run(systemctl("is-active", unit))
+    if active.strip() == "active":
+        return True
+    left = runner_pids(host, folder)
+    if left:
+        rep.stop(f"process(es) {', '.join(map(str, left))} of this runner are still there while its service is "
+                 "not: it is not started again, so two copies never run")
+        return False
+    journal(host, "start", unit)
+    rc, out = sudo(host, systemctl("start", unit))
+    if rc != 0:
+        rep.stop(f"the runner's service did not start: {tail(out)}")
+        return False
+    rep.ok("the runner's service is started again")
+    return True
+
+
+def drain(repo: str, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
+          host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
+    """G4.6 (and G5.6's first part): hold by label, then wait until GitHub says not busy AND no job process runs
+    here, with a deadline (G8.6); `--stop` stops the service only after that."""
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    data = load_state(host)
+    mine = (data.get("runners") or {}).get(repo)
+    if not mine:
+        rep.stop(f"no runner of ours serves {repo} on this computer")
+        return rep.code()
+    r = listed_runner(gh, repo, mine["name"])
+    if r is None:
+        rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}: nothing to drain")
+        return rep.code()
+    labels = sorted(x.get("name") for x in r.get("labels", []))
+    if labels != [HELD_LABEL]:
+        journal(host, "hold", f"{repo} {mine['name']} (labels were {','.join(labels)})")
+        mine["labels_before_hold"] = labels
+        data["runners"][repo] = mine
+        save_state(host, data)
+        if set_labels(gh, repo, r["id"], [HELD_LABEL]) != [HELD_LABEL]:
+            rep.stop("GitHub did not take the hold label: nothing else was changed")
+            return rep.code()
+    rep.ok(f"held: {mine['name']} now carries only `{HELD_LABEL}`, so no new job lands on it; jobs wait on GitHub")
+    deadline = host.now() + dt.timedelta(seconds=wait_s)
+    said = False
+    while True:
+        r = listed_runner(gh, repo, mine["name"]) or {}
+        busy = bool(r.get("busy"))
+        worker = runner_pids(host, mine["folder"], "Runner.Worker")
+        if not busy and not worker:
+            break
+        if host.now() >= deadline:
+            side = ", ".join(x for x in (("GitHub says busy" if busy else ""),
+                                         (f"a job process runs here ({worker[0]})" if worker else "")) if x)
+            rep.wait(f"for the running job to end ({side}); held, nothing stopped. Next: `drain {repo}` again")
+            return rep.code()
+        if not said:
+            rep.ok(f"a job is running ({'GitHub says busy' if busy else 'a job process runs here'}): waiting for it "
+                   f"to end, until {deadline.strftime('%H:%MZ')} at the latest")
+            said = True
+        host.sleep(poll_s)
+    rep.ok(f"drained: {mine['name']} is held, GitHub says idle, and no job process runs here")
+    if stop:
+        stop_runner(host, mine["unit"], mine["folder"], rep, drained=True)
+    rep.ok(f"`resume {repo}` lets jobs land here again")
+    return rep.code()
+
+
+def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
+    """G4.6's other half: lift the hold (and start the service if a drain stopped it), never under the disk floor."""
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    data = load_state(host)
+    mine = (data.get("runners") or {}).get(repo)
+    if not mine:
+        rep.stop(f"no runner of ours serves {repo} on this computer")
+        return rep.code()
+    free = host.disk_free(mine["folder"]) or host.disk_free(host.home())
+    if not check_disk_floor(free[0] if free else None, rep, "the runner stays held"):
+        return rep.code()
+    if not start_runner(host, mine["unit"], mine["folder"], rep):
+        return rep.code()
+    want = sorted(mine.get("labels_before_hold") or mine.get("labels") or [])
+    r = None
+    for _ in range(9):
+        r = listed_runner(gh, repo, mine["name"])
+        if r and r.get("status") == "online":
+            break
+        host.sleep(5)
+    if not r:
+        rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}")
+        return rep.code()
+    journal(host, "resume", f"{repo} {mine['name']} labels {','.join(want)}")
+    if set_labels(gh, repo, r["id"], want) != want:
+        rep.stop("GitHub did not take our labels back: the runner is still held")
+        return rep.code()
+    mine.pop("labels_before_hold", None)
+    data["runners"][repo] = mine
+    save_state(host, data)
+    rep.ok(f"resumed: {mine['name']} carries {', '.join(want)} again, so jobs land here")
     return rep.code()
 
 
@@ -1994,6 +2342,9 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
     check_secrets(gh, repo, (data.get("owner") or {}).get("type"), rep)
     s = survey(host, rep)
     found["survey"] = s
+    lim = slice_limits(s)
+    floor = memory_floor_line(repo, lim)
+    (rep.warn if floor else rep.ok)(floor or limits_in_words(lim))
     what_lives_here(host, rep)
     check_workflows(gh, repo, s, rep)
     check_cost_rule(host, rep)
@@ -2018,11 +2369,19 @@ def parser() -> Parser:
                     help="with your yes: one job on a temporary branch, run on no machine, then deleted")
     st = sub.add_parser("setup", help="install one runner for one private repository on this computer (Linux)")
     st.add_argument("repo", help="owner/name; needs a look of it on this computer under an hour old")
+    st.add_argument("--limits", type=parse_limits, metavar="PROCESSORS,MEMORY%",
+                    help="what jobs here may use (default: half the processors and 60 %% of the memory)")
     mv = sub.add_parser("move", help="open a pull request that moves the jobs this computer can take; never merges")
     mv.add_argument("repo", help="owner/name; needs a fresh look and a runner of ours online")
     mv.add_argument("--verify", action="store_true", help="after your merge: see one real run finish here")
     mv.add_argument("--include-job", action="append", default=[], metavar="FILE:JOB",
                     help="your word to move one job that publishes or deploys")
+    rs = sub.add_parser("resume", help="lift a hold so jobs land on this computer again")
+    rs.add_argument("repo", help="owner/name")
+    dr = sub.add_parser("drain", help="hold the runner and wait until no job runs here; nothing is cut")
+    dr.add_argument("repo", help="owner/name")
+    dr.add_argument("--stop", action="store_true", help="then stop the runner's service (only after the drain)")
+    dr.add_argument("--wait-minutes", type=int, default=DRAIN_WAIT_S // 60, help="how long to wait for a job to end")
     return ap
 
 
@@ -2035,7 +2394,11 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None) -> i
         if a.cmd == "look":
             return look(a.repo, a.start_test, host=host)
         if a.cmd == "setup":
-            return setup(a.repo, host=host)
+            return setup(a.repo, host=host, limits=a.limits)
+        if a.cmd == "drain":
+            return drain(a.repo, stop=a.stop, wait_s=max(0, a.wait_minutes) * 60, host=host)
+        if a.cmd == "resume":
+            return resume(a.repo, host=host)
         if a.cmd == "move":
             return move(a.repo, verify=a.verify, include=a.include_job, host=host)
         return EXIT_USAGE
