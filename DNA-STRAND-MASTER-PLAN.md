@@ -214,12 +214,12 @@ nothing.
 
 | Codon | Claim | Test |
 |---|---|---|
-| G3.1 | `move` makes a branch and a pull request in the repository that changes `runs-on` of each job that can move to `[minions]` (plus a size label where the job needs one), never to `self-hosted`. The person merges it; the tool never merges. | planned: test_G3_1_move_opens_a_pull_request_and_never_merges |
-| G3.2 | Jobs that no owned computer can take (another OS, a GPU, a tool G1.8 found missing) are left as they are and listed in the pull request's description with the reason. | planned: test_G3_2_jobs_that_cannot_move_are_left_and_named |
-| G3.3 | A job that publishes or deploys (a release, a package upload, a deploy, anything on a tag push or holding a deploy secret) is never moved silently: it is left unchanged and named, and moving it needs the person's word for that job. | planned: test_G3_3_publishing_jobs_are_never_moved_silently |
+| G3.1 | `move` makes a branch and a pull request in the repository that changes `runs-on` of each job that can move to `[minions]` (plus a size label where the job needs one), never to `self-hosted`. The person merges it; the tool never merges. | `test_G3_1_move_opens_a_pull_request_and_never_merges` |
+| G3.2 | Jobs that no owned computer can take (another OS, a GPU, a tool G1.8 found missing) are left as they are and listed in the pull request's description with the reason. | `test_G3_2_jobs_that_cannot_move_are_left_and_named` |
+| G3.3 | A job that publishes or deploys (a release, a package upload, a deploy, anything on a tag push or holding a deploy secret) is never moved silently: it is left unchanged and named, and moving it needs the person's word for that job. | `test_G3_3_publishing_jobs_are_never_moved_silently` |
 | G3.4 | Each moved workflow gets `concurrency` with `cancel-in-progress` for pull requests, so a newer push replaces the older run instead of queueing behind it. Only where the workflow has none already. | planned: test_G3_4_moved_workflows_cancel_superseded_runs |
 | G3.5 | `move` adds a small check the person can keep (`lint`): every `runs-on` in the repository asks for labels some registered runner carries, open pull requests' heads included; a job no runner can take is named before it waits, and so is a job that asks for `self-hosted` alone. | planned: test_G3_5_lint_names_jobs_no_runner_can_take |
-| G3.6 | After the merge, `move --verify` sees one real job of each moved workflow finish on the minion and reports its result. "Moved" is said only after that. | planned: test_G3_6_moved_is_said_only_after_a_real_job_ran |
+| G3.6 | After the merge, `move --verify` sees one real job of each moved workflow finish on the minion and reports its result. "Moved" is said only after that. | `test_G3_6_moved_is_said_only_after_a_real_job_ran` |
 
 ### G4 Keep it ready
 
