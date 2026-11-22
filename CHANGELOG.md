@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Plan 1.5, from G2's run on a stock virtual machine: G1.13 (a virtual disk is not called spinning), G1.14
+  (look offers only what this setup does), G2.12 (admin steps stay on the terminal that was asked), G6.5 (stop
+  the slice before deleting it), G8.5 (no pager), G5.1 (the OS comes from the minion, not GitHub's list); rows
+  R30 to R35.
 - Plan 1.4, from a stock virtual machine: G4.6 (a service stop cancels the job, so drain first), G2.9 (the
   unit's Restart=no and missing Wants=), G5.7 (a cut job is marked failure); rows R27 to R29.
 - Plan 1.3: G1.12, other people's things on a shared computer are counted, never named (row R26); G9.4,
