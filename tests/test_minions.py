@@ -203,7 +203,8 @@ class G1(unittest.TestCase):
 
     def test_G1_2_look_names_account_kind_and_runner_scope(self):
         _, lines = look(StandIn(self.recent), linux_host())
-        self.assertIn("ok organisation: a runner group limited to the private repositories you choose", lines)
+        self.assertIn("ok organisation: this version gives this one repository its own runner on this computer; "
+                      "runner groups for an organisation's chosen repositories come in the next version", lines)
         rows = with_repo(self.recent, lambda d: d["owner"].update(type="User"))
         _, lines = look(StandIn(rows), linux_host())
         self.assertIn("ok personal account: one runner per repository", lines)
@@ -399,13 +400,43 @@ jobs:
         self.assertIn("downloads its tools (setup-node)", k[0][1])
         self.assertEqual(k[1][0], "stay")
         self.assertIn("stays on GitHub", k[1][1])
-        self.assertIn("already asks for a self-hosted runner", k[2][1])
+        self.assertIn("asks for a runner that is not ours (self-hosted, linux)", k[2][1])
         self.assertIn("chosen when the job runs; not read", k[3][1])
         # Through look, on the recorded repository's four workflows.
         _, lines = look(StandIn(self.recent), linux_host())
-        self.assertIn("warn .github/workflows/c3-a-self-hosted-alone.yml job j: already asks for a self-hosted "
-                      "runner (self-hosted)", lines)
-        self.assertIn("warn .github/workflows/c3-c-ours-only.yml job j: asks for labels minions-c3", lines)
+        self.assertIn("warn .github/workflows/c3-a-self-hosted-alone.yml job j: asks for a runner that is not ours "
+                      "(self-hosted)", lines)
+        self.assertIn("warn .github/workflows/c3-c-ours-only.yml job j: asks for a runner that is not ours "
+                      "(minions-c3)", lines)
+
+    def test_G1_13_a_virtual_disk_is_not_called_spinning(self):
+        def box(link, files, runs=None):
+            h = linux_host(files=files, runs=runs or {})
+            h.links = {"/sys/dev/block/259:2": link}
+            return h
+        # The stock VM's virtio disk: rotational 1, device vda. Seen: look called it a spinning disk.
+        h = box("/sys/devices/pci0000:00/virtio2/block/vda/vda1",
+                {"/sys/devices/pci0000:00/virtio2/block/vda/queue/rotational": "1\n"})
+        self.assertEqual(M.disk_kind(h, "/home"), "disk kind not known (virtual)")
+        # A sda disk whose vendor is the hypervisor's, and one only systemd-detect-virt knows about.
+        sda = "/sys/devices/pci0000:00/block/sda/sda1"
+        rot = {"/sys/devices/pci0000:00/block/sda/queue/rotational": "1\n"}
+        h = box(sda, {**rot, "/sys/devices/pci0000:00/block/sda/device/vendor": "QEMU    \n"})
+        self.assertEqual(M.disk_kind(h, "/home"), "disk kind not known (virtual)")
+        h = box(sda, rot, {("systemd-detect-virt", "--vm"): (0, "kvm\n")})
+        self.assertEqual(M.disk_kind(h, "/home"), "disk kind not known (virtual)")
+        # A real computer's disks are still told apart.
+        h = box(sda, rot, {("systemd-detect-virt", "--vm"): (1, "none\n")})
+        self.assertEqual(M.disk_kind(h, "/home"), "spinning disk")
+        self.assertEqual(M.disk_kind(linux_host(), "/home"), "SSD")
+
+    def test_G1_14_look_offers_only_what_this_setup_does(self):
+        _, lines = look(StandIn(self.recent), linux_host())  # the recorded repository is an organisation's
+        org = [x for x in lines if x.startswith("ok organisation:")]
+        self.assertEqual(len(org), 1, lines)
+        self.assertIn("this one repository its own runner", org[0])
+        self.assertIn("come in the next version", org[0])
+        self.assertFalse([x for x in lines if "runner group limited" in x or "repositories you choose" in x], lines)
 
     def test_G1_9_look_reads_the_current_cost_rule_with_its_date(self):
         host = linux_host()
@@ -1012,6 +1043,43 @@ class G3(unittest.TestCase):
         code, lines = run_move(MoveGH(self.FILES), h)
         self.assertEqual(code, M.EXIT_STOP)
         self.assertIn("no look of", lines[-1])
+
+    def test_G1_15_look_and_move_judge_jobs_alike(self):
+        files = dict(self.FILES)
+        files[".github/workflows/theirs.yml"] = ("name: theirs\non: workflow_dispatch\njobs:\n  alone:\n"
+                                                 "    runs-on: self-hosted\n    steps:\n      - run: x\n"
+                                                 "  team:\n    runs-on: [team-box]\n    steps:\n      - run: x\n")
+        s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024}
+        ours = M.runner_labels(s)
+        for path, text in files.items():
+            trig = M.read_triggers(text)
+            for job in M.read_workflow(text):
+                kind, words, _ = M.plan_job(path, trig, job, "Linux", "x86_64", ours, set())
+                lk, lw = M.look_job_line(path, trig, job, s)
+                self.assertEqual(lk == "ok", kind in ("move", "here"), (path, job["id"], kind, lw))
+                self.assertIn(words, lw, (path, job["id"]))
+                if kind == "publish":
+                    self.assertTrue(lw.startswith("publishes or deploys ("), lw)
+                    self.assertNotIn("can move here", lw)
+        # The release job on a pushed tag: look no longer says it can move.
+        trig = M.read_triggers(RELEASE_YML)
+        (job,) = M.read_workflow(RELEASE_YML)
+        lk, lw = M.look_job_line(".github/workflows/release.yml", trig, job, s)
+        self.assertEqual(lk, "warn")
+        self.assertIn("starts on a pushed tag", lw)
+        self.assertIn("--include-job release.yml:publish", lw)
+        # A runner that is not ours: the same words in look's line and under its own heading in move's PR.
+        trig = M.read_triggers(files[".github/workflows/theirs.yml"])
+        for job in M.read_workflow(files[".github/workflows/theirs.yml"]):
+            self.assertTrue(M.look_job_line("theirs.yml", trig, job, s)[1].startswith("asks for a runner that is not ours"))
+        gh = MoveGH(files)
+        run_move(gh, move_host())
+        body = pr_body_of(gh)
+        theirs = body.split("## Left as they are (they ask for a runner that is not ours)")[1].split("##")[0]
+        self.assertIn("job `alone`: asks for a runner that is not ours (self-hosted)", theirs)
+        self.assertIn("job `team`: asks for a runner that is not ours (team-box)", theirs)
+        cannot = body.split("## Left as they are (they cannot run on this computer)")[1].split("##")[0]
+        self.assertNotIn("not ours", cannot)
 
     def test_G3_2_jobs_that_cannot_move_are_left_and_named(self):
         host, gh = move_host(), MoveGH(self.FILES)
