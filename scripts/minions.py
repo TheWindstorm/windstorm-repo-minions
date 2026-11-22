@@ -376,7 +376,8 @@ def check_repository(gh: GitHub, host: Host, repo: str, rep: Report) -> dict | N
     rep.ok(f"{repo} is private")
     kind = (data.get("owner") or {}).get("type")
     if kind == "Organization":
-        rep.ok("organisation: a runner group limited to the private repositories you choose")
+        rep.ok("organisation: this version gives this one repository its own runner on this computer; runner "
+               "groups for an organisation's chosen repositories come in the next version")
     elif kind == "User":
         rep.ok("personal account: one runner per repository")
     else:
@@ -668,6 +669,22 @@ def survey(host: Host, rep: Report) -> dict:
     return s
 
 
+VIRTUAL_DISK = "disk kind not known (virtual)"
+VIRTUAL_VENDORS = re.compile(r"qemu|virtio|vmware|vbox|virtual|xen|red hat", re.I)
+
+
+def virtual_disk(host: Host, block: str) -> bool:
+    """G1.13: Linux reports a virtio disk as rotating, so a virtual disk's kind cannot be read from it (seen, C7)."""
+    if re.match(r"(?:vd|xvd)[a-z]+$", os.path.basename(block)):
+        return True
+    for f in ("device/vendor", "device/model"):
+        v = host.read(f"{block}/{f}")
+        if v and VIRTUAL_VENDORS.search(v):
+            return True
+    rc, out = host.run(["systemd-detect-virt", "--vm"])
+    return rc == 0 and out.strip() not in ("", "none")
+
+
 def disk_kind(host: Host, path: str) -> str:
     if host.system() == "Darwin":
         rc, out = host.run(["diskutil", "info", "/"])
@@ -685,6 +702,8 @@ def disk_kind(host: Host, path: str) -> str:
         seen.add(d)
         rot = host.read(f"{d}/queue/rotational")
         if rot is not None and rot.strip() in ("0", "1"):
+            if virtual_disk(host, d):
+                return VIRTUAL_DISK
             return "spinning disk" if rot.strip() == "1" else "SSD"
         slaves = host.listdir(f"{d}/slaves")
         todo += [host.realpath(f"/sys/class/block/{x}") for x in slaves]
@@ -982,6 +1001,9 @@ def read_triggers(text: str) -> dict:
 HOSTED = {"ubuntu": "Linux", "macos": "Darwin", "windows": "Windows"}
 
 
+NOT_OURS = "asks for a runner that is not ours"
+
+
 def judge_job(job: dict, system: str) -> tuple[str, str]:
     """Can this job move to this computer? (kind, words); kind is ok|warn|stay."""
     ro = job["runs_on"]
@@ -1003,12 +1025,27 @@ def judge_job(job: dict, system: str) -> tuple[str, str]:
             return "stay", f"asks for GitHub's {ro[0]}; this computer is {system}, so it stays on GitHub"
         kind = "warn" if job["sudo"] or job["container"] or job["services"] else "ok"
         return kind, f"on GitHub's {ro[0]} now; can move here" + ("; " + "; ".join(needs) if needs else "")
-    if "self-hosted" in labels:
-        return "warn", f"already asks for a self-hosted runner ({', '.join(ro)})"
-    return "warn", f"asks for labels {', '.join(ro)}"
+    return "warn", f"{NOT_OURS} ({', '.join(ro)})"
 
 
-def check_workflows(gh: GitHub, repo: str, system: str, rep: Report) -> list[dict]:
+def look_job_line(path: str, triggers: dict, job: dict, survey_: dict) -> tuple[str, str]:
+    """G1.15: look judges a job with move's own function (plan_job), so both say the same thing in the same words."""
+    system = survey_.get("system") or "Linux"
+    machine = survey_.get("machine") or "x86_64"
+    kind, words, _ = plan_job(path, triggers, job, system, machine, runner_labels(survey_), set())
+    if kind == "move":
+        _, jw = judge_job(job, system)
+        extra = jw.split("can move here", 1)[1] if "can move here" in jw else ""
+        return "ok", f"can move here: {words}{extra}"
+    if kind == "here":
+        return "ok", words
+    if kind == "publish":
+        return "warn", (f"publishes or deploys ({words}): it is left as it is, and moves only with your word for "
+                        f"this job (`move --include-job {os.path.basename(path)}:{job['id']}`)")
+    return "warn", words
+
+
+def check_workflows(gh: GitHub, repo: str, survey_: dict, rep: Report) -> list[dict]:
     s, d = gh.api("GET", f"repos/{repo}/contents/.github/workflows")
     if s == 404:
         rep.ok("no workflows yet: nothing to move")
@@ -1031,8 +1068,9 @@ def check_workflows(gh: GitHub, repo: str, system: str, rep: Report) -> list[dic
         jobs = read_workflow(text)
         if not jobs:
             rep.warn(f"{f['path']}: no job read")
+        triggers = read_triggers(text)
         for job in jobs:
-            kind, words = judge_job(job, system)
+            kind, words = look_job_line(f["path"], triggers, job, survey_)
             (rep.ok if kind == "ok" else rep.warn)(f"{f['path']} job {job['id']}: {words}")
             found.append({"file": f["path"], **job, "kind": kind})
     return found
@@ -1720,9 +1758,14 @@ def pr_body(moved: list, left: list, publish: list, here: list) -> str:
            "(labels `minions`). Nothing else in your workflows changes. The tool that opened it never merges it: "
            "you do.", "", "## Moved"]
     out += [f"- `{p}` job `{j}`: {w}" for p, j, w in moved]
-    if left:
+    cannot = [x for x in left if not x[2].startswith(NOT_OURS)]
+    theirs = [x for x in left if x[2].startswith(NOT_OURS)]
+    if cannot:
         out += ["", "## Left as they are (they cannot run on this computer)"]
-        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in left]
+        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in cannot]
+    if theirs:
+        out += ["", "## Left as they are (they ask for a runner that is not ours)"]
+        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in theirs]
     if publish:
         out += ["", "## Left as they are (they publish or deploy)",
                 "Each needs your word for that one job before it moves: `move <owner/repo> --include-job "
@@ -1952,7 +1995,7 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
     s = survey(host, rep)
     found["survey"] = s
     what_lives_here(host, rep)
-    check_workflows(gh, repo, s["system"], rep)
+    check_workflows(gh, repo, s, rep)
     check_cost_rule(host, rep)
     return rep.code()
 
