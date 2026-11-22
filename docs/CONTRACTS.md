@@ -175,8 +175,9 @@ Where: the same kind of fresh disk, 4 cores, 8 GB; and a second one with 3 GB fo
   it to 30 s. A suspend asked during a job waited on our delay lock for 30.2 s. The machine then slept and woke on a
   timer. The job passed: the sleep was delayed, not refused, and a 30 s sleep did not cut that job.
 - `LidSwitchIgnoreInhibited` was logind's default, `yes`: the lid switch is not held by sleep locks.
-- **The hold through a job.** The label hold was set while a job ran. The job went on to the end and passed. No new job
-  landed until the hold was lifted, and the next job landed after it was.
+- **The hold through a job.** The label hold was set while a job ran. The job went on to the end and passed, and
+  GitHub then listed the runner idle with only `minions-held`. After the hold was lifted, the next job landed. (No job
+  was sent while the runner was held in this run; C3 shows a job waiting behind the hold.)
 - **A cleanup that enters the runner user's home as the person is refused** (that home is closed, G2.2). The
   runner's own removal must run as root or as that user (G6.6).
 - **`gh auth logout` leaves its file.** After logout, `~/.config/gh/hosts.yml` was still there, with the token gone.
