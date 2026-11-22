@@ -344,6 +344,34 @@
    "issue": 30,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R25",
+   "seen": "2026-11-22, recording real GitHub answers for the test stand-in: the answers carry the logged-in person's name, email address and login (commit author and committer, run actor).",
+   "promise": "Fixtures are scrubbed before they are committed, and a test refuses any fixture holding a token, an email address or a real name or login.",
+   "codon": "G9.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 34,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R26",
+   "seen": "2026-11-22, the first real run of look on a computer many people use: the container service and the service manager list every account's containers and runner services, and look printed their names.",
+   "promise": "Other people's things are counted, never named; only the person's own are named.",
+   "codon": "G1.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 35,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
