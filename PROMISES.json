@@ -19,7 +19,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 7,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -33,7 +33,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 8,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -47,7 +47,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 9,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -61,7 +61,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 10,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -75,7 +75,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 11,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -89,7 +89,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 12,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -103,7 +103,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 13,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -117,7 +117,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 14,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -131,7 +131,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 15,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -145,7 +145,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 16,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -159,7 +159,7 @@
    "ship_in": "0.2.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 17,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -173,7 +173,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 18,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -187,7 +187,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 19,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -201,7 +201,7 @@
    "ship_in": "0.2.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 20,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -215,7 +215,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 21,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -229,7 +229,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 22,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -243,7 +243,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 23,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -257,7 +257,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 24,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -271,7 +271,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 25,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -285,7 +285,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 26,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -299,7 +299,7 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 27,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -313,7 +313,7 @@
    "ship_in": "0.2.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 28,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -327,7 +327,21 @@
    "ship_in": "0.1.0",
    "test": "",
    "proven": "",
-   "issue": null,
+   "issue": 29,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R24",
+   "seen": "2026-11-22, a Linux test account, runner 2.338.2 started in the background: a stop by SIGINT left it running; started again, the second copy reported 'A session for this runner already exists' and 'Conflict' (two copies of one runner). SIGTERM stopped both in 2 s.",
+   "promise": "Every stop is SIGTERM to the listener and is read back (no process of the runner left) before anything starts it again; never two copies of one runner.",
+   "codon": "G4.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 30,
    "moved_why": "",
    "moved_by_person": ""
   }
