@@ -62,6 +62,28 @@ through the GitHub CLI's REST calls. Date: 2026-11-22, between 17:51Z and 17:57Z
 - This is G1.4's dispatch test. Its workflow file must be on the default branch for the dispatch to be accepted.
   Not seen yet: the answer when Actions is turned off for the repository.
 
+### C9, the start test (G1.4), 2026-11-22 18:05Z to 18:12Z
+
+- The plan's start test cannot use workflow-dispatch, because that needs the file on the default branch. A push
+  can be used instead.
+- With no workflow on the default branch, a push to a temporary branch holding a workflow with `on: push` started a
+  run. Its one job asked only for a custom label (`runs-on: [minions-no-runner-here]`, without `self-hosted`), and
+  it was created and waited (`queued`).
+- With a push workflow of the "person's" on the default branch, a commit with no parent holding only our one file,
+  pushed to a temporary branch, started only our workflow: one run, one job, queued. The person's workflow did not
+  run, because a pushed commit's workflows are read from that commit's own files.
+  - Built with `git hash-object`, `git mktree` and `git commit-tree`, so no working copy of the person's repository
+    is changed.
+  - Pushed as `<commit>:refs/heads/<branch>`.
+- Cleanup, each answered `204 No Content`: cancel (`POST .../runs/{id}/cancel`), then delete the run
+  (`DELETE .../runs/{id}`), then delete the branch (`DELETE .../git/refs/heads/<branch>`).
+  - Read back afterwards: the run is "Not Found", the branch list has only the default branch, and no workflow of
+    ours is listed.
+  - The run's timing showed `billable: {}`.
+- Not seen yet:
+  - a rule that refuses creating a branch;
+  - a token without `workflow` scope pushing a workflow file. Expected: refused. Not yet seen.
+
 ## C11 GitHub's billing page
 
 - `https://docs.github.com/en/billing/concepts/product-billing/github-actions`, read 2026-11-22 17:57Z. It has a
