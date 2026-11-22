@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Windstorm Repo Minions: the tool the skill's agent runs.
 
-Plan: DNA-STRAND-MASTER-PLAN.md. This version builds gene G1 (Look first) only: `look` reads and reports and changes
-nothing on the computer. Its one change on GitHub, the start test (G1.4), runs only with `--start-test` (the person's
-yes) and leaves nothing behind.
+Plan: DNA-STRAND-MASTER-PLAN.md. This version builds gene G1 (Look first) and gene G2 (Install, Linux with systemd).
+`look` reads and reports and changes nothing on the computer except its own record in ~/.minions/. Its one change on
+GitHub, the start test (G1.4), runs only with `--start-test` (the person's yes) and leaves nothing behind. `setup`
+installs one runner for one private repository (G2), only after a fresh, clean `look`.
 
-Output: one fact per line, each starting with `ok`, `warn`, `stop` or `need you`. Exit 0, or 2 after a `stop`,
-or 3 after a `need you` that blocks.
+Output: one fact per line, each starting with `ok`, `warn`, `stop`, `need you` or (setup's last line, G2.10)
+`waiting`. Exit 0, or 2 after a `stop`, or 3 after a `need you` that blocks, or 4 after `waiting`.
 
 Python 3.10+, standard library only. Every GitHub call goes through GitHub.api(), which runs the person's own
 GitHub CLI (`gh api`): the tool never holds or prints a token.
@@ -32,7 +33,12 @@ import urllib.request
 
 VERSION = "0.0.0"
 
-EXIT_OK, EXIT_STOP, EXIT_NEED = 0, 2, 3
+EXIT_OK, EXIT_STOP, EXIT_NEED, EXIT_WAIT = 0, 2, 3, 4
+RUNNER_USER = "minions-runner"
+SLICE = "minions.slice"
+DROPIN = "50-minions.conf"
+LOOK_MAX_AGE_S = 3600
+ADMIN_LIKE_GROUPS = {"sudo", "admin", "wheel", "docker", "root", "lxd", "libvirt"}
 COST_URL = "https://docs.github.com/en/billing/concepts/product-billing/github-actions"
 COST_LIST_HEAD = "The following usage remains free independently and does not reduce the included compute usage:"
 START_BRANCH_PREFIX = "minions-start-test-"
@@ -64,6 +70,7 @@ class Report:
         self.lines: list[str] = []
         self.stopped = False
         self.blocked = False
+        self.waiting = False
 
     def _put(self, kind: str, text: str) -> None:
         line = f"{kind} {text}"
@@ -85,8 +92,16 @@ class Report:
             self.blocked = True
         self._put("need you:", text)
 
+    def wait(self, text: str) -> None:
+        self.waiting = True
+        self._put("waiting", text)
+
     def code(self) -> int:
-        return EXIT_STOP if self.stopped else EXIT_NEED if self.blocked else EXIT_OK
+        if self.stopped:
+            return EXIT_STOP
+        if self.blocked:
+            return EXIT_NEED
+        return EXIT_WAIT if self.waiting else EXIT_OK
 
 
 # ----------------------------------------------------------------------------------------------------- the computer
@@ -100,6 +115,14 @@ class Host:
     def run(self, argv: list[str], timeout: int = 20) -> tuple[int, str]:
         try:
             p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+            return p.returncode, (p.stdout or "") + (p.stderr or "")
+        except (OSError, subprocess.SubprocessError) as e:
+            return 127, str(e)
+
+    def run_in(self, argv: list[str], input: str, timeout: int = 600) -> tuple[int, str]:
+        """Like run(), with `input` on standard input: the only way a secret reaches another program (INV2)."""
+        try:
+            p = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout)
             return p.returncode, (p.stdout or "") + (p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
             return 127, str(e)
@@ -144,6 +167,17 @@ class Host:
     def user(self) -> str:
         return getpass.getuser()
 
+    def hostname(self) -> str:
+        return platform.node().split(".")[0] or "computer"
+
+    def state_dir(self) -> str:
+        return os.path.join(self.home(), ".minions")
+
+    def fetch_to(self, url: str, path: str, timeout: int = 300) -> None:
+        req = urllib.request.Request(url, headers={"User-Agent": "windstorm-repo-minions/" + VERSION})
+        with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:
+            shutil.copyfileobj(r, f)
+
     def disk_free(self, path: str) -> tuple[int, int] | None:
         try:
             u = shutil.disk_usage(path)
@@ -171,6 +205,22 @@ class Host:
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
+
+    def isatty(self) -> bool:
+        return sys.stdin.isatty()
+
+    def sudo_validate(self) -> int:
+        """`sudo -v` attached to the person's terminal: sudo itself asks for the password (the person's step)."""
+        try:
+            return subprocess.run(["sudo", "-v"]).returncode
+        except (OSError, subprocess.SubprocessError):
+            return 1
+
+    def mode_of(self, path: str) -> int | None:
+        try:
+            return os.stat(path).st_mode & 0o777
+        except OSError:
+            return None
 
 
 # ----------------------------------------------------------------------------------------------------------- GitHub
@@ -205,9 +255,12 @@ class GitHub:
         status, data = parse_include(raw)
         rec = os.environ.get("MINIONS_RECORD")
         if rec:
+            kept = data
+            if isinstance(data, dict) and "token" in data:  # a registration or removal token is never recorded
+                kept = dict(data, token="RECORDED-TOKEN-REMOVED")
             with open(rec, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"method": method, "path": path, "body": body, "status": status,
-                                    "data": data}) + "\n")
+                                    "data": kept}) + "\n")
         return status, data
 
     def get(self, path: str):
@@ -951,6 +1004,459 @@ def check_cost_rule(host: Host, rep: Report) -> None:
            f"count the same whichever computer ran the job. Source: {COST_URL}")
 
 
+# ------------------------------------------------------------------------------------------- state and journal
+
+def state_path(host: Host) -> str:
+    return os.path.join(host.state_dir(), "minions.json")
+
+
+def ensure_state_dir(host: Host) -> str:
+    d = host.state_dir()
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    return d
+
+
+def load_state(host: Host) -> dict:
+    try:
+        with open(state_path(host), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(host: Host, data: dict) -> None:
+    """minions.json: which repositories, which runners, the last looks. Nothing secret. 0600, written whole."""
+    ensure_state_dir(host)
+    path = state_path(host)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def journal(host: Host, step: str, detail: str = "") -> None:
+    """INV8, first half: each step is written down BEFORE it runs. Never a secret."""
+    ensure_state_dir(host)
+    path = os.path.join(host.state_dir(), "journal.log")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(f"{host.now().strftime('%Y-%m-%dT%H:%M:%SZ')} {step} {detail}".rstrip() + "\n")
+
+
+def record_look(host: Host, repo: str, rep: Report, s: dict | None) -> None:
+    data = load_state(host)
+    keep = {k: v for k, v in (s or {}).items() if k in ("system", "machine", "cores", "mem", "disk", "free",
+                                                          "battery", "os")}
+    data.setdefault("looks", {})[repo] = {"time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                          "stopped": rep.stopped, "survey": keep}
+    save_state(host, data)
+
+
+# ------------------------------------------------------------------------------------------------------- G2 install
+
+SIZE_RULES = (  # (label, at least this many cores, at least this much memory in GB); the first that fits wins
+    ("minions-large", 16, 32),
+    ("minions-medium", 4, 8),
+    ("minions-small", 0, 0),
+)
+ARCH = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64", "armv7l": "arm"}
+CONFIG_SCRIPT = ('read -r T; cd "$1" || exit 9; ACTIONS_RUNNER_INPUT_TOKEN="$T" ./config.sh --unattended '
+                 '--url "$2" --name "$3" --labels "$4" --no-default-labels --work _work; rc=$?; unset T; exit $rc')
+REMOVE_SCRIPT = 'read -r T; cd "$1" || exit 9; ACTIONS_RUNNER_INPUT_TOKEN="$T" ./config.sh remove; rc=$?; unset T; exit $rc'
+
+
+def size_label(survey_: dict) -> str:
+    """G2.7: the size label from the survey; the thresholds live in SIZE_RULES only."""
+    cores = survey_.get("cores") or 0
+    mem_gb = (survey_.get("mem") or 0) / 1024 ** 3
+    for label, c, m in SIZE_RULES:
+        if cores >= c and mem_gb >= m - 0.5:
+            return label
+    return "minions-small"
+
+
+def runner_labels(survey_: dict) -> list[str]:
+    """G2.7, G2.11: only ours. Never `self-hosted`, an OS or an architecture label."""
+    return ["minions", size_label(survey_)]
+
+
+def slice_limits(survey_: dict) -> dict:
+    """G2.9 / G4.2, simple for now: all our runners together get half the cores (at least one) and at most 60 % of
+    the memory (soft limit at 50 %). G4.2's measured values replace these."""
+    cores = max(1, (survey_.get("cores") or 2) // 2)
+    mem = survey_.get("mem") or 4 * 1024 ** 3
+    return {"CPUQuota": f"{cores * 100}%", "MemoryHigh": str(int(mem * 0.5)), "MemoryMax": str(int(mem * 0.6))}
+
+
+def dropin_text() -> str:
+    return ("# Windstorm Repo Minions (G2.9): the runner's own unit has Restart=no and does not ask for the network.\n"
+            "[Unit]\nWants=network-online.target\n\n"
+            f"[Service]\nSlice={SLICE}\nNice=10\nCPUWeight=50\nRestart=on-failure\nRestartSec=30\n")
+
+
+def slice_text(limits: dict) -> str:
+    return ("# Windstorm Repo Minions: every runner of ours on this computer, together (G2.9, G4.2, G12.1).\n"
+            "[Unit]\nDescription=Windstorm Repo Minions runners\nBefore=slices.target\n\n"
+            f"[Slice]\nCPUQuota={limits['CPUQuota']}\nMemoryHigh={limits['MemoryHigh']}\nMemoryMax={limits['MemoryMax']}\n")
+
+
+def sudo(host: Host, argv: list[str], input: str | None = None, timeout: int = 600) -> tuple[int, str]:
+    """An admin step: always `sudo -n` (the password was asked once, before the first step)."""
+    full = ["sudo", "-n"] + argv
+    return host.run_in(full, input, timeout) if input is not None else host.run(full, timeout)
+
+
+def as_runner(host: Host, argv: list[str], input: str | None = None, timeout: int = 600) -> tuple[int, str]:
+    return sudo(host, ["-u", RUNNER_USER, "--"] + argv, input, timeout)
+
+
+def mask(text: str, secret: str | None) -> str:
+    return text.replace(secret, "***") if secret else text
+
+
+def tail(text: str, n: int = 3) -> str:
+    lines = [x.strip() for x in text.splitlines() if x.strip()]
+    return " / ".join(lines[-n:])
+
+
+def check_fresh_look(host: Host, repo: str, rep: Report) -> dict | None:
+    """G2.1: a `look` of the same repository on this computer, under an hour old, with no `stop` line."""
+    entry = (load_state(host).get("looks") or {}).get(repo)
+    if not entry:
+        rep.stop(f"no look of {repo} on this computer yet: run `look {repo}` first")
+        return None
+    try:
+        when = dt.datetime.strptime(entry["time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    except (KeyError, ValueError):
+        rep.stop(f"the last look of {repo} cannot be read: run `look {repo}` again")
+        return None
+    age = (host.now() - when).total_seconds()
+    if age > LOOK_MAX_AGE_S or age < -60:
+        rep.stop(f"the last look of {repo} is {int(age // 60)} minutes old: run `look {repo}` again (setup needs one "
+                 "under an hour old)")
+        return None
+    if entry.get("stopped"):
+        rep.stop(f"the last look of {repo} ended with a `stop` line: settle that first, then look again")
+        return None
+    if not entry.get("survey"):
+        rep.stop(f"the last look of {repo} did not reach its end: settle what it asked, then look again")
+        return None
+    rep.ok(f"a look of {repo} {int(age // 60)} minute(s) ago, with no stop")
+    return entry
+
+
+def ask_admin_once(host: Host, rep: Report, interactive: bool) -> bool:
+    """G2.2: the admin password is the person's step, asked once (sudo -v); every later step is `sudo -n`."""
+    rc, _ = host.run(["sudo", "-n", "true"])
+    if rc == 0:
+        rep.ok("admin rights ready (sudo did not need to ask now)")
+        return True
+    if interactive:
+        rep.need("type this computer's admin password once, where sudo asks for it below (this step is yours)",
+                 blocks=False)
+        if host.sudo_validate() == 0 and host.run(["sudo", "-n", "true"])[0] == 0:
+            rep.ok("admin rights ready (asked once)")
+            return True
+        rep.stop("sudo did not accept the password: nothing was touched")
+        return False
+    rep.need("this needs this computer's admin password once: run `sudo -v` in your terminal, then run setup again "
+             "from that same terminal")
+    return False
+
+
+def ensure_runner_user(host: Host, rep: Report) -> bool:
+    """G2.2: the runner's own user, in no group but its own, its home closed to others."""
+    rc, _ = host.run(["id", "-u", RUNNER_USER])
+    if rc != 0:
+        journal(host, "useradd", RUNNER_USER)
+        rc, out = sudo(host, ["useradd", "--create-home", "--user-group", "--shell", "/bin/bash", RUNNER_USER])
+        if rc != 0:
+            rep.stop(f"could not make the user {RUNNER_USER}: {tail(out)}")
+            return False
+        rep.ok(f"made the user {RUNNER_USER}")
+    else:
+        rep.ok(f"the user {RUNNER_USER} is there already")
+    rc, out = host.run(["id", "-nG", RUNNER_USER])
+    groups = set(out.split()) if rc == 0 else set()
+    extra = groups - {RUNNER_USER}
+    if rc != 0 or extra & ADMIN_LIKE_GROUPS or extra:
+        rep.stop(f"{RUNNER_USER} is in other groups ({', '.join(sorted(extra)) or 'not read'}): a runner user must be "
+                 "in its own group only, never one that gives admin rights")
+        return False
+    home = f"/home/{RUNNER_USER}"
+    journal(host, "chmod", f"0750 {home}")
+    sudo(host, ["chmod", "0750", home])
+    rc, out = sudo(host, ["stat", "-c", "%a", home])
+    if rc != 0 or out.strip() != "750":
+        rep.stop(f"the runner's home {home} is not closed to others (mode {out.strip() or 'not read'})")
+        return False
+    rep.ok(f"{RUNNER_USER}: in its own group only, no admin rights, its home closed to others (750)")
+    return True
+
+
+def check_persons_home(host: Host, rep: Report) -> bool:
+    """G2.2: the person's own files are not reachable from the runner user."""
+    mode = host.mode_of(host.home())
+    if mode is None:
+        rep.warn("could not read who may enter your home folder")
+        return True
+    if mode & 0o005:
+        rep.need(f"your home folder can be entered by every user of this computer (mode {mode:o}), so a job could "
+                 f"read your files: run `chmod 750 {host.home()}`, then setup again")
+        return False
+    rep.ok(f"your home folder is closed to other users (mode {mode:o})")
+    return True
+
+
+def runner_release(gh: GitHub, repo: str, host: Host, rep: Report) -> dict | None:
+    """G2.3: the runner for this OS and architecture, and its checksum from two places that must agree."""
+    arch = ARCH.get(host.machine().lower())
+    system = {"Linux": "linux", "Darwin": "osx"}.get(host.system())
+    s, d = gh.api("GET", f"repos/{repo}/actions/runners/downloads")
+    pick = [x for x in (d if s == 200 and isinstance(d, list) else []) if x.get("os") == system
+            and x.get("architecture") == arch]
+    if not pick:
+        rep.stop(f"GitHub offers no runner for {system} {arch} (HTTP {s})")
+        return None
+    rel = pick[0]
+    m = re.search(r"-(\d+\.\d+\.\d+)\.(tar\.gz|zip)$", rel.get("filename", ""))
+    if not m or not re.fullmatch(r"[0-9a-f]{64}", rel.get("sha256_checksum") or ""):
+        rep.stop("GitHub's runner download list is not in the shape this tool knows: nothing was downloaded")
+        return None
+    version = m.group(1)
+    s, notes = gh.api("GET", f"repos/actions/runner/releases/tags/v{version}")
+    key = f"{system}-{arch}"
+    mm = re.search(rf"<!-- BEGIN SHA {re.escape(key)} -->([0-9a-f]{{64}})<!-- END SHA {re.escape(key)} -->",
+                   (notes or {}).get("body", "") if s == 200 else "")
+    if not mm:
+        rep.stop(f"the release notes of runner {version} carry no checksum for {key}: nothing was downloaded")
+        return None
+    if mm.group(1) != rel["sha256_checksum"]:
+        rep.stop(f"the two checksums GitHub publishes for runner {version} ({key}) disagree: nothing was downloaded")
+        return None
+    rep.ok(f"runner {version} for {key}; its checksum is the same in GitHub's download list and its release notes")
+    return {"version": version, "filename": rel["filename"], "url": rel["download_url"], "sha256": mm.group(1)}
+
+
+def sha256_file(path: str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def unpack_runner(host: Host, rel: dict, folder: str, rep: Report) -> bool:
+    """G2.3, G2.4: downloaded, checked, then unpacked fresh into the runner's own folder, never copied."""
+    rc, out = sudo(host, ["test", "-e", folder])
+    if rc == 0:
+        rep.stop(f"{folder} exists already: a runner for this repository is set up here, or a removal was not "
+                 "finished; nothing was changed")
+        return False
+    ensure_state_dir(host)
+    tmp = os.path.join(host.state_dir(), rel["filename"])
+    journal(host, "download", rel["url"])
+    try:
+        host.fetch_to(rel["url"], tmp)
+        got = sha256_file(tmp)
+    except Exception as e:  # noqa: BLE001
+        rep.stop(f"could not download the runner: {e}")
+        return False
+    if got != rel["sha256"]:
+        os.remove(tmp)
+        rep.stop(f"the downloaded runner's checksum is not the one GitHub publishes: deleted, nothing installed")
+        return False
+    rep.ok(f"downloaded {rel['filename']}, checksum checked")
+    journal(host, "unpack", folder)
+    steps = [
+        (["install", "-d", "-o", RUNNER_USER, "-g", RUNNER_USER, "-m", "0700", f"/home/{RUNNER_USER}/runners"], "runners folder"),
+        (["install", "-d", "-o", RUNNER_USER, "-g", RUNNER_USER, "-m", "0700", folder], "the runner's folder"),
+        (["install", "-o", RUNNER_USER, "-g", RUNNER_USER, "-m", "0600", tmp, f"{folder}/runner.tgz"], "the download"),
+    ]
+    for argv, what in steps:
+        rc, out = sudo(host, argv)
+        if rc != 0:
+            rep.stop(f"could not make {what}: {tail(out)}")
+            return False
+    os.remove(tmp)
+    rc, out = as_runner(host, ["sha256sum", f"{folder}/runner.tgz"])
+    if rc != 0 or not out.startswith(rel["sha256"]):
+        rep.stop("the copy in the runner's folder does not have the checked checksum: nothing unpacked")
+        return False
+    rc, out = as_runner(host, ["tar", "xzf", f"{folder}/runner.tgz", "-C", folder])
+    if rc != 0:
+        rep.stop(f"could not unpack the runner: {tail(out)}")
+        return False
+    as_runner(host, ["rm", "-f", f"{folder}/runner.tgz"])
+    rep.ok(f"unpacked fresh into {folder}, with its own work folder")
+    journal(host, "dependencies", f"{folder}/bin/installdependencies.sh")
+    rc, out = sudo(host, [f"{folder}/bin/installdependencies.sh"], timeout=900)
+    if rc != 0:
+        rep.warn(f"the runner's own dependency script did not finish: {tail(out)}")
+    else:
+        rep.ok("the runner's own dependency script ran")
+    return True
+
+
+def register(gh: GitHub, host: Host, repo: str, folder: str, name: str, labels: list[str], rep: Report) -> bool:
+    """G2.5, G2.6, G2.7, G2.11: registered to this one repository with only our labels; the token by stdin."""
+    s, d = gh.api("POST", f"repos/{repo}/actions/runners/registration-token")
+    token = (d or {}).get("token") if s in (200, 201) else None
+    if not token:
+        rep.stop(f"GitHub gave no registration token (HTTP {s}): admin on the repository is needed")
+        return False
+    journal(host, "register", f"{repo} as {name} with labels {','.join(labels)}")
+    url = f"https://github.com/{repo}"
+    rc, out = as_runner(host, ["bash", "-c", CONFIG_SCRIPT, "minions-config", folder, url, name, ",".join(labels)],
+                        input=token + "\n")
+    out = mask(out, token)
+    token = None  # dropped (INV2)
+    if rc != 0:
+        rep.stop(f"the runner's configuration failed: {tail(out)}")
+        return False
+    rep.ok(f"registered to {repo} only, as {name}, labels {', '.join(labels)} (no default labels)")
+    return True
+
+
+def lock_credentials(host: Host, folder: str, rep: Report) -> bool:
+    """G2.8: the runner writes .credentials and .runner as 664; they become 600, read back."""
+    files = [f"{folder}/.credentials", f"{folder}/.runner", f"{folder}/.credentials_rsaparams"]
+    journal(host, "chmod", "0600 credential files")
+    sudo(host, ["chmod", "0600"] + files)
+    rc, out = sudo(host, ["stat", "-c", "%a %U %n"] + files)
+    rows = [x.split(None, 2) for x in out.splitlines() if x.strip()]
+    if rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
+        rep.stop(f"the runner's credential files are not its own only: {tail(out, 3)}")
+        return False
+    rep.ok(f"the credential files are 600, owned by {RUNNER_USER}, read back")
+    return True
+
+
+def install_service(host: Host, folder: str, survey_: dict, rep: Report) -> str | None:
+    """G2.9: the runner's own unit, then our drop-in and slice, read back."""
+    journal(host, "svc.sh install", folder)
+    rc, out = sudo(host, ["bash", "-c", 'cd "$1" && ./svc.sh install "$2"', "minions-svc", folder, RUNNER_USER])
+    if rc != 0:
+        rep.stop(f"the runner's service install failed: {tail(out)}")
+        return None
+    rc, unit = sudo(host, ["cat", f"{folder}/.service"])
+    unit = unit.strip()
+    if rc != 0 or not re.fullmatch(r"actions\.runner\.[A-Za-z0-9_.@-]+\.service", unit):
+        rep.stop("could not read the name of the runner's unit")
+        return None
+    limits = slice_limits(survey_)
+    journal(host, "write", f"/etc/systemd/system/{SLICE} and {unit}.d/{DROPIN}")
+    for path, text in ((f"/etc/systemd/system/{SLICE}", slice_text(limits)),
+                       (f"/etc/systemd/system/{unit}.d/{DROPIN}", dropin_text())):
+        sudo(host, ["install", "-d", "-m", "0755", os.path.dirname(path)])
+        rc, out = sudo(host, ["tee", path], input=text)
+        if rc != 0:
+            rep.stop(f"could not write {path}: {tail(out)}")
+            return None
+    for argv in (["systemctl", "daemon-reload"], ["systemctl", "enable", unit], ["systemctl", "restart", unit]):
+        journal(host, " ".join(argv))
+        rc, out = sudo(host, argv)
+        if rc != 0:
+            rep.stop(f"`{' '.join(argv)}` failed: {tail(out)}")
+            return None
+    rc, out = host.run(["systemctl", "show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
+                        "-p", "Wants", "-p", "UnitFileState", "-p", "User"])
+    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
+            "User": RUNNER_USER}
+    bad = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
+    if "network-online.target" not in got.get("Wants", ""):
+        bad.append("Wants has no network-online.target")
+    if bad:
+        rep.stop(f"the runner's service is not as written: {', '.join(bad)}")
+        return None
+    rc, out = host.run(["systemctl", "show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax"])
+    rep.ok(f"boot service {unit}: enabled, in {SLICE} ({limits['CPUQuota']} CPU, memory at most "
+           f"{gb(int(limits['MemoryMax']))}), nice 10, restarts on failure, after the network; read back")
+    return unit
+
+
+def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: list[str], rep: Report,
+               wait_s: int = 90, poll_s: float = 5) -> bool:
+    """G2.10: GitHub lists the runner online and idle, with only our labels (G2.11), and the service is active."""
+    seen = "not listed"
+    left = wait_s
+    while True:
+        s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+        mine = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == name]
+        rc, active = host.run(["systemctl", "is-active", unit])
+        active = active.strip()
+        if mine:
+            r = mine[0]
+            got = sorted(x.get("name") for x in r.get("labels", []))
+            if got != sorted(labels):
+                rep.stop(f"GitHub lists {name} with labels {', '.join(got)}: only ours ({', '.join(labels)}) are "
+                         "allowed, so no job asking for `self-hosted` can land on it")
+                return False
+            seen = f"{r.get('status')}, {'busy' if r.get('busy') else 'idle'}"
+            if r.get("status") == "online" and not r.get("busy") and active == "active":
+                rep.ok(f"both sides: GitHub lists {name} online and idle with only our labels; the service is active")
+                return True
+        if left <= 0:
+            break
+        host.sleep(poll_s)
+        left -= poll_s
+    rep.wait(f"GitHub says {name} is {seen}; the service is {active or 'not read'}. Run `look {repo}` later, or "
+             "check the service's log")
+    return False
+
+
+def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
+          interactive: bool | None = None) -> int:
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        rep.stop(f"not a repository name: {repo!r} (write owner/name)")
+        return rep.code()
+    entry = check_fresh_look(host, repo, rep)
+    if entry is None:
+        return rep.code()
+    if host.system() != "Linux" or not host.which("systemctl"):
+        rep.stop("this version sets up Linux with systemd only; macOS comes in the next version")
+        return rep.code()
+    if not check_persons_home(host, rep):
+        return rep.code()
+    if interactive is None:
+        interactive = host.isatty()
+    if not ask_admin_once(host, rep, interactive):
+        return rep.code()
+    if not ensure_runner_user(host, rep):
+        return rep.code()
+    owner, name_ = repo.split("/", 1)
+    folder = f"/home/{RUNNER_USER}/runners/{owner}-{name_}"
+    rel = runner_release(gh, repo, host, rep)
+    if rel is None or not unpack_runner(host, rel, folder, rep):
+        return rep.code()
+    survey_ = entry.get("survey") or {}
+    labels = runner_labels(survey_)
+    runner_name = f"minions-{re.sub(r'[^A-Za-z0-9-]', '-', host.hostname())}"[:60]
+    if not register(gh, host, repo, folder, runner_name, labels, rep):
+        return rep.code()
+    if not lock_credentials(host, folder, rep):
+        return rep.code()
+    unit = install_service(host, folder, survey_, rep)
+    if unit is None:
+        return rep.code()
+    data = load_state(host)
+    data.setdefault("runners", {})[repo] = {"name": runner_name, "folder": folder, "unit": unit, "labels": labels,
+                                            "version": rel["version"],
+                                            "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
+    save_state(host, data)
+    both_sides(gh, host, repo, runner_name, unit, labels, rep)
+    return rep.code()
+
+
 # ------------------------------------------------------------------------------------------------------------- look
 
 def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
@@ -960,6 +1466,17 @@ def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = N
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         rep.stop(f"not a repository name: {repo!r} (write owner/name)")
         return rep.code()
+    found: dict = {}
+    try:
+        return _look(repo, start, host, gh, rep, found)
+    finally:
+        try:
+            record_look(host, repo, rep, found.get("survey"))
+        except OSError as e:
+            rep.warn(f"could not write this look down in {host.state_dir()}: {e}; setup will ask for a new look")
+
+
+def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: dict) -> int:
     if not check_github_cli(host, rep):
         return rep.code()
     if not check_admin(host, rep):
@@ -978,6 +1495,7 @@ def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = N
         return rep.code()
     check_secrets(gh, repo, (data.get("owner") or {}).get("type"), rep)
     s = survey(host, rep)
+    found["survey"] = s
     what_lives_here(host, rep)
     check_workflows(gh, repo, s["system"], rep)
     check_cost_rule(host, rep)
@@ -991,9 +1509,13 @@ def main(argv: list[str] | None = None) -> int:
     lk.add_argument("repo", help="owner/name of a private GitHub repository")
     lk.add_argument("--start-test", action="store_true",
                     help="with your yes: one job on a temporary branch, run on no machine, then deleted")
+    st = sub.add_parser("setup", help="install one runner for one private repository on this computer (Linux)")
+    st.add_argument("repo", help="owner/name; needs a look of it on this computer under an hour old")
     a = ap.parse_args(argv)
     if a.cmd == "look":
         return look(a.repo, a.start_test)
+    if a.cmd == "setup":
+        return setup(a.repo)
     return EXIT_STOP
 
 
