@@ -117,6 +117,33 @@ Where:
 - **Idle as a service:** 3 processes, about 145 MB resident (about 129 MB proportional); the slice counted 148 MB.
   Disk 683 MB.
 
+## C7 Linux, the install by `setup` on a stock virtual machine (seen 2026-11-22, 22:37Z to 22:46Z)
+
+Where:
+- A fresh disk on Ubuntu 24.04.5's cloud image, 4 cores, 8 GB, with only the distribution's `gh` added.
+- The image's passwordless sudo was removed first, and the default user given a password, so sudo asked as it does
+  on a person's computer.
+- The GitHub login step was done for the agent, as a person would do it themselves.
+- Runner 2.338.2, registered by `setup` to a throwaway private repository.
+
+Seen:
+- **sudo asks once per terminal.** One `need you` line and one password prompt covered every admin step of
+  `setup`. A second terminal was asked again: sudo's permission belongs to the terminal it was given in (G2.12).
+- **The runner's dependency script** (`bin/installdependencies.sh`) finished in about 8 s on the stock image.
+- **The runners list says `os: "unknown"`** for a runner registered with `--no-default-labels`. The OS has to come
+  from the computer itself (G5.1).
+- **Inside a job:** the job ran as the runner user with no other groups, in `minions.slice` at nice 10; `sudo` was
+  refused, and the default user's home could not be opened.
+- **Idle under the service:** three processes, about 150 MB resident together. At stop, systemd reported a memory peak
+  of 51.5 MB for the unit.
+- **A deleted slice stays active.** After `minions.slice`'s file was deleted and systemd reloaded, the slice was
+  still listed as active until `systemctl stop minions.slice` (G6.5).
+- **`systemctl` waits on a pager** when its output goes to a real terminal. Read through a pipe, it does not. Every
+  call of the tool passes `--no-pager` (G8.5).
+- **A virtio disk reads as rotating** (`/sys/block/vda/queue/rotational` is 1), so the disk kind of a virtual machine
+  cannot be read from it (G1.13).
+- After removal: GitHub's runners list showed `total_count: 0`, and no user, unit, slice or runner process was left.
+
 ## C4 What a run looks like when no job is made
 
 - **A workflow file that is invalid** (a step with both `run` and `uses`), pushed: one run, `conclusion: failure`,
