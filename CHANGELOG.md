@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The skill file, `skills/repo-minions/SKILL.md`: the fixed order, the person's steps, the five line kinds and
+  exit codes, what `waiting` means, the sentences said before setup, the cost rule and the safety rules
+  (G7.1 to G7.5, G7.7, G7.8, G8.1, G8.2, G8.8).
 - Plan 1.11, from G4's run on a stock virtual machine: G6.6 (remove runs as the runner, GitHub first), G5.7 (a job
   that came through a short sleep is not cut), G4.9 (the real sleep delay, 30 s on Ubuntu 24.04); rows R46 to R48.
 - G4 Keep ready (Linux): `drain` (hold, wait until no job runs, then optionally `--stop`) and `resume`; `setup

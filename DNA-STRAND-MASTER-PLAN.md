@@ -270,27 +270,27 @@ nothing.
 
 | Codon | Claim | Test |
 |---|---|---|
-| G7.1 | The cost sentence is the one read by G1.9 with its date, or "I could not read GitHub's page today". Never "free", "no bill", "saves" or an amount the tool did not read. | planned: test_G7_1_cost_words_are_read_and_dated_never_promised |
-| G7.2 | The skill tells the person that artifact and cache storage count the same whichever computer ran the job. | planned: test_G7_2_storage_is_said_to_count_the_same |
-| G7.3 | The skill tells the person, before `setup`, what a job on their computer can reach (G1.5, G1.7) and that anyone who can push to the repository can run code there. | planned: test_G7_3_what_a_job_can_reach_is_said_before_setup |
-| G7.4 | The skill tells the person that a restart or sleep of the minion cancels or delays the job running on it, and that a job waits at most 24 hours for a runner before GitHub cancels it. | planned: test_G7_4_restart_and_waiting_limits_are_said |
-| G7.5 | The skill never says required checks or branch protection hold merges unless the tool read that the repository has them. | planned: test_G7_5_merge_rules_are_said_only_when_read |
+| G7.1 | The cost sentence is the one read by G1.9 with its date, or "I could not read GitHub's page today". Never "free", "no bill", "saves" or an amount the tool did not read. | `test_G7_1_cost_words_are_read_and_dated_never_promised` |
+| G7.2 | The skill tells the person that artifact and cache storage count the same whichever computer ran the job. | `test_G7_2_storage_is_said_to_count_the_same` |
+| G7.3 | The skill tells the person, before `setup`, what a job on their computer can reach (G1.5, G1.7) and that anyone who can push to the repository can run code there. | `test_G7_3_what_a_job_can_reach_is_said_before_setup` |
+| G7.4 | The skill tells the person that a restart or sleep of the minion cancels or delays the job running on it, and that a job waits at most 24 hours for a runner before GitHub cancels it. | `test_G7_4_restart_and_waiting_limits_are_said` |
+| G7.5 | The skill never says required checks or branch protection hold merges unless the tool read that the repository has them. | `test_G7_5_merge_rules_are_said_only_when_read` |
 | G7.6 | Version 0.1.0 says, in the skill and at `setup`, that it serves one repository per computer and that more come in the next version (G12). | planned: test_G7_6_version_0_1_says_one_repository_and_more_next |
-| G7.7 | Before `setup` the person hears: "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that waited 24 hours." | planned: test_G7_7_waiting_checks_are_said_before_setup |
-| G7.8 | Before `setup` the person hears the limits in plain words ("at most half of this computer's processors and 60 % of its memory", with the real numbers) and the one way to change them: `setup --limits <processors>,<memory %>`. | planned: test_G7_8_the_limits_are_said_in_plain_words_before_setup |
+| G7.7 | Before `setup` the person hears: "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that waited 24 hours." | `test_G7_7_waiting_checks_are_said_before_setup` |
+| G7.8 | Before `setup` the person hears the limits in plain words ("at most half of this computer's processors and 60 % of its memory", with the real numbers) and the one way to change them: `setup --limits <processors>,<memory %>`. | `test_G7_8_the_limits_are_said_in_plain_words_before_setup` |
 
 ### G8 The skill and its commands
 
 | Codon | Claim | Test |
 |---|---|---|
-| G8.1 | `skills/repo-minions/SKILL.md` follows the Agent Skills format and passes `gh skill publish --dry-run`. | planned: test_G8_1_the_skill_file_passes_the_validator |
-| G8.2 | The skill's order is fixed: look, tell, setup, move, verify, status. It names each step that is the person's (INV7) and what to say there. | planned: test_G8_2_the_skill_names_the_order_and_the_persons_steps |
+| G8.1 | `skills/repo-minions/SKILL.md` follows the Agent Skills format and passes `gh skill publish --dry-run`. | `test_G8_1_the_skill_file_passes_the_validator` |
+| G8.2 | The skill's order is fixed: look, tell, setup, move, verify, status. It names each step that is the person's (INV7) and what to say there. | `test_G8_2_the_skill_names_the_order_and_the_persons_steps` |
 | G8.3 | The tool's commands are exactly: `look`, `setup`, `move`, `lint`, `status`, `watch`, `hold`, `resume`, `drain`, `doctor`, `remove`, `self-update`. Each prints lines of five kinds only: `ok`, `warn`, `stop`, `need you`, `waiting`. The exit code is the worst line's, in this order, and these are every way a command can end: **0** every line `ok` or `warn`; **2** a `stop` line; **3** a `need you` line and no `stop`; **4** a `waiting` line and neither of those (G8.7); **1** the tool itself failed (an error it did not expect: it prints a `stop` line naming the error and the journal's last step); **64** the command was typed wrong (unknown command or option: never 2, which is `stop`); **130** the person interrupted it (the journal says which step it was on). | `test_G8_3_commands_and_line_kinds_are_exactly_these` |
 | G8.4 | `doctor` checks every promise of G2 and G4 on the computer as it is now and finishes or undoes a half-done step (INV8). | planned: test_G8_4_doctor_checks_install_and_finishes_half_done_steps |
 | G8.5 | Every `systemctl` and `journalctl` call of the tool passes `--no-pager`, so no call waits on a pager when run from a real terminal. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | `test_G8_5_no_system_call_waits_on_a_pager` |
 | G8.6 | A command never hangs on `waiting`: each wait carries its own deadline, said in the line, and the command ends when it passes. | planned: test_G8_6_no_command_hangs_on_waiting |
 | G8.7 | A command that ends on `waiting` exits 4, and its last line says what it waits for and which command to run next. | planned: test_G8_7_waiting_exits_4_and_names_what_and_what_next |
-| G8.8 | The skill tells the agent that `waiting` is not done, and what to tell the person meanwhile: what is being waited for, and that nothing is broken. | planned: test_G8_8_the_skill_says_waiting_is_not_done |
+| G8.8 | The skill tells the agent that `waiting` is not done, and what to tell the person meanwhile: what is being waited for, and that nothing is broken. | `test_G8_8_the_skill_says_waiting_is_not_done` |
 
 ### G9 Tests, CI and the promise gate
 
