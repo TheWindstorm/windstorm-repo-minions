@@ -2,10 +2,18 @@
 
     python3 tests/fixtures/scrub.py RECORDED.jsonl OWNER/REPO > tests/fixtures/NAME.jsonl
 
-Every string is scrubbed: the owner and repository become example-org/example-repo, every e-mail address becomes
-person@example.invalid, every person's name and login found in author, committer, actor and owner fields becomes
-Example Person / example-person, and the run aborts if anything token-shaped is left. Review the result before
-committing it.
+What is scrubbed:
+- the owner and repository become example-org/example-repo;
+- every e-mail address becomes person@example.invalid;
+- a person's name or login found in the fields GitHub uses for people (author, committer, actor,
+  triggering_actor, sender) becomes Example Person / example-person.
+
+Where (G9.5): a name only where it is the whole value of a name field; a login only where it is the whole value of a
+login field or a whole segment of a URL path. Never inside other text, and never inside a file path: once a committer
+named like a product turned `.github/workflows` into a made-up path. GitHub's own accounts (the merge committer
+"GitHub", "web-flow", bots) are not people and stay.
+
+The run aborts if anything token-shaped is left. Review the result before committing it.
 """
 import json
 import re
@@ -13,47 +21,67 @@ import sys
 
 TOKENISH = re.compile(r"(gh[opsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN)")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+PEOPLE_FIELDS = ("author", "committer", "actor", "triggering_actor", "sender")
+NOT_PEOPLE = {"GitHub", "web-flow", "github-actions", "dependabot"}
 
 
-def people(obj, found):
-    """Collect names and logins of people from the fields GitHub uses for them."""
+def is_person(value: str) -> bool:
+    return bool(value) and value not in NOT_PEOPLE and not value.endswith("[bot]") and value != "example-person" \
+        and value != "Example Person"
+
+
+def people(obj, names: set, logins: set) -> None:
+    """Collect the names and logins of people from the fields GitHub uses for them."""
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if k in ("author", "committer", "actor", "triggering_actor", "sender") and isinstance(v, dict):
-                for f in ("name", "login"):
-                    if isinstance(v.get(f), str):
-                        found.add(v[f])
-            people(v, found)
+            if k in PEOPLE_FIELDS and isinstance(v, dict):
+                if isinstance(v.get("name"), str) and is_person(v["name"]):
+                    names.add(v["name"])
+                if isinstance(v.get("login"), str) and is_person(v["login"]):
+                    logins.add(v["login"])
+            people(v, names, logins)
     elif isinstance(obj, list):
         for v in obj:
-            people(v, found)
+            people(v, names, logins)
 
 
-def scrub(obj, swaps):
+def scrub(obj, repo: str, names: set, logins: set, key: str = ""):
+    owner, name = repo.split("/")
     if isinstance(obj, dict):
-        return {k: scrub(v, swaps) for k, v in obj.items()}
+        return {k: scrub(v, repo, names, logins, k) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [scrub(v, swaps) for v in obj]
-    if isinstance(obj, str):
-        s = EMAIL.sub("person@example.invalid", obj)
-        for a, b in swaps:
-            s = re.sub(re.escape(a), b, s, flags=re.I)
-        return s
-    return obj
+        return [scrub(v, repo, names, logins, key) for v in obj]
+    if not isinstance(obj, str):
+        return obj
+    s = EMAIL.sub("person@example.invalid", obj)
+    if key == "name" and s in names:
+        return "Example Person"
+    if key == "login" and s in logins:
+        return "example-person"
+    # The repository and its owner, as whole URL or name segments (case as GitHub writes them).
+    s = re.sub(rf"(?<![A-Za-z0-9_.-]){re.escape(repo)}(?![A-Za-z0-9_-])", "example-org/example-repo", s)
+    s = re.sub(rf"(?<=/){re.escape(name)}(?![A-Za-z0-9_-])", "example-repo", s)
+    s = re.sub(rf"(?<![A-Za-z0-9_.-]){re.escape(owner)}(?![A-Za-z0-9_-])", "example-org", s)
+    if s == name:
+        s = "example-repo"
+    # A login inside a URL: only a whole path segment.
+    for login in logins:
+        s = re.sub(rf"(?<=/){re.escape(login)}(?=$|[/?#])", "example-person", s)
+    return s
+
+
+def scrub_rows(rows: list, repo: str) -> list:
+    names, logins = set(), set()
+    for r in rows:
+        people(r, names, logins)
+    return [scrub(r, repo, names, logins) for r in rows]
 
 
 def main():
     path, repo = sys.argv[1], sys.argv[2]
-    owner, name = repo.split("/")
     rows = [json.loads(x) for x in open(path, encoding="utf-8")]
-    found = set()
-    for r in rows:
-        people(r, found)
-    swaps = [(repo, "example-org/example-repo"), (name, "example-repo"), (owner, "example-org")]
-    swaps += sorted(((p, "example-person" if " " not in p else "Example Person") for p in found
-                     if p and p.lower() not in (owner.lower(), "example-person")), key=lambda x: -len(x[0]))
-    for r in rows:
-        line = json.dumps(scrub(r, swaps), sort_keys=True)
+    for r in scrub_rows(rows, repo):
+        line = json.dumps(r, sort_keys=True)
         if TOKENISH.search(line):
             sys.exit("token-shaped text left; not writing the fixture")
         print(line)

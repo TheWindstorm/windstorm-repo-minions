@@ -605,7 +605,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G9_5_scrubbing_never_changes_paths",
    "proven": "",
    "issue": 61,
    "moved_why": "",
