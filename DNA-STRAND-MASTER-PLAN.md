@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.2 · 2026-11-22 · The Windstorm**
+**Plan version 1.3 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -188,6 +188,7 @@ nothing.
 | G1.9 | `look` reads GitHub's billing page for Actions, finds the sentence on self-hosted runners, and prints it with the date read; if the page cannot be read or the sentence is not found, it says that, never a guess (G7.1). | planned: test_G1_9_look_reads_the_current_cost_rule_with_its_date |
 | G1.10 | The first thing `look` checks: the GitHub CLI is installed and logged in. If not: `need you: install the GitHub CLI` with the one install command for this OS, or `need you: log in to GitHub` with `gh auth login`, and nothing else runs. Logging in is the person's step (INV7). | planned: test_G1_10_no_github_cli_or_login_is_the_first_need_you |
 | G1.11 | `look` checks that the person can become admin on this computer (to make the runner user and the boot service). If not: `need you: this needs an admin of this computer` and `stop`, before anything is touched. | planned: test_G1_11_no_admin_rights_on_the_computer_stops_before_anything |
+| G1.12 | On a computer other people also use, what is theirs is counted, never named: containers of a shared container service and runner services that do not run as the person are given as numbers only; only the person's own (rootless containers, services running as them) are named. Port numbers are given; they say nothing of whose they are. | planned: test_G1_12_other_peoples_things_are_counted_never_named |
 
 ### G2 Install
 
@@ -283,6 +284,7 @@ nothing.
 | G9.1 | This repository's own CI runs on GitHub's standard runners only. | `test_no_workflow_of_this_public_repository_asks_for_a_self_hosted_runner` |
 | G9.2 | The plan, `PROMISES.json` and the tests agree; a version is refused while a promise due in it has no test, and the version after it until the promise was seen on a real machine. | `test_PROMISES_no_version_ships_while_a_promise_due_in_it_is_not_built` |
 | G9.3 | Tests that need GitHub use a stand-in of its API built from recorded real answers (in `tests/fixtures/`, recorded per Part 7); a row whose test leans on the stand-in is proven on a real machine and a real private repository before the tag. | planned: test_G9_3_the_github_stand_in_answers_as_recorded |
+| G9.4 | Recorded GitHub answers are scrubbed before they are committed: no token, no email address, no real person's name or login (commit authors, run actors); a test reads every fixture and refuses any of them. | planned: test_G9_4_fixtures_hold_no_token_no_email_no_real_names |
 
 ### G10 Self-update
 

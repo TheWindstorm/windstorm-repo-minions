@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Plan 1.3: G1.12, other people's things on a shared computer are counted, never named (row R26); G9.4,
+  recorded fixtures are scrubbed of tokens, email addresses and real names (row R25).
 - Plan 1.2: G12.2 carries the idle numbers seen on a real runner (machine kind, runner version, and what twenty
   runners come to).
 - Plan 1.1: G4.7, a stop is SIGTERM and read back, never two copies of one runner (seen on a real runner);
