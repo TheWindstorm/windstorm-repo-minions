@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Plan 1.4, from a stock virtual machine: G4.6 (a service stop cancels the job, so drain first), G2.9 (the
+  unit's Restart=no and missing Wants=), G5.7 (a cut job is marked failure); rows R27 to R29.
 - Plan 1.3: G1.12, other people's things on a shared computer are counted, never named (row R26); G9.4,
   recorded fixtures are scrubbed of tokens, email addresses and real names (row R25).
 - Plan 1.2: G12.2 carries the idle numbers seen on a real runner (machine kind, runner version, and what twenty

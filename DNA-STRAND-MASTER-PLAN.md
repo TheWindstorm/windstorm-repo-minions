@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.3 · 2026-11-22 · The Windstorm**
+**Plan version 1.4 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -202,7 +202,7 @@ nothing.
 | G2.6 | Each runner is registered to exactly one repository (personal accounts) or to a runner group limited to the chosen private repositories (organisations); never to a whole organisation's every repository. | planned: test_G2_6_a_runner_serves_only_chosen_private_repositories |
 | G2.7 | Each runner is registered with the runner's option for no default labels and carries only `minions` and one of `minions-small`, `minions-medium`, `minions-large` (from G1.6's survey), so heavy jobs can ask for a strong computer. | planned: test_G2_7_runners_carry_only_our_labels |
 | G2.8 | The runner's credential files are readable by the runner user only (0600), read back after install. | planned: test_G2_8_credential_files_are_the_runner_users_only |
-| G2.9 | The runner runs as a boot service that starts again by itself after a restart, ordered after the network and after our limits are in place. | planned: test_G2_9_the_runner_is_a_boot_service_started_after_its_limits |
+| G2.9 | The runner runs as a boot service that starts again by itself after a restart, ordered after the network and after our limits are in place. The unit the runner's own script writes has `Restart=no` and orders after the network without asking for it (seen, Part 7 C7), so our drop-in adds `Wants=network-online.target`, `Restart=on-failure` and our slice. | planned: test_G2_9_the_runner_is_a_boot_service_started_after_its_limits |
 | G2.10 | `setup` ends with both sides read: GitHub lists the runner online and idle, and the service is running. Until both are seen, the line is `waiting`, never `ok`. | planned: test_G2_10_setup_ends_with_both_sides_read |
 | G2.11 | A job that asks for `self-hosted` alone, or for an OS or architecture label alone, never lands on our runner: it waits for another runner. Seen on a real runner (Part 7 C3) before any G5 code is written, because every hold rests on it. | planned: test_G2_11_a_job_asking_only_for_self_hosted_never_lands_on_ours |
 
@@ -226,7 +226,7 @@ nothing.
 | G4.3 | A disk budget: work folders are cleaned after each job and old tool caches pruned on a schedule; below a free-space floor the runners are held (G5.5) before the disk fills. | planned: test_G4_3_the_disk_never_fills_from_jobs |
 | G4.4 | The computer does not sleep while a job runs (Linux: an inhibitor while a job process exists; macOS: an assertion for the same time). It may sleep when idle; the skill tells the person that a sleeping minion takes no job. | planned: test_G4_4_no_sleep_during_a_job |
 | G4.5 | The runner keeps GitHub's own self-update on (GitHub refuses runners that are too old); `doctor` reads and reports the runner version. | planned: test_G4_5_runner_self_update_stays_on_and_is_reported |
-| G4.6 | A stop of the service waits long enough for a running job to finish or be cancelled cleanly (stop timeout at least as long as the runner's own), never the system's short default. | planned: test_G4_6_service_stop_waits_for_the_job |
+| G4.6 | A stop of the runner's service cancels its running job within seconds, whatever the stop timeout (seen, Part 7 C7). So nothing ever stops, restarts or updates the service, or restarts the computer on the skill's say-so, while a job runs: the drain (G5.6) comes first, every time, and the stop only after both sides read idle. | planned: test_G4_6_the_service_is_stopped_only_after_a_drain |
 | G4.7 | Every stop of a runner is SIGTERM to its listener (a runner started in the background ignores SIGINT), followed by a read-back that no process of that runner is left, before anything may start it again; two copies of one runner are never left running (Part 7 C7, seen). | planned: test_G4_7_a_stop_is_sigterm_and_read_back_never_two_copies |
 
 ### G5 Watch and hold
@@ -239,7 +239,7 @@ nothing.
 | G5.4 | When a repository is no longer private, `watch`, within one interval, removes our labels from its runners, drains with a short limit (default 2 minutes), then stops their service and keeps it stopped, and `status` says why first. A label change alone is not the boundary here, because a fork's copy of a workflow can ask for any label. `resume` works only once the repository is private again and the person says so. | planned: test_G5_4_a_repository_no_longer_private_is_stopped_after_a_short_drain |
 | G5.5 | Holds for low disk, high load or memory pressure (thresholds from the survey) and quiet hours the person sets are made by changing labels so no job asks for them; running jobs finish; the hold lifts by itself when the reason is gone, except G5.4. | planned: test_G5_5_holds_change_labels_and_never_stop_a_job |
 | G5.6 | `drain` holds and then waits until both sides say idle (G5.2), with a time limit; it ends with "online and idle" or says what is still running. Every restart, update and removal goes through it (INV4). | planned: test_G5_6_drain_ends_with_online_and_idle_read |
-| G5.7 | After a restart of the minion, `status` names any job that was running when it went down and was cancelled, and offers to run it again once. | planned: test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again |
+| G5.7 | After a restart of the minion, `status` names any job that was running when it went down and was cancelled, and offers to run it again once. GitHub marks such a job `failure`, not cancelled (seen, Part 7 C7); it is known by a step `cancelled`, the annotation "The operation was canceled.", no person having cancelled the run, and the cut falling in a stop or boot of the minion. It is never counted as the person's test failing. | planned: test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again |
 | G5.8 | `status` names a runner idle for 14 days or more, and any runner on GitHub's side that no service on any minion of ours matches, and offers removal (G6). | planned: test_G5_8_idle_and_orphaned_runners_are_named |
 | G5.9 | Opt-in, off by default: a fallback for when the minion is offline. Each choice says in plain words that it runs a small job on GitHub's machines, which counts against the included usage (INV3); the person picks it by name. Design in Part 11, Q3. | planned: test_G5_9_the_offline_fallback_is_opt_in_and_says_its_cost |
 | G5.10 | `watch` re-reads GitHub's cost rule (G1.9) once a week and tells the person, at the next `status`, when the self-hosted sentence changed, with both versions and dates. | planned: test_G5_10_a_change_in_the_cost_rule_is_told |
