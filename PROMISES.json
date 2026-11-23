@@ -1226,6 +1226,34 @@
    "issue": 181,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R88",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, the memory high mark lifted for a comparison: the kernel killed a job's process at our memory max, and systemd's default for a service (OOMPolicy=stop) stopped the whole runner service; the runner went offline, the job was marked cancelled, and the service came back 30 seconds later.",
+   "promise": "A kill by our memory limit ends the job's process only: the runner's service goes on (OOMPolicy=continue in our drop-in, read back by setup and doctor).",
+   "codon": "G2.9",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G2_9_the_runner_is_a_boot_service_started_after_its_limits",
+   "proven": "",
+   "issue": 187,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R89",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: the runner's service stopped in the middle of a job, its job-completed hook never ran, and the idle-sleep hold the job-started hook took was left running, for up to 6 hours.",
+   "promise": "The idle-sleep hold of a job ends when the job ends, when the runner's service stops, or when the next job starts, whichever comes first.",
+   "codon": "G4.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G4_4_no_sleep_during_a_job",
+   "proven": "",
+   "issue": 188,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
