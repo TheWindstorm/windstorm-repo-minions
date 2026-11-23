@@ -876,6 +876,48 @@
    "issue": 99,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R63",
+   "seen": "2026-11-22, run B again (smallest model, a fresh stock Ubuntu machine): the agent called its relay of look's `tell the person` lines \"verbatim\" while it had shortened the block, dropped two lines and reworded two; the cost line came out as \"GitHub's billing page (read 2026-11-23) lists self-hosted runners as not reducing included usage\".",
+   "promise": "The words for the person go out as one numbered block, and the skill says to paste it whole, adding the agent's own words only after it.",
+   "codon": "G7.10",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_10_look_prints_what_to_tell_the_person_before_setup",
+   "proven": "",
+   "issue": 106,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R64",
+   "seen": "2026-11-22, run B again: `move` stopped on \"could not read it, so nothing is moved\", with no GitHub answer and no way out, and the agent read the tool's source to find why.",
+   "promise": "Every stop and need-you line names what happened and the one next step.",
+   "codon": "G8.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_12_every_stop_and_need_you_line_names_what_happened_and_the_next_step",
+   "proven": "",
+   "issue": 107,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R65",
+   "seen": "2026-11-22: `look ... | head -2` ended in a BrokenPipeError traceback.",
+   "promise": "A reader that stops reading never cuts a command short, and no traceback is printed.",
+   "codon": "G8.13",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_13_a_reader_that_stops_reading_never_cuts_a_command_short",
+   "proven": "",
+   "issue": 108,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

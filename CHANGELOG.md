@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `look` prints the words for the person as one numbered block (`tell the person 1 of 7:` to `7 of 7:`), and the
+  skill says to paste it whole, adding the agent's own words only after it (G7.10). Every `stop` and `need you`
+  line names what happened and the one next step (G8.12). A reader that stops reading never cuts a command
+  short (G8.13). Rows R63 to R65.
 - An error answer from GitHub is never taken for "our runner is not listed": `uninstall` deletes nothing here
   until GitHub, read, no longer lists it; `status` and the hold say "could not be read". `status` says a removal
   is owed when an idle runner of a repository no longer private is still listed (G6.1, G5.4). Dates in the plan
