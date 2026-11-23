@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The time GitHub has shown our runner offline is counted in waking time: just after a long sleep, `status` no
+  longer says a runner that is still reconnecting "has not come back". setup's and resume's both-sides check ends
+  an offline record written before the runner came online (G11.4, row R85).
 - `status` says "busy" only when GitHub shows the runner online and busy and a job runs here. GitHub showing it
   offline while a job runs here is said as the two sides disagreeing, as a `warn` (G5.2, row R84).
 - `status` judges the watch's heartbeat by waking time. The watch's timer counts only time the computer is awake,

@@ -1184,6 +1184,20 @@
    "issue": 166,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R85",
+   "seen": "2026-11-23, a stock Ubuntu 22.04 virtual machine: 45 seconds after a 12-minute sleep, status warned that GitHub had shown the runner offline for 17 minutes and it had not come back; the record came from setup's own first watch pass, before GitHub listed the new runner, and the sleep was counted as time offline.",
+   "promise": "The time GitHub has shown our runner offline is counted in waking time, and the line says how much of it was awake; setup's and resume's both-sides check ends an offline record written before the runner came online.",
+   "codon": "G11.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
+   "proven": "",
+   "issue": 169,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
