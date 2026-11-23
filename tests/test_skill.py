@@ -2,6 +2,7 @@
 
 Standard library only. Run: python tests/test_skill.py -v
 """
+import io
 import os
 import re
 import shutil
@@ -120,9 +121,25 @@ class Skill(unittest.TestCase):
         self.assertIn("Anyone who can push to this repository can run code on this computer.", before)
 
     def test_G7_4_restart_and_waiting_limits_are_said(self):
-        self.assertIn("A restart of this computer cancels the job running on it; a sleep delays it or cancels it. "
-                      "A job waits at most 24 hours for a runner before GitHub cancels it.",
-                      flat(section(text(), "Before setup")))
+        self.assertIn("A restart of this computer cancels the job running on it. A short sleep only delays it; a "
+                      "sleep of more than about 10 minutes fails it on GitHub. A job waits at most 24 hours for a "
+                      "runner before GitHub cancels it.", flat(section(text(), "Before setup")))
+
+    def test_G7_9_a_long_sleep_fails_the_job_and_is_said_before_setup(self):
+        # Said in the skill, and printed by look itself in its numbered block (a small model skips a list, G7.10).
+        self.assertIn("a sleep of more than about 10 minutes fails it on GitHub", flat(section(text(), "Before setup")))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("m", os.path.join(ROOT, "scripts", "minions.py"))
+        M = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(M)
+        out = io.StringIO()
+        rep = M.Report(out)
+        M.before_setup_words("example-org/example-repo", {"battery": False},
+                             {"cores": 1, "total_cores": 2, "pct": 60, "MemoryMax": str(4 * 1024 ** 3)}, None, rep)
+        rep.code()  # the numbered block is printed when the command ends
+        said = out.getvalue()
+        self.assertIn("A short sleep only delays it; a sleep of more than about 10 minutes fails it on GitHub (seen).",
+                      said)
 
     def test_G7_5_merge_rules_are_said_only_when_read(self):
         t = flat(text())

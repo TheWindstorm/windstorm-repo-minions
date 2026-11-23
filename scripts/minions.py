@@ -3800,6 +3800,7 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
     return rep.code()
 
 
+LONG_SLEEP_MIN = 10  # G7.9: GitHub failed a job about 10 minutes after the computer fell asleep (seen 2026-11-22)
 LAPTOP_WORDS = "a laptop takes jobs only while it is awake, on the network and (by default) on mains power"
 
 
@@ -3813,7 +3814,8 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
              "stops taking jobs.")
     rep.tell("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has waited "
              f"{GITHUB_GIVES_UP_H} hours.")
-    rep.tell("A restart of this computer cancels the job running on it; a sleep delays it or cancels it. While a job "
+    rep.tell("A restart of this computer cancels the job running on it. A short sleep only delays it; a sleep of more "
+             f"than about {LONG_SLEEP_MIN} minutes fails it on GitHub (seen). While a job "
              "runs, this computer does not fall asleep by itself; a sleep you ask for, the lid, or a low battery still "
              f"puts it to sleep, {sleep_delay_words(s.get('sleep_delay'))}. `status` names a job cut that way as cut, "
              "not as your test failing.")
