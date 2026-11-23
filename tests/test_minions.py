@@ -506,6 +506,7 @@ def runners_answer(status="online", busy=False, labels=("minions", "minions-medi
                                                 "busy": busy, "labels": [{"name": x, "type": "custom"} for x in labels]}]}
 
 
+DROPIN_NAME = "50-minions.conf"
 SHOW = ("Slice=minions.slice\nNice=10\nCPUWeight=50\nRestart=on-failure\n"
         "Wants=network-online.target\nUnitFileState=enabled\nUser=minions-runner\n")
 
@@ -538,6 +539,7 @@ def setup_host(**kw):
         ("systemctl", "show", UNIT): (0, SHOW),
         ("systemctl", "show", "minions.slice"): (0, "CPUQuotaPerSecUSec=4s\nMemoryMax=10066329600\n"),
         ("systemctl", "is-active", UNIT): (0, "active\n"),
+        ("systemctl", "is-active", "minions-watch.timer"): (0, "active\n"),
         ("sudo", "-n", "chown"): (0, ""),
         ("sudo", "-n", "cat", f"{FOLDER}/.env"): (0, "LANG=C.UTF-8\n"),
         ("sudo", "-n", "-u", "minions-runner", "--", "tee", f"{FOLDER}/.env"): (0, ""),
@@ -784,7 +786,7 @@ class G2(unittest.TestCase):
         self.assertIn(f"MemoryMax={int(16384000 * 1024 * 0.6)}\n", sl)
         order = [" ".join(a) for a in host.ran]
         svc = next(i for i, a in enumerate(order) if "svc.sh install" in a)
-        tee = max(i for i, a in enumerate(order) if a.startswith("sudo -n tee"))
+        tee = max(i for i, a in enumerate(order) if a.startswith("sudo -n tee") and ("minions.slice" in a or DROPIN_NAME in a))
         reload_ = order.index("sudo -n systemctl daemon-reload --no-pager")
         enable = order.index(f"sudo -n systemctl enable {UNIT} --no-pager")
         start = order.index(f"sudo -n systemctl start {UNIT} --no-pager")
@@ -1411,7 +1413,8 @@ class G4(unittest.TestCase):
         code, lines = run_drain(gh, host, stop=True)
         self.assertEqual(code, M.EXIT_OK, lines)
         self.assertTrue(any(re.search(r"waiting for it to end, until \d\d:\d\dZ at the latest", x) for x in lines))
-        self.assertIn("ok drained: minions-box-1 is held, GitHub says idle, and no job process runs here", lines)
+        self.assertIn("ok drained: online and idle: minions-box-1 is held, GitHub says online and not busy, and no job "
+                      "process runs here", lines)
         self.assertEqual(len(stops(host)), 1)
         i_drained = next(i for i, x in enumerate(lines) if x.startswith("ok drained"))
         i_stopped = next(i for i, x in enumerate(lines) if x.startswith("ok the runner is stopped"))
@@ -1494,6 +1497,280 @@ class G4(unittest.TestCase):
         self.assertEqual(words, "jobs here get at most 4 of this computer's 8 processors and 60 % of its memory "
                                 "(9.6 GB); the one way to change that is `setup <owner/repo> --limits "
                                 "<processors>,<memory %>`")
+
+
+class Clock:
+    """A host's clock that only moves when the tool sleeps."""
+
+    def __init__(self, host, at="2026-11-22T23:00:00Z"):
+        self.t = M.parse_stamp(at)
+        host.now = lambda: self.t
+        host.sleep = self.sleep
+
+    def sleep(self, s):
+        self.t += M.dt.timedelta(seconds=s)
+
+
+class StatusGH(StandIn):
+    """GitHub for status and watch: runners (by repository), the repository's privacy, queued jobs, label PUTs."""
+
+    def __init__(self, repos=(REPO,), private=True, status="online", busy=False, queued=(), listed=True):
+        super().__init__([])
+        self.private, self.listed, self.queued = private, listed, list(queued)
+        self.r = {rp: {"id": 7 + i, "name": "minions-box-1", "os": "unknown", "status": status, "busy": busy,
+                       "labels": ["minions", "minions-medium"]} for i, rp in enumerate(repos)}
+        self.puts, self.jobs, self.annotations, self.reruns = [], {}, {}, []
+
+    def api(self, method, path, body=None):
+        self.calls.append((method, path))
+        for rp, r in self.r.items():
+            if method == "GET" and path == f"repos/{rp}":
+                return 200, {"full_name": rp, "private": self.private, "visibility": "private" if self.private else "public"}
+            if method == "GET" and path == f"repos/{rp}/actions/runners?per_page=100":
+                b = r["busy"].pop(0) if isinstance(r["busy"], list) and len(r["busy"]) > 1 else (
+                    r["busy"][0] if isinstance(r["busy"], list) else r["busy"])
+                one = dict(r, busy=b, labels=[{"name": x, "type": "custom"} for x in r["labels"]])
+                return 200, {"total_count": int(self.listed), "runners": [one] if self.listed else []}
+            if method == "PUT" and path == f"repos/{rp}/actions/runners/{r['id']}/labels":
+                self.puts.append((rp, list(body["labels"])))
+                r["labels"] = list(body["labels"])
+                return 200, {"labels": [{"name": x} for x in r["labels"]]}
+            if method == "GET" and path == f"repos/{rp}/actions/runs?status=queued&per_page=50":
+                return 200, {"workflow_runs": [{"id": 900, "name": "CI"}] if self.queued else []}
+            if method == "GET" and path == f"repos/{rp}/actions/runs/900/jobs?per_page=100":
+                return 200, {"jobs": self.queued}
+            m = re.fullmatch(rf"repos/{re.escape(rp)}/actions/runs/(\d+)/jobs\?filter=all&per_page=100", path)
+            if method == "GET" and m:
+                return 200, {"jobs": self.jobs.get(int(m.group(1)), [])}
+            m = re.fullmatch(rf"repos/{re.escape(rp)}/check-runs/(\d+)/annotations", path)
+            if method == "GET" and m:
+                return 200, self.annotations.get(int(m.group(1)), [])
+            m = re.fullmatch(rf"repos/{re.escape(rp)}/actions/jobs/(\d+)/rerun", path)
+            if method == "POST" and m:
+                self.reruns.append(int(m.group(1)))
+                return 201, {}
+        return 404, {"message": "Not Found"}
+
+
+def g5_host(runs=None, repos=(REPO,), worker=False):
+    """A computer with our runner set up for each repository, the service active, and a survey."""
+    r = {("systemctl", "is-active"): (0, "active\n"),
+         ("pgrep", "-u", "minions-runner", "-f"): (0, "4321\n") if worker else (1, ""),
+         ("sudo", "-n", "systemctl"): (0, ""), ("sudo", "-n", "kill"): (0, "")}
+    r.update(runs or {})
+    host = linux_host(runs=r)
+    clock = Clock(host)
+    survey = {"system": "Linux", "machine": "x86_64", "os": "Example Linux 1", "cores": 8, "mem": 16 * 1024 ** 3}
+    data = {"looks": {}, "runners": {}, "watch": {"time": "2026-11-22T22:58:00Z", "every_s": 300}}
+    for rp in repos:
+        o, n = rp.split("/")
+        data["looks"][rp] = {"time": "2026-11-22T22:30:00Z", "stopped": False, "survey": survey}
+        data["runners"][rp] = {"name": "minions-box-1", "folder": f"/home/minions-runner/runners/{o}-{n}",
+                               "unit": f"actions.runner.{o}-{n}.minions-box-1.service",
+                               "labels": ["minions", "minions-medium"]}
+    M.save_state(host, data)
+    return host, clock
+
+
+def run_cmd(fn, *a, **kw):
+    out = io.StringIO()
+    code = fn(*a, out=out, **kw)
+    return code, out.getvalue().splitlines()
+
+
+class G5(unittest.TestCase):
+    def test_G5_1_status_reads_both_sides_and_the_queue(self):
+        host, clock = g5_host()
+        gh = StatusGH(queued=[{"id": 1, "name": "check", "status": "queued", "labels": ["minions"],
+                               "created_at": "2026-11-22T22:56:00Z"},
+                              {"id": 2, "name": "macos", "status": "queued", "labels": ["macos-latest"],
+                               "created_at": "2026-11-22T22:00:00Z"}])
+        code, lines = run_cmd(M.status, REPO, host=host, gh=gh)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        line = next(x for x in lines if x.startswith("ok minions-box-1 for"))
+        self.assertIn("GitHub says online, not busy (read 23:00:00Z)", line)
+        self.assertIn("this computer: service active, no job process (read 23:00:00Z)", line)
+        # The OS from this computer's own survey, though GitHub's list says `unknown` (C7).
+        self.assertIn("Example Linux 1 x86_64 (from this computer's own survey)", line)
+        self.assertNotIn("unknown", line)
+        # The queue: only jobs asking for our labels count; the oldest's age.
+        self.assertIn(f"ok queue for {REPO}: 1 job(s) waiting for our runner, the oldest for 4 min", lines)
+        gh = StatusGH()
+        self.assertIn(f"ok queue for {REPO}: no job waiting for our runner", run_cmd(M.status, REPO, host=host, gh=gh)[1])
+
+    def test_G5_2_idle_only_when_both_sides_agree(self):
+        cases = [(False, False, "idle"), (True, False, "the two sides disagree"),
+                 (False, True, "the two sides disagree"), (True, True, "busy")]
+        for gh_busy, worker, word in cases:
+            host, _ = g5_host(worker=worker)
+            code, lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(busy=gh_busy))
+            line = next(x for x in lines if x.startswith("ok minions-box-1 for"))
+            self.assertIn(f"for {REPO}: {word}.", line, (gh_busy, worker))
+            self.assertIn("GitHub says online, " + ("busy" if gh_busy else "not busy"), line)
+            self.assertIn("a job process runs (4321)" if worker else "no job process", line)
+        # GitHub offline: never "idle", even with no job process here.
+        host, _ = g5_host()
+        line = next(x for x in run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline"))[1]
+                    if x.startswith("ok minions-box-1 for"))
+        self.assertIn(": not ready.", line)
+
+    def test_G5_3_the_watch_runs_and_its_silence_is_noticed(self):
+        # The units: a system timer every 5 minutes; its service runs as the person, the tool's root-owned copy.
+        svc, tmr = M.watch_units("person", M.WATCH_EVERY_S)
+        self.assertIn("User=person\n", svc)
+        self.assertIn(f"ExecStart=/usr/bin/python3 {M.TOOL_COPY} watch\n", svc)
+        self.assertIn("OnUnitActiveSec=300s\n", tmr)
+        self.assertIn("WantedBy=timers.target\n", tmr)
+        # setup installs it and reads it back.
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        self.assertIn(("sudo", "-n", "systemctl", "enable", "--now", "minions-watch.timer", "--no-pager"), host.ran)
+        # One pass: a heartbeat in minions.json and one line in the journal.
+        host, clock = g5_host()
+        self.assertEqual(run_cmd(M.watch, host=host, gh=StatusGH())[0], M.EXIT_OK)
+        self.assertEqual(M.load_state(host)["watch"]["time"], "2026-11-22T23:00:00Z")
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            last = f.read().splitlines()[-1]
+        self.assertEqual(last, f"2026-11-22T23:00:00Z watch {REPO}: online, not busy")
+        # Within three intervals: ok. Older: "the watch is not running", as a warn.
+        clock.sleep(14 * 60)
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+        self.assertIn("ok the watch ran 14 min ago, at 23:00:00Z (every 5 min)", lines)
+        clock.sleep(2 * 60)
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+        self.assertIn("warn the watch is not running: its last heartbeat was 16 min ago, at 23:00:00Z (it runs every "
+                      "5 min)", lines)
+
+    def test_G5_4_a_repository_no_longer_private_is_stopped_after_a_short_drain(self):
+        # A job still runs: labels off at once, a drain of at most 2 minutes, then stopped and kept stopped.
+        host, clock = g5_host(worker=True)
+        gh = StatusGH(private=False, busy=True)
+        code, lines = run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(gh.puts, [(REPO, ["minions-held"])])
+        self.assertTrue(any("until 23:02Z at the latest" in x for x in lines), lines)
+        stop = ("sudo", "-n", "systemctl", "stop", f"actions.runner.example-org-example-repo.minions-box-1.service",
+                "--no-pager")
+        disable = ("sudo", "-n", "systemctl", "disable", "actions.runner.example-org-example-repo.minions-box-1.service",
+                   "--no-pager")
+        self.assertIn(stop, host.ran)
+        self.assertIn(disable, host.ran)
+        self.assertLess(host.ran.index(stop), host.ran.index(disable))
+        self.assertLessEqual(clock.t, M.parse_stamp("2026-11-22T23:03:00Z"))  # within the short drain
+        self.assertEqual(code, M.EXIT_STOP)
+        # status says why, first.
+        host2 = host
+        lines = run_cmd(M.status, REPO, host=host2, gh=StatusGH(private=False))[1]
+        self.assertTrue(lines[0].startswith(f"stop {REPO} was not private at"), lines)
+        self.assertIn("anyone's fork can ask a public repository's runner for a job", lines[0])
+        # resume: refused without the person's word, refused while GitHub says public, works once private again.
+        code, lines = run_cmd(M.resume, REPO, host=host, gh=StatusGH(private=False))
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("--private-again", lines[-1])
+        code, lines = run_cmd(M.resume, REPO, host=host, gh=StatusGH(private=False), private_again=True)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("the runner stays stopped", lines[-1])
+        self.assertTrue(M.load_state(host)["runners"][REPO].get("public_stop"))
+        host3 = host
+        host3.runs[("systemctl", "is-active")] = (3, "inactive\n")
+        host3.runs[("pgrep", "-u", "minions-runner", "-f")] = (1, "")
+        gh = StatusGH(private=True)
+        gh.r[REPO]["labels"] = ["minions-held"]
+        code, lines = run_cmd(M.resume, REPO, host=host3, gh=gh, private_again=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(("sudo", "-n", "systemctl", "enable", "actions.runner.example-org-example-repo.minions-box-1.service",
+                       "--no-pager"), host3.ran)
+        self.assertEqual(gh.puts[-1], (REPO, ["minions", "minions-medium"]))
+        self.assertNotIn("public_stop", M.load_state(host3)["runners"][REPO])
+
+    def test_G5_6_drain_ends_with_online_and_idle_read(self):
+        host, clock = g5_host()
+        code, lines = run_cmd(M.drain, REPO, host=host, gh=StatusGH())
+        self.assertEqual(code, M.EXIT_OK)
+        self.assertIn("ok drained: online and idle: minions-box-1 is held, GitHub says online and not busy, and no job "
+                      "process runs here", lines)
+        # Offline on GitHub's side: not "online and idle"; said plainly.
+        host, clock = g5_host()
+        lines = run_cmd(M.drain, REPO, host=host, gh=StatusGH(status="offline"))[1]
+        self.assertFalse(any("online and idle" in x for x in lines), lines)
+        self.assertTrue(any(x.startswith("warn drained: no job process runs here, but GitHub says") for x in lines))
+        # Still running at the deadline: says what is still running, and the next command.
+        host, clock = g5_host(worker=True)
+        code, lines = run_cmd(M.drain, REPO, host=host, gh=StatusGH(busy=True), wait_s=60)
+        self.assertEqual(code, M.EXIT_WAIT)
+        self.assertIn("GitHub says busy, a job process runs here (4321)", lines[-1])
+
+    def test_G5_11_drain_before_a_planned_restart_lifts_after_the_boot(self):
+        other = "example-org/other-repo"
+        host, clock = g5_host(repos=(REPO, other))
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-one\n"
+        gh = StatusGH(repos=(REPO, other))
+        code, lines = run_cmd(M.drain, None, host=host, gh=gh, restart=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertEqual(sorted(gh.puts), [(REPO, ["minions-held"]), (other, ["minions-held"])])
+        self.assertTrue(lines[-1].startswith("ok online and idle: safe to restart now"), lines)
+        self.assertEqual(M.load_state(host)["restart_hold"]["boot_id"], "boot-one")
+        # The same boot: the watch keeps the hold.
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.puts), 2)
+        # After the restart (a new boot id) and GitHub reading the runners online: lifted by itself.
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-two\n"
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(sorted(gh.puts[2:]), [(REPO, ["minions", "minions-medium"]), (other, ["minions", "minions-medium"])])
+        self.assertNotIn("restart_hold", M.load_state(host))
+        # A job still running: no "safe to restart", and what still runs is named.
+        host, clock = g5_host(worker=True)
+        code, lines = run_cmd(M.drain, None, host=host, gh=StatusGH(busy=True), restart=True, wait_s=60)
+        self.assertEqual(code, M.EXIT_WAIT)
+        self.assertFalse(any("safe to restart" in x for x in lines))
+        self.assertIn("Next: `drain --restart` again", lines[-1])
+
+    def test_G5_12_a_runner_github_removed_is_named_and_registered_again(self):
+        host, clock = g5_host()
+        gh = StatusGH(listed=False)
+        code, lines = run_cmd(M.watch, host=host, gh=gh)
+        unit = "actions.runner.example-org-example-repo.minions-box-1.service"
+        self.assertIn(("sudo", "-n", "systemctl", "stop", unit, "--no-pager"), host.ran)  # no restart loop
+        self.assertTrue(M.load_state(host)["runners"][REPO]["gone_on_github"])
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(lines[0].startswith("warn GitHub no longer lists our runner minions-box-1"), lines)
+        self.assertIn("more than 14 days", lines[0])
+        self.assertIn(f"Run `setup {REPO}` again", lines[0])
+        # setup again: registered in place with the person's login, folders and labels kept, nothing unpacked.
+        host2, sha = setup_host()
+        fresh_look(host2)
+        data = M.load_state(host2)
+        data["runners"] = {REPO: dict(M.load_state(host)["runners"][REPO], folder=FOLDER, unit=UNIT)}
+        M.save_state(host2, data)
+        code, lines = run_setup(setup_gh(sha), host2)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(("sudo", "-n", "-u", "minions-runner", "--", "rm", "-f", f"{FOLDER}/.runner",
+                       f"{FOLDER}/.credentials", f"{FOLDER}/.credentials_rsaparams"), host2.ran)
+        configs = [a for a in host2.ran if M.CONFIG_SCRIPT in a]
+        self.assertEqual(len(configs), 1)
+        self.assertEqual(configs[0][-2:], ("minions-box-1", "minions,minions-medium"))
+        self.assertFalse(any("tar" in a for a in host2.ran))
+        self.assertNotIn("gone_on_github", M.load_state(host2)["runners"][REPO])
+        self.assertTrue(lines[-1].startswith("ok both sides"), lines)
+
+    def test_G5_13_a_job_waiting_behind_our_hold_is_warned(self):
+        job = {"id": 1, "name": "check", "status": "queued", "labels": ["minions"], "created_at": "2026-11-22T22:13:00Z"}
+        host, clock = g5_host()
+        data = M.load_state(host)
+        data["runners"][REPO].update(held_for="drain", held_at="2026-11-22T22:10:00Z")
+        M.save_state(host, data)
+        gh = StatusGH(queued=[job])
+        gh.r[REPO]["labels"] = ["minions-held"]
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertEqual(lines[0], f"warn job 'check' (CI) of {REPO} has waited 47 min behind our hold (drain); "
+                                   f"GitHub cancels a job that waits 24 hours. `resume {REPO}` lets it land here")
+        # Under the threshold: no warn.
+        lines = run_cmd(M.status, REPO, host=host, gh=gh, wait_warn_s=3600)[1]
+        self.assertFalse(any(x.startswith("warn job") for x in lines), lines)
+        # Behind an offline runner: warned too, with what to do.
+        gh = StatusGH(queued=[job], status="offline")
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(lines[0].startswith("warn job 'check'") and "behind our runner being offline" in lines[0], lines)
 
 
 class G8(unittest.TestCase):
