@@ -872,7 +872,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "",
-   "proven": "",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 machine and the private proof repository, proven by the owner's word: the watch's own `public` record, GitHub's side out of reach, a real job asking for our labels handed to the runner and refused by the hook in 5 s with no mark; then the labels and the runner taken off GitHub's side once the calls went through, GitHub answering 422 while a job ran, a job asking for our labels staying queued with no runner after the removal, and coming back by `resume --private-again` and `setup`. Steered: the watch's read of privacy, and the label and removal calls withheld for two passes; everything else real. Not seen: a repository really turning public with a runner on it, which is not done by rule.",
    "issue": 99,
    "moved_why": "",
    "moved_by_person": ""
