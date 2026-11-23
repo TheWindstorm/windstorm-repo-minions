@@ -1502,7 +1502,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_12_the_runner_says_the_skill_was_removed_and_the_way_off",
-   "proven": "2026-11-23, two stock Ubuntu 24.04.5 virtual machines: status, run from the tool's copy with the skill's folder deleted, named it gone and the one command that takes the runner off (the overnight soak's machine and run K's); and in run K the watch's own pass wrote the same line to the tool's journal at 22:26:41Z, five minutes after the folder was deleted.",
+   "proven": "2026-11-23, two stock Ubuntu 24.04.5 virtual machines: status, run from the tool's copy with the skill's folder deleted, named it gone and the one command that takes the runner off (the overnight soak's machine and run K's); and in run K the watch's own pass wrote the same line to the tool's journal at 22:26:41Z, on its next pass after the folder was deleted at 22:23:56Z.",
    "issue": 252,
    "moved_why": "",
    "moved_by_person": ""
@@ -1644,6 +1644,20 @@
    "test": "test_G6_13_the_census_names_the_folder_the_skill_was_downloaded_into",
    "proven": "2026-11-23, run K, a stock Ubuntu 24.04.5 virtual machine: after uninstall --all the census named the folder the skill was downloaded into as still there, where, and the person's to keep or delete; the agent offered to delete nothing.",
    "issue": 279,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R118",
+   "seen": "2026-11-23, run K on a stock Ubuntu 24.04 virtual machine: status named a job stopped at the memory cap only as 'j' and its run, and the agent could not say which of the person's workflows it was.",
+   "promise": "status names a stopped job (killed at the cap, cut, or refused) by its workflow file and its own name as well as the run, read once from GitHub and kept; when the workflow cannot be read, it says so.",
+   "codon": "G5.18",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_18_a_stopped_job_is_named_by_its_workflow_file",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: a 6 GB job stopped at the 4.7 GB cap, and status named it \"job 'j' of .github/workflows/mem-big.yml (run 45282321894, started 22:43:15Z) was stopped by this computer's memory limit (4.7 GB)\" (the second computer's runner held for a minute so the job landed on this one).",
+   "issue": 284,
    "moved_why": "",
    "moved_by_person": ""
   }
