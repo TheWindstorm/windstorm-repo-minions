@@ -112,7 +112,8 @@ class Skill(unittest.TestCase):
 
     def test_G7_1_cost_words_are_read_and_dated_never_promised(self):
         cost = flat(section(text(), "Cost"))
-        self.assertIn("Say only the cost sentence look printed, with the date it was read, word for word", cost)
+        self.assertIn("Say the block's cost line word for word: what GitHub charges is GitHub's to say, with the "
+                      "page's address", cost)
         self.assertIn("I could not read GitHub's page today.", cost)
 
     def test_G7_2_storage_is_said_to_count_the_same(self):
