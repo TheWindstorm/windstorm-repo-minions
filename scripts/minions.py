@@ -191,6 +191,16 @@ class Host:
         except OSError:
             return []
 
+    def there(self, path: str) -> bool | None:
+        """As this user, with no admin rights: True, False, or None when it could not be told (rule 6)."""
+        try:
+            os.stat(path)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return None
+
     def listdir_or_none(self, path: str) -> list[str] | None:
         """[] when the folder is not there; None when it could not be read (rule 6: never read as empty)."""
         try:
@@ -2973,6 +2983,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                 rest.append(("ok", line))
         else:
             rest.append(("ok", f"queue for {rp}: no job waiting for our runner"))
+        rest.append(last_job_line(host, rp, mine, now))  # G5.17 (R105)
         if blocked_by:
             for j in q:  # G5.13's per-job warnings first, then the queue's summary
                 age = (now - j["created"]).total_seconds() if j["created"] else 0
@@ -3024,6 +3035,24 @@ def gone_words(repo: str, mine: dict) -> str:
 CANCELED = "The operation was canceled."
 RECORDS_KEPT = 30  # the last jobs read back by `status`
 MATCH_S = 300  # a record and GitHub's job are the same job when they started this close together
+
+
+def last_job_line(host: Host, repo: str, mine: dict, now: dt.datetime) -> tuple[str, str]:
+    """G5.17 (R105): when GitHub last handed a job to this runner, from this computer's own record of each start. A
+    job GitHub never hands over (a schedule that is late or does not come) is GitHub's side, and this says so."""
+    path = records_dir_of(mine.get("folder") or "") + "/jobs.log"
+    text = host.read(path)
+    if text is None and host.there(path) is not False:  # no admin rights: the watch runs this too
+        return "warn", f"when GitHub last handed a job of {repo} to this runner could not be read here ({path})"
+    starts = [x.split(" ", 5) for x in (text or "").splitlines() if x.startswith("start ")]
+    starts = [x for x in starts if len(x) == 6 and x[1].isdigit()]
+    if not starts:
+        return "ok", (f"GitHub has not handed this runner a job of {repo} yet. A job GitHub does not hand over (a "
+                      "schedule there can be late, or not come) is on GitHub's side; the lines above show whether "
+                      "this runner is connected and waiting")
+    t = dt.datetime.fromtimestamp(int(starts[-1][1]), dt.timezone.utc)
+    return "ok", (f"the last job GitHub handed this runner started at {hms(t)} UTC, "
+                  f"{minutes(max(0.0, (now - t).total_seconds()))} ago ('{starts[-1][5]}' of {repo})")
 
 
 def read_records(host: Host, folder: str) -> list[dict]:
