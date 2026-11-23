@@ -36,6 +36,8 @@ the cap (row R94).
   release (G6.14, row R119).
 - Setup tells the watch's first pass from the one before by a count of passes, not by the time, so a pass in the
   same second as the last one is no longer said as "wrote nothing" (G5.19, row R120).
+- Installing the plugin is Claude Code's own act: it writes only Claude Code's plugin places, and the skill makes
+  nothing until you ask it to set runners up (G6.14, row R121).
 - Each line for you is said where it matters: before setup, before the merge, when status names a job the memory
   cap stopped (G7.14, row R111). The cost line points to GitHub's own page and claims nothing (G7.13, row R109).
 - Every system command the tool prints for you is one that was run exactly as printed on that kind of system; the
