@@ -5,6 +5,10 @@ on:
   pull_request:
   push:
     branches: [main, "release-[0-9]*"]
+# Rule 17: a newer push to a pull request cancels that pull request's older runs; never on main or a release branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 # This repository is public: its jobs run on GitHub's standard runners only, never on a self-hosted one

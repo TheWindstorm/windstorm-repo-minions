@@ -452,11 +452,31 @@ def parse_include(raw: str) -> tuple[int, object]:
 
 # --------------------------------------------------------------------------------------------------- G1.10, G1.11
 
+# Rule 7 (11-23), G8.16: a command printed for the person has been run exactly as printed on that kind of system
+# (PRINTED_COMMANDS says where). Elsewhere the line says what is missing, what that means, and where to read.
 INSTALL_GH = {
-    "Darwin": "brew install gh",
     "debian": "sudo apt update && sudo apt install gh",  # P1a: a fresh cloud image has no package lists yet
-    "fedora": "sudo dnf install gh",
-    "arch": "sudo pacman -Syu github-cli",  # Arch never installs on stale lists (-S alone); not seen here
+}
+GH_DOCS = "https://github.com/cli/cli#installation"
+# G8.16, the owner's ruling (11-23): `gh auth refresh -s workflow` acts only on a login made in a browser, so it was
+# never run as printed here; the line says what is missing and names GitHub's own manual page for adding a permission.
+GH_SCOPE_DOCS = "https://cli.github.com/manual/gh_auth_refresh"
+# G8.16 (R108): every system command this tool prints for the person, with where it was run exactly as printed (its
+# prompts answered by hand). Empty: not yet run as printed; its version is refused (test_strand) until it is, or the
+# line is replaced by what is missing and where to read. Our own subcommands are run by the tests themselves.
+PRINTED_COMMANDS = {
+    "sudo apt update && sudo apt install gh": "",
+    "gh auth login": "",
+    "sudo -v": "",
+    "journalctl -u {}.service": "",
+    "sudo systemctl start {}.timer": "",
+    "gh run cancel {} -R {}": "",
+    "chmod 750 {}": "",
+    "sudo chmod 750 /home/{}": "",
+    "sudo chmod 600 {}": "",
+    "sudo gpasswd -d {} {}": "",
+    "sudo kill {}": "",
+    "python3 -I {} uninstall --all": "",
 }
 
 
@@ -485,8 +505,11 @@ def check_github_cli(host: Host, rep: Report) -> bool:
     """G1.10: the first check. Without the GitHub CLI and a login, nothing else runs."""
     if not host.which("gh"):
         key = "Darwin" if host.system() == "Darwin" else os_release_id(host)
-        cmd = INSTALL_GH.get(key, "see https://cli.github.com for this system")
-        rep.need(f"install the GitHub CLI: {cmd}. {GH_ONLY}")
+        cmd = INSTALL_GH.get(key)
+        rep.need((f"install the GitHub CLI: `{cmd}`. " if cmd else
+                  "install the GitHub CLI: it is not installed here, and without it nothing of this skill runs. This "
+                  f"tool has seen no install command run on this kind of system, so it names none: read {GH_DOCS}. ")
+                 + GH_ONLY)
         return False
     rc, _ = host.run(["gh", "auth", "status", "--hostname", "github.com"])
     if rc != 0:
@@ -556,7 +579,9 @@ def check_repository(gh: GitHub, host: Host, repo: str, rep: Report) -> dict | N
     elif "workflow" in scopes:
         rep.ok("your login has the `workflow` scope (needed to change workflow files)")
     else:
-        rep.need("your login lacks the `workflow` scope: run `gh auth refresh -s workflow`", blocks=False)
+        rep.need("your login may not change workflow files (it lacks GitHub's `workflow` permission), so a workflow "
+                 "cannot be moved to your runner until it has it. Adding a permission to your login is your step, in "
+                 f"your own terminal: read {GH_SCOPE_DOCS}", blocks=False)
     return data
 
 
@@ -2534,7 +2559,7 @@ def stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool) 
         left = runner_pids(host, folder)
         if left:
             rep.stop(f"the runner's service is not known here, and process(es) {', '.join(map(str, left))} of it run: "
-                     "end them (`sudo kill <pid>`), then run the same command again")
+                     f"end them (`sudo kill {' '.join(map(str, left))}`), then run the same command again")
             return False
         rep.ok("the runner had no service here (its setup was cut before one was made), and no process of it is left")
         return True
@@ -3040,8 +3065,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
             first.insert(0, ("stop", blind_words(rp, b, every)))
     if not ok_:
         first.insert(0, ("stop", "the watch is not running, so this computer takes no job now: each job is refused before its first step until "
-                                 "the watch reads the repository private again. Your way out: `sudo systemctl start "
-                                 f"{WATCH_UNIT}.timer`, or `setup` again"))
+                                 "the watch reads the repository private again. Your way out: "
+                                 f"`sudo systemctl start {WATCH_UNIT}.timer`, or `setup` again"))
     cc = data.get("cost_change")
     if cc and not cc.get("told"):  # G5.10: told once, at the next status, first
         first.insert(0, ("warn", cost_change_words(cc)))
@@ -3875,7 +3900,8 @@ def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str
     journal(host, "move-branch", f"{repo} {branch}")
     rs, _ = gh.api("POST", f"repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
     if rs != 201:
-        why = " (a workflow file needs the `workflow` right on your GitHub login: `gh auth refresh -s workflow`)" \
+        why = (" (a workflow file needs the `workflow` permission on your GitHub login; adding it is your step: read "
+               f"{GH_SCOPE_DOCS})") \
             if rs in (403, 404, 422) else ""
         rep.stop(f"GitHub refused the branch {branch} (HTTP {rs}){why}. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return None
@@ -4377,7 +4403,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
         bad("runner user", f"the user {RUNNER_USER} is not there: {again}")
     elif extra:
         bad("runner user", f"{RUNNER_USER} is in other groups ({', '.join(extra)}): take it out of them "
-                           f"(`sudo gpasswd -d {RUNNER_USER} <group>`)")
+                           "(" + ", ".join(f"`sudo gpasswd -d {RUNNER_USER} {g}`" for g in extra) + ")")
     else:
         rep.ok(f"{repo}: {RUNNER_USER} is in its own group only, no admin rights")
     rc, mode = sudo(host, ["stat", "-c", "%a", f"/home/{RUNNER_USER}"])
@@ -4401,7 +4427,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
         rep.warn(f"{repo}: the credential files: not read")
     elif rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
         bad("credential files", f"the runner's credential files are not 600 and its own ({tail(out, 3)}): "
-                                f"`sudo chmod 600` them, or {again}")
+                                f"`sudo chmod 600 {' '.join(files)}`, or {again}")
     else:
         rep.ok(f"{repo}: the credential files are 600, owned by {RUNNER_USER}")
     # G2.9, G4.2: the boot service as written, in our slice, and the slice's limits.
@@ -4610,7 +4636,8 @@ def remove_shared(host: Host, rep: Report) -> bool:
         if left:
             what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
             rep.stop(f"processes of {RUNNER_USER} still run, not made by this tool's sleep holds: {what}. The user is "
-                     f"not deleted. End them (`sudo kill <pid>`), then run the same command again: it finishes from here")
+                     f"not deleted. End them (`sudo kill {' '.join(map(str, left))}`), then run the same command again: "
+                     "it finishes from here")
             return False
         journal(host, "userdel", RUNNER_USER)
         sudo(host, ["userdel", "-r", RUNNER_USER])

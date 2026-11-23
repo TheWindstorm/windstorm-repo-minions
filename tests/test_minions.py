@@ -276,7 +276,10 @@ class G1(unittest.TestCase):
         host = linux_host(runs={("gh", "auth", "status"): (0, SCOPES.replace(", 'workflow'", ""))})
         _, lines = look(StandIn(rows), host)
         self.assertTrue(any(x.startswith("need you: admin on the repository") for x in lines), lines)
-        self.assertIn("need you: your login lacks the `workflow` scope: run `gh auth refresh -s workflow`", lines)
+        need = [x for x in lines if x.startswith("need you: your login may not change workflow files")]
+        self.assertEqual(len(need), 1, lines)
+        self.assertIn(M.GH_SCOPE_DOCS, need[0])
+        self.assertNotIn("gh auth refresh", need[0])  # the owner's ruling, G8.16: never run as printed here
         host = linux_host(runs={("gh", "auth", "status"): (0, "  ✓ Logged in to github.com account x\n")})
         _, lines = look(StandIn(self.recent), host)
         self.assertTrue(any("could not read the token's scopes" in x for x in lines), lines)
@@ -628,7 +631,7 @@ jobs:
     def test_G1_10_no_github_cli_or_login_is_the_first_need_you(self):
         gh = StandIn(self.recent)
         code, lines = look(gh, linux_host(which=("sudo",)))
-        self.assertEqual(lines, ["need you: install the GitHub CLI: sudo apt update && sudo apt install gh. " + M.GH_ONLY])
+        self.assertEqual(lines, ["need you: install the GitHub CLI: `sudo apt update && sudo apt install gh`. " + M.GH_ONLY])
         self.assertEqual(code, M.EXIT_NEED)
         self.assertEqual(gh.calls, [])
         host = linux_host(runs={("gh", "auth", "status"): (1, "You are not logged into any GitHub hosts.")})
@@ -638,7 +641,9 @@ jobs:
         self.assertTrue(lines[0].endswith(M.GH_ONLY), lines)
         mac = FakeHost(system="Darwin", which=())
         _, lines = look(StandIn(self.recent), mac)
-        self.assertEqual(lines, ["need you: install the GitHub CLI: brew install gh. " + M.GH_ONLY])
+        self.assertEqual(len(lines), 1)  # rule 7: no command this tool never saw run on a Mac; where to read
+        self.assertIn("names none: read https://github.com/cli/cli#installation", lines[0])
+        self.assertNotIn("brew", lines[0])
         # R77: the line itself says GitHub is reached only through gh, no key or other saved login is looked
         # for, and the step is the person's
         self.assertIn("no SSH key and no other saved login on this computer is used or looked for", M.GH_ONLY)
@@ -2195,7 +2200,43 @@ def run_cmd(fn, *a, **kw):
     return code, out.getvalue().splitlines()
 
 
+def printed_system_commands():
+    """G8.16: every backticked system command in a string the tool can print (docstrings left out), its f-string
+    fields read as {}."""
+    import ast
+    tree = ast.parse(open(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8").read())
+    docs = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef)) and node.body and \
+                isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
+            docs.add(id(node.body[0].value))
+    texts = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            texts.append("".join(v.value if isinstance(v, ast.Constant) else "{}" for v in node.values))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs:
+            texts.append(node.value)
+    found = set()
+    for t in texts:
+        for m in re.finditer(r"`((?:sudo|gh|chmod|journalctl|python3) [^`]*)`", t):
+            found.add(re.sub(r"\{[^`]*?\}", "{}", m.group(1)))
+    return found
+
+
 class G9Version(unittest.TestCase):
+    def test_G8_16_every_printed_command_is_registered_with_where_it_was_run_as_printed(self):
+        # The family's rule 7 (2026-11-23): a command a tool prints for a person has been run exactly as printed on
+        # that kind of system, its prompts answered by hand; where none has, the line says what is missing and
+        # where to read (as the GitHub CLI's install line now does off Debian and Ubuntu).
+        found = printed_system_commands() | set(M.INSTALL_GH.values())
+        self.assertEqual(found - set(M.PRINTED_COMMANDS), set(), "printed, not in PRINTED_COMMANDS")
+        self.assertEqual(set(M.PRINTED_COMMANDS) - found, set(), "in PRINTED_COMMANDS, no longer printed")
+        self.assertNotIn("brew install gh", found)
+        self.assertNotIn("gh auth refresh -s workflow", found)  # the owner's ruling (11-23): what is missing + where
+        if M.VERSION != "0.0.0":  # a release: every one was run as printed somewhere real
+            self.assertEqual([c for c, where in M.PRINTED_COMMANDS.items() if not where], [],
+                             "printed for the person and never run as printed")
+
     def test_G9_9_the_evals_are_the_cold_start_cases_and_each_is_whole(self):
         # Rule 13 (row R103): the skill's evals, in the skill-creator layout, are the cold-start runs written as
         # cases: the sentence, what must be said, what must not happen.
