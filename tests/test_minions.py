@@ -446,7 +446,8 @@ class G1(unittest.TestCase):
                           runs={("podman", "ps"): (0, "my-db\n")})
         _, lines = look(StandIn(self.recent), host)
         self.assertIn("warn 1 port open to the network here: 443", lines)
-        self.assertIn("warn 1 container(s) of yours running: my-db (podman, yours)", lines)
+        self.assertIn("warn 1 container(s) of yours running: not named here (`look <owner/repo> --show-names` names "
+                      "them)", lines)  # G1.16: named only on the person's own flag
         self.assertTrue(any("serves something live" in x for x in lines), lines)
         self.assertEqual(M.listening_ports(TCP), {443}, "loopback and non-listening sockets are not counted")
         host = linux_host(files={"/proc/net/tcp": "  sl local st\n"})
@@ -478,6 +479,26 @@ class G1(unittest.TestCase):
         s = M.load_state(host)["looks"][REPO]["survey"]
         self.assertEqual((s["serves"], s["serves_what"]), (True, "port(s) open to the network: 8088"))
 
+    def test_G1_16_names_are_printed_only_of_what_the_person_chose(self):
+        # The family's rule 18 (2026-11-23): what the person did not choose is counted; its names (which may be the
+        # person's projects) are printed only on a flag of their own. The repository they named is theirs to see.
+        host = linux_host(which=("gh", "sudo", "systemctl", "podman"),
+                          runs={("podman", "ps"): (0, "client-acme-db\n"),
+                                ("systemctl", "list-units"): (0, "actions.runner.o-r.box-r.service loaded active running X\n"),
+                                ("systemctl", "show", "-p", "User", "--value", "actions.runner.o-r.box-r.service"): (0, "person\n")})
+        out = io.StringIO()
+        M.main(["look", REPO], host=host, out=out, gh=StandIn(self.recent))
+        said = out.getvalue()
+        self.assertNotIn("client-acme-db", said)
+        self.assertNotIn("box-r", said)
+        self.assertIn("1 container(s) of yours running: not named here", said)
+        self.assertIn("1 other runner service(s) of yours here: not named here", said)
+        out = io.StringIO()
+        M.main(["look", REPO, "--show-names"], host=host, out=out, gh=StandIn(self.recent))
+        said = out.getvalue()
+        self.assertIn("1 container(s) of yours running: client-acme-db (podman, yours)", said)
+        self.assertIn("1 other runner service(s) of yours here: actions.runner.o-r.box-r.service", said)
+
     def test_G1_12_other_peoples_things_are_counted_never_named(self):
         host = linux_host(which=("gh", "sudo", "systemctl", "docker"),
                           runs={("docker", "ps"): (0, "shop-db\nshop-web\n"),
@@ -489,7 +510,8 @@ class G1(unittest.TestCase):
         self.assertIn("warn 2 container(s) running on this computer's shared container service "
                       "(not named: they may be another person's)", lines)
         self.assertFalse(any("shop-db" in x or "someone-else" in x or "box-q" in x for x in lines), lines)
-        self.assertIn("warn 1 other runner service(s) of yours here: actions.runner.o-r.box-r.service", lines)
+        self.assertIn("warn 1 other runner service(s) of yours here: not named here (`look <owner/repo> --show-names` "
+                      "names them)", lines)
         self.assertIn("warn 1 other runner service(s) here that do not run as you (not named)", lines)
         self.assertTrue(any("serves something live" in x for x in lines), lines)
         # Our own runner, after setup, runs as minions-runner: named as ours, never counted as another (P1a).
@@ -505,7 +527,9 @@ class G1(unittest.TestCase):
         said = out.getvalue()
         self.assertNotIn("box-q", said)
         self.assertNotIn("someone-else", said)
-        self.assertIn("warn census: runner services: actions.runner.o-r.box-r.service", said)
+        self.assertNotIn("box-r", said)  # G1.16: the person's own runner service is counted, not named
+        self.assertIn("ok census: 1 runner service of yours here that this tool did not make (kept; not named: their "
+                      "names may be your projects')", said)
         self.assertIn("warn census: 1 runner service here not running as you or as minions-runner (not named: "
                       "they may be another person's; this tool did not make them)", said)
         self.assertNotIn("kept for this tool's other runners", said)
