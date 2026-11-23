@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The watch reads GitHub's cost rule again once a week; when its words on self-hosted runners change, the next
+  `status` says so first, with both versions and dates (G5.10, for row R16).
 - Before setup the person hears that a short sleep only delays a job and a sleep of more than about 10 minutes
   fails it on GitHub, from `look`'s numbered block and the skill (G7.9, row R49).
 - The recorded GitHub answers used by the tests no longer carry the numbers of the accounts they were recorded
