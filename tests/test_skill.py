@@ -199,6 +199,11 @@ class Skill(unittest.TestCase):
         for b in bases:  # every listed place is named, or is the folder that holds a named one
             self.assertTrue(b in named or any(n.startswith(b + "/") for n in named), b)
         self.assertIn("It changes no other file of theirs; neither do you.", sentence)
+        # The plugin road (rule 23, 2026-11-23): what Claude Code writes on a bare install is Claude Code's, proved by
+        # the one listing pair that brackets the install with the family's shared list; never a glob in this file.
+        self.assertIn("Installing the plugin is Claude Code's own act: it writes only Claude Code's plugin places. "
+                      "The skill itself makes nothing until the person asks for runners to be set up.", sentence)
+        self.assertFalse([g for g in globs if g.startswith(".claude")], globs)
 
     def test_G8_18_the_skill_never_offers_to_delete_what_uninstall_kept(self):
         # Rule 8 (2026-11-23, row R115): in run I the smallest model offered `rm -r` on the record uninstall keeps.
