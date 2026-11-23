@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Memory: a job that needs more than its cap now fails when it reaches the cap, by name, instead of running
+  slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises the cap. Jobs get no high mark and are kept
+  out of swap, where this computer holds that: `setup` reads it back from the running slice and says kept, not
+  kept, or could not be read, and `doctor` tells you if it stops being held (G4.2, row R94).
 - A job killed by our memory limit is said with the limit it was killed under. After a limit change, `status` said
   the new limit for a job killed under the old one (G5.14, row R93).
 - `setup <owner/repo> --limits` changes the limits of a runner already set up here, in place: the slice is
@@ -19,8 +23,9 @@
   where systemd's default stopped the whole service and the runner went offline (G2.9, row R88).
 - The idle-sleep hold of a job ends when the runner's service stops, or when the next job starts, as well as when the
   job ends: a service stopped mid-job left it for up to 6 hours (G4.4, row R89).
-- A job held at our memory limit is named. With the default limits a job that outgrows them is not killed: the
-  kernel holds it at the high mark and it barely moves, perhaps until GitHub's own time limit. The watch now reads
+- A job held at our memory limit is named. Under a high mark (this tool's default before row R94, so on runners set
+  up before it) a job that outgrows the limits is not killed: the kernel holds it at the high mark and it barely
+  moves, perhaps until GitHub's own time limit. The watch now reads
   the slice's own files each pass, and after two passes `status` names the job first, with the two ways out:
   cancel it, or give jobs more memory with `setup --limits` (G5.16, row R87).
 - The line naming a runner GitHub shows offline says what was read: offline at every watch pass since a time,

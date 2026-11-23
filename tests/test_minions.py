@@ -722,7 +722,8 @@ def doctor_world():
     assert code == M.EXIT_OK, lines
     lim = M.load_state(host)["runners"][REPO]["limits"]
     host.runs[("systemctl", "show", "minions.slice")] = (0, f"CPUQuotaPerSecUSec={lim['cores']}s\n"
-                                                            f"MemoryHigh={lim['MemoryHigh']}\nMemoryMax={lim['MemoryMax']}\n")
+                                                            f"MemoryHigh={lim['MemoryHigh']}\nMemoryMax={lim['MemoryMax']}\n"
+                                                            f"MemorySwapMax={lim['MemorySwapMax']}\n")
     host.runs[("sudo", "-n", "test", "-e", FOLDER)] = (0, "")
     host.runs[("sudo", "-n", "stat", "-c", "%a", "/home/minions-runner")] = (0, "750\n")
     return host, sha
@@ -1785,10 +1786,12 @@ class G4(unittest.TestCase):
 
     def test_G4_2_the_runner_runs_low_and_capped(self):
         gb = 1024 ** 3
-        # From the survey: half the processors (never less than one), memory high 50 % and max 60 %.
+        # From the survey: half the processors (never less than one), memory max 60 %, no high mark and no swap for
+        # jobs: a job that outgrows the max fails at once, by name, never crawls through swap (run26).
         lim = M.slice_limits({"cores": 8, "mem": 16 * gb})
         self.assertEqual((lim["cores"], lim["CPUQuota"]), (4, "400%"))
-        self.assertEqual((int(lim["MemoryHigh"]), int(lim["MemoryMax"])), (int(16 * gb * 0.5), int(16 * gb * 0.6)))
+        self.assertEqual((lim["MemoryHigh"], int(lim["MemoryMax"]), lim["MemorySwapMax"]),
+                         ("infinity", int(16 * gb * 0.6), "0"))
         self.assertEqual(M.slice_limits({"cores": 1, "mem": 8 * gb})["cores"], 1)
         self.assertEqual(M.slice_limits({"cores": 3, "mem": 8 * gb})["cores"], 1)
         # The person's own choice (G7.8) within bounds: never more processors than there are, never under one.
@@ -1799,7 +1802,7 @@ class G4(unittest.TestCase):
         for line in (f"Slice={M.SLICE}", "Nice=10", "CPUWeight=50"):
             self.assertIn(line + "\n", drop)
         sl = M.slice_text(lim)
-        for line in ("CPUQuota=400%", f"MemoryHigh={lim['MemoryHigh']}", f"MemoryMax={lim['MemoryMax']}"):
+        for line in ("CPUQuota=400%", "MemoryHigh=infinity", f"MemoryMax={lim['MemoryMax']}", "MemorySwapMax=0"):
             self.assertIn(line + "\n", sl)
         # setup installs both from the survey and reads them back from systemd.
         host, sha = setup_host()
@@ -1808,6 +1811,35 @@ class G4(unittest.TestCase):
         fed = {a[-1]: x for a, x in host.fed if a[:3] == ("sudo", "-n", "tee") or "tee" in a}
         self.assertTrue(any("CPUQuota=400%" in (x or "") for x in fed.values()), list(fed))
         self.assertTrue([a for a in host.ran if "show" in a and "CPUWeight" in a], "read back")
+        # R94: kept out of swap is read from the running slice, three answers; only "kept" is said or recorded so.
+        for swap_max, kind, said in (("0\n", "ok", "jobs are kept out of this computer's swap, read back"),
+                                     ("max\n", "warn", "this computer did not keep jobs out of swap: the running "
+                                                       "slice reads max for its swap cap, not 0"),
+                                     (None, "warn", "could not read whether jobs are kept out of swap")):
+            host, sha = setup_host()
+            fresh_look(host)
+            if swap_max is not None:
+                host.files[M.SWAP_MAX_FILE] = swap_max
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_OK, lines)
+            self.assertTrue(any(x.startswith(f"{kind} {said}") for x in lines), (swap_max, lines))
+            if kind == "warn":
+                self.assertFalse(any("kept out of this computer's swap" in x for x in lines), lines)
+                self.assertTrue(any("instead of failing by name. Next step:" in x for x in lines), lines)
+            rec = M.load_state(host)["runners"][REPO]["limits"]
+            self.assertEqual(rec.get("swap_kept"), True if kind == "ok" else None)
+        # doctor: kept at setup, then not held: a promise not kept, named, with the command that writes it again.
+        host, sha = setup_host()
+        fresh_look(host)
+        host.files[M.SWAP_MAX_FILE] = "0\n"
+        run_setup(setup_gh(sha), host)
+        lim = M.load_state(host)["runners"][REPO]["limits"]
+        host.runs[("systemctl", "show", "minions.slice")] = (0, f"CPUQuotaPerSecUSec={lim['cores']}s\nMemoryHigh=infinity\n"
+                                                                f"MemoryMax={lim['MemoryMax']}\nMemorySwapMax=0\n")
+        host.files[M.SWAP_MAX_FILE] = "max\n"
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(any("did not keep jobs out of swap" in x and "though setup read it kept" in x for x in lines),
+                        lines)
 
     def test_G11_1_a_laptop_is_named_and_its_limits_said_before_setup(self):
         page = load("look-recent-runs.jsonl")
@@ -3071,6 +3103,12 @@ class G8(unittest.TestCase):
         self.assertEqual(lines[-1], "ok every promise of the install read back as kept")
         changed = [a for a in admin_steps(host) if a[2] not in ("stat", "test", "cat", "-u")]
         self.assertEqual(changed, [], "doctor changes nothing it was not asked to finish")
+        # The swap cap is read back too: jobs given swap again (by hand, or by an older setup) is said, by name.
+        h2, sha2 = doctor_world()
+        show = h2.runs[("systemctl", "show", "minions.slice")][1]
+        h2.runs[("systemctl", "show", "minions.slice")] = (0, show.replace("MemorySwapMax=0", "MemorySwapMax=infinity"))
+        _, l2 = run_doctor(h2, sha2)
+        self.assertTrue(any("limits read MemorySwapMax='infinity'" in x for x in l2), l2)
         # A promise not kept: named with its way on; the last line counts them, exit 2; still nothing changed.
         host.runs[("sudo", "-n", "stat", "-c", "%a %U %n")] = (0, f"644 minions-runner {FOLDER}/.credentials\n"
                                                                     f"600 minions-runner {FOLDER}/.runner\n"
