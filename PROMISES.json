@@ -96,7 +96,7 @@
   {
    "id": "R7",
    "seen": "Seen: jobs that asked for a label no online runner carried waited for hours, including on open pull requests' heads, and jobs for another OS could not run anywhere.",
-   "promise": "Every job no owned computer can take is named and left as it was; a lint names jobs no runner can take before they wait.",
+   "promise": "Every job no owned computer can take is named and left as it was.",
    "codon": "G3.2",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
@@ -104,7 +104,7 @@
    "test": "test_G3_2_jobs_that_cannot_move_are_left_and_named",
    "proven": "",
    "issue": 13,
-   "moved_why": "",
+   "moved_why": "2026-11-23, split by the owner's word: the lint that names jobs no runner can take before they wait is G3.5, due 0.2.0; it is row R70 (issue #124). The sentence promised both under one version.",
    "moved_by_person": ""
   },
   {
@@ -959,6 +959,34 @@
    "proven": "",
    "issue": 119,
    "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R69",
+   "seen": "2026-11-23: the committed test fixtures carried the numeric id, node id and avatar link of two accounts (logins were scrubbed, numbers were not), published from c1eff5f (2026-11-22) until 9bb0852 (2026-11-23). Both were this repository's own: the login that authors and merges its pull requests, and the organisation that owns it; both already show on every pull request page here. History is kept: a rewrite would change every commit id cited and could not remove GitHub's own views of merged pull requests.",
+   "promise": "The recorded GitHub answers used by the tests carry no account's number: the scrubber removes it and a test refuses it.",
+   "codon": "G9.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G9_4_fixtures_hold_no_token_no_email_no_real_names",
+   "proven": "",
+   "issue": 123,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R70",
+   "seen": "2026-11-23, split from R7: the tool has no lint command in 0.1.0.",
+   "promise": "A lint the person can keep names jobs no runner can take, before they wait.",
+   "codon": "G3.5",
+   "owner": "maintainer",
+   "first_ship_in": "0.2.0",
+   "ship_in": "0.2.0",
+   "test": "",
+   "proven": "",
+   "issue": 124,
+   "moved_why": "Split from R7 by the owner's word, 2026-11-23: G3.5 is due in 0.2.0. Meanwhile 0.1.0's status warns first when a job waits for a runner that is offline or held (G5.1, R67), and look names each job that asks for a runner that is not ours.",
    "moved_by_person": ""
   }
  ],
