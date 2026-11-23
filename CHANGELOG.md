@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- From two cold starts: `look` prints what the person must hear before setup as `tell the person` lines;
+  every open `need you` is exit 3; the gh install line refreshes apt first; `uninstall` says the put-back pull
+  request's checks first; every program a service runs is resolved at setup; this computer's guard (the job-start
+  hook) refuses a job of a repository GitHub's own event or the watch says is not private, or the watch has not
+  read private for 15 minutes; a blind watch is a `stop` line; `status` names a refused job; the skill says a
+  person's step is never done another way and the tool's words are quoted exactly (G1.10, G5.15, G6.7, G7.10,
+  G8.3, G8.9 to G8.11; rows R52 to R59).
+- Plan 1.14, from two cold starts (an agent with a shell on a fresh Ubuntu machine, given one sentence): G1.10
+  (the gh install line that works on a fresh image), G8.3 (six line kinds; every open ask is exit 3), G5.15 (a
+  blind watch says so and the runner takes no job until it reads the repository private again), G6.7, G7.10, G8.9
+  to G8.11; rows R52 to R59.
 - Plan 1.13, from G6's run on a stock virtual machine: G7.9 (a long sleep fails the job, said before setup);
   rows for two systemd 255 changes the code now reads (sleep wording, slice load state); rows R49 to R51.
 - Plan 1.12: the command that takes everything away is `uninstall` (was `remove`), the family's word; `remove`

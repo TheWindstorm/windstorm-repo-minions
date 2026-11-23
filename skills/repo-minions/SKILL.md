@@ -21,7 +21,7 @@ Run the steps in this order. Do not skip one, and do not start the next while th
 `need you` or `waiting`.
 
 1. **look**: `minions.py look <owner/repo>`, then, with the person's yes, `minions.py look <owner/repo> --start-test`.
-2. **tell**: tell the person what look said, in the words under "Before setup" below.
+2. **tell**: say look's `tell the person` lines to the person, exactly as printed (see "Before setup" below).
 3. **setup**: `minions.py setup <owner/repo>`.
 4. **move**: `minions.py move <owner/repo>`.
 5. **verify**: after the person merged, `minions.py move <owner/repo> --verify`.
@@ -32,8 +32,10 @@ To pause it: `minions.py drain <owner/repo>` holds the runner and waits until no
 
 ## What the tool prints
 
-Every line starts with one of five words. Read the line, then say it to the person in plain words; quote
-the tool's own numbers and names, never your own.
+Every line starts with one of six kinds. Read the line, then say it to the person in plain words; quote
+the tool's own numbers and names, never your own. When you give the tool's words as its words, give them exactly
+as printed: add nothing inside them (no other time zone, no conversion, no comment). Your own explanation is
+never presented as the tool's.
 
 | Line | Means | You do |
 |---|---|---|
@@ -42,14 +44,15 @@ the tool's own numbers and names, never your own.
 | `stop` | nothing more was done | tell the person why and what the line says to do; do not go on |
 | `need you` | a step that is the person's | ask the person to do it; wait for them |
 | `waiting` | not done yet: the tool is waiting for something, with a deadline | see "Waiting" below |
+| `tell the person` | words the person must hear | say them to the person exactly as printed, before the next step |
 
 The exit code is the worst line's:
 
 | Exit | Means |
 |---|---|
-| 0 | every line `ok` or `warn` |
+| 0 | every line `ok`, `warn` or `tell the person` |
 | 2 | a `stop` line |
-| 3 | a `need you` line and no `stop` |
+| 3 | a `need you` line and no `stop` (also the start test's yes, which comes before the other lines) |
 | 4 | a `waiting` line and neither of those |
 | 1 | the tool itself failed; its `stop` line names the error and the last step it wrote down |
 | 64 | the command was typed wrong |
@@ -66,6 +69,11 @@ shown the runner online yet. Nothing is broken; it is waiting until 21:40 UTC. I
 
 These are theirs. Never do them for the person, never type a password, never press Agree or Accept on a
 terms or consent screen.
+
+A step that is the person's is never done another way. If a `need you` line names a command, ask the person to
+run it. If you cannot do what a line says, or the command fails, tell the person what it printed and ask; never
+find another route (a download instead of the named install, another package source, another login, another
+folder).
 
 - **Logging in to GitHub.** If look says `need you: log in to GitHub`, ask the person to run `gh auth login` in
   their own terminal.
@@ -84,7 +92,8 @@ terms or consent screen.
 
 ## Before setup
 
-Say these to the person before running setup, in these words, then wait for their go.
+look's last lines are `tell the person` lines. Say each one to the person, exactly as printed, before running
+setup, then wait for their go. These are what they carry; if one is missing, say it in these words:
 
 - **What a job can reach.** Name what look listed: the secrets a job can read (names only) and what already runs
   on this computer. Then say: "Anyone who can push to this repository can run code on this computer."
@@ -132,4 +141,4 @@ that something costs nothing, or that the person spends less: the tool did not r
 | "My job is waiting" | `status`; read its lines; if the runner is held, `resume` |
 | "My test failed on my computer" | `status`; it names a job cut by a restart or stopped by this computer's memory limit; otherwise it is the job's own result |
 | "I need my computer now" | `drain`, wait for its `ok` |
-| "Take it off" | `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this skill on the computer and opens a pull request that puts moved jobs back (theirs to merge) |
+| "Take it off" | `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this skill on the computer and opens a pull request that puts moved jobs back (theirs to merge); pass on its `tell the person` line about that pull request's own checks |
