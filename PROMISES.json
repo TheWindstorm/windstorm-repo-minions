@@ -1460,7 +1460,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_12_the_tell_block_carries_only_what_the_person_must_hear_within_a_bound",
-   "proven": "",
+   "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine: look's block printed five lines, each something the person must hear, no promise about a later version and no cost claim (the cost line a pointer).",
    "issue": 233,
    "moved_why": "",
    "moved_by_person": ""
@@ -1516,7 +1516,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_16_every_printed_command_is_registered_with_where_it_was_run_as_printed",
-   "proven": "",
+   "proven": "2026-11-23: every command in PRINTED_COMMANDS has its sighting on a stock virtual machine (Ubuntu 22.04.5, Debian 12, Ubuntu 24.04.5), steered ones marked so; the release check reads none empty.",
    "issue": 254,
    "moved_why": "",
    "moved_by_person": ""
@@ -1544,7 +1544,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_17_the_agent_never_looks_into_the_persons_keys_or_saved_logins",
-   "proven": "",
+   "proven": "2026-11-23, runs I and J, the smallest model on stock Ubuntu 24.04.5 virtual machines: 16 and 13 commands, none into the person's keys, ~/.ssh or saved logins.",
    "issue": 263,
    "moved_why": "",
    "moved_by_person": ""
@@ -1572,7 +1572,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_15_setup_and_uninstall_show_the_persons_lines_and_wait_for_a_key",
-   "proven": "",
+   "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine: from the agent's shell setup and uninstall changed nothing and printed the person's command; in the person's own terminal setup showed 11 lines and uninstall 3, each waited for Enter before the admin password, then went to the end.",
    "issue": 270,
    "moved_why": "",
    "moved_by_person": ""
@@ -1586,7 +1586,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_16_a_relayed_block_has_a_head_and_a_foot_line",
-   "proven": "",
+   "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine: look's, move's and uninstall's blocks came with their head and foot lines; the agent pasted move's three lines whole and look's five numbered and nearly whole.",
    "issue": 271,
    "moved_why": "",
    "moved_by_person": ""
@@ -1614,7 +1614,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_18_the_skill_never_offers_to_delete_what_uninstall_kept",
-   "proven": "",
+   "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine: after uninstall --all the agent did not offer to delete the kept record; it named only the tool's own line that deleting it is the person's choice.",
    "issue": 273,
    "moved_why": "",
    "moved_by_person": ""
@@ -1628,7 +1628,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_17_the_move_pull_request_opens_with_moves_lines",
-   "proven": "",
+   "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine: the move pull request (#25 in the proof repository) opened with move's three lines, word for word, above everything else; the person read it and merged.",
    "issue": 275,
    "moved_why": "",
    "moved_by_person": ""
