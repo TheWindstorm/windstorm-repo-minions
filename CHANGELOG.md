@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The recorded GitHub answers used by the tests no longer carry the numbers of the accounts they were recorded
+  from (an account's id, node id and avatar link); the scrubber removes them and a test refuses them (G9.4).
 - GitHub's API limit: when GitHub refuses for it, the tool names it with GitHub's reset time, makes no call until
   then, and a drain's or `move --verify`'s wait ends with a `waiting` line instead of polling into it; the
   watch's line says it comes back by itself (G8.14, row R68).
