@@ -401,8 +401,8 @@ the branch deleted, nothing billable and nothing left. That is G1.4's start test
 
 | Version | What | Accepted when |
 |---|---|---|
-| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.7, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.7, G5.13, G5.14, G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
-| 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.8, G5.10, G11 on macOS, G12 (many repositories on one computer). | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
+| 0.1.0 | Linux, one private repository per computer, personal account: G1, G2, G3.1 to G3.3, G3.6, G4.1 to G4.7, G5.1 to G5.4, G5.6, G5.11, G5.12, G5.7, G5.13, G5.14, G5.10 (moved in by the owner's word, 2026-11-23, for R16), G6, G7, G8, G9, G11 on Linux, all INV. | No G5 code before C3's first part is seen. Every row due in 0.1.0 has its test; Part 9's proofs P1 to P6 and P8 seen on a clean Linux account, P9 and P10 on a Linux laptop. |
+| 0.2.0 | macOS (C8 and C12 first), organisations and runner groups (G1.2, G2.6), G3.4, G3.5, G5.5, G5.8, G11 on macOS, G12 (many repositories on one computer). | Rows due in 0.2.0 tested; P1 to P6 and P8 again on a clean Mac account, P9 and P10 on a Mac laptop; 0.1.0's rows proven. |
 | 0.3.0 | The opt-in offline fallback (G5.9), self-update (G10), Windows if Part 11 Q4 says yes. | As above, on each OS it claims. |
 
 ---
