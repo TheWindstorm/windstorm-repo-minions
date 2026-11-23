@@ -1815,6 +1815,38 @@ def lock_credentials(host: Host, folder: str, rep: Report) -> bool:
     return True
 
 
+def change_limits(host: Host, repo: str, known: dict, lim: dict, rep: Report) -> int:
+    """R92 (G7.8): `setup <repo> --limits` on a runner already set up here rewrites the slice only, reads it back from
+    systemd and records it. Nothing else is touched: the runner, its registration and a job running now go on, and
+    a running job is held to the new limits from now on."""
+    path = f"/etc/systemd/system/{SLICE}"
+    journal(host, "write", f"{path} (new limits)")
+    rc, out = sudo(host, ["tee", path], input=slice_text(lim))
+    if rc != 0:
+        rep.stop(f"could not write {path}: {tail(out)}. The limits are as they were. Settle what it says, then run "
+                 "the same command again")
+        return rep.code()
+    sudo(host, systemctl("daemon-reload"))
+    rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh",
+                                 "-p", "MemorySwapMax"))
+    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    want = {"CPUQuotaPerSecUSec": f"{lim['cores']}s", "MemoryMax": str(lim["MemoryMax"]),
+            "MemoryHigh": str(lim["MemoryHigh"])}
+    if "MemorySwapMax" in lim:
+        want["MemorySwapMax"] = str(lim["MemorySwapMax"])
+    off = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
+    if off:
+        rep.stop(f"{SLICE} was written but systemd reads {', '.join(off)}: the new limits are not in force. Run the "
+                 "same command again; `doctor` says what differs")
+        return rep.code()
+    keep = ("cores", "pct", "CPUQuota", "MemoryHigh", "MemoryMax", "MemorySwapMax")
+    known["runners"][repo]["limits"] = {k: lim[k] for k in keep if k in lim}
+    save_state(host, known)
+    rep.ok(f"the limits of {repo}'s runner are changed, read back from systemd: {limits_in_words(lim).split(';')[0]}. "
+           "Nothing else was touched; a job running now goes on, held to these limits from now on")
+    return rep.code()
+
+
 def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits: dict | None = None) -> str | None:
     """G2.9: the runner's own unit, then our drop-in and slice, read back."""
     journal(host, "svc.sh install", folder)
@@ -1958,6 +1990,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
                "then setup starts fresh")
         if not remove_one(gh, host, repo, known, rep, DRAIN_WAIT_S, 10, f"setup {repo}"):
             return rep.code()
+    if left.get("unit") and limits is not None:  # R92: an installed runner's limits change in place
+        return change_limits(host, repo, known, lim, rep)
     if not ensure_runner_user(host, rep):
         return rep.code()
     owner, name_ = repo.split("/", 1)
@@ -2946,6 +2980,8 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
         if not kept:
             data.setdefault("named", {})[str(g["id"])] = {"kind": verdict[0], "why": verdict[1], "run": j["start"]["run"],
                                                          "time": stamp(host.now())}
+            if verdict[0] == "killed":  # R93: the limit it was killed under, kept; a later change never rewrites it
+                data["named"][str(g["id"])]["limit"] = (mine.get("limits") or {}).get("MemoryMax")
             save_state(host, data)
             journal(host, "named", f"{repo} job {g['id']}: {verdict[0]} by {verdict[1]}")
         named[int(g["id"])] = g
@@ -2958,11 +2994,11 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
                                   f"its first step by this computer's guard: {verdict[1]}. No step of it ran here; "
                                   f"GitHub shows it as failed, not a failing test of yours.{again}"))
         elif verdict[0] == "killed":
-            lim = (mine.get("limits") or {}).get("MemoryMax")
+            lim = ((data.get("named") or {}).get(str(g["id"])) or {}).get("limit")  # R93: as named, or no number
             lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was stopped by "
                                   f"this computer's memory limit{' (' + gb(int(lim)) + ')' if lim else ''}, not by your "
                                   "code failing; GitHub shows it as failed. The one way to change the limit: "
-                                  f"`setup --limits <processors>,<memory %>`.{again}"))
+                                  f"`setup {repo} --limits <processors>,<memory %>`.{again}"))
         else:
             lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was cut by "
                                   f"{verdict[1]}, not a failing test of yours; GitHub shows it as failed.{again}"))

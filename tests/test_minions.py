@@ -2602,8 +2602,20 @@ class G5(unittest.TestCase):
         named = [x for x in lines if x.startswith("warn job 'check'")]
         self.assertEqual(named, ["warn job 'check' (run 555, started 22:40:00Z) was stopped by this computer's memory "
                                  "limit (4.0 GB), not by your code failing; GitHub shows it as failed. The one way to "
-                                 "change the limit: `setup --limits <processors>,<memory %>`. To run it again, once: "
+                                 f"change the limit: `setup {REPO} --limits <processors>,<memory %>`. To run it again, once: "
                                  f"`status {REPO} --rerun 9001`."])
+        # R93: the limit said is the one it was killed under; limits changed after that never rewrite it.
+        d = M.load_state(host)
+        d["runners"][REPO]["limits"]["MemoryMax"] = str(2 * 1024 ** 3)
+        M.save_state(host, d)
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any(x.startswith("warn job 'check'") and "memory limit (4.0 GB)" in x for x in lines), lines)
+        # A job named before the limit was kept: no number, rather than today's.
+        d = M.load_state(host)
+        d["named"]["9001"].pop("limit")
+        M.save_state(host, d)
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any(x.startswith("warn job 'check'") and "memory limit, not by your" in x for x in lines), lines)
         # No kill counted here: the person's own failure, never named.
         host, gh, _ = self._named(f"start {t0} 555 1 1 check\nend {t0 + 70} 555 1 1 check\n", failed)
         self.assertFalse(any(x.startswith("warn job") for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
@@ -3238,6 +3250,42 @@ class P1a(unittest.TestCase):
         # They come after the reading, all together, so an agent says them before setup.
         first = min(i for i, x in enumerate(lines) if TELL.match(x))
         self.assertTrue(all(TELL.match(x) for x in lines[first:]), lines[first:])
+
+    def test_G7_11_setup_limits_changes_an_installed_runner_in_place(self):
+        # Seen on a stock VM (2026-11-23): the kill line named `setup --limits` the one way to change the limit, and
+        # on a runner set up here it stopped with "exists already", nothing changed.
+        host, sha = doctor_world()
+        def show(argv, _):
+            text = [i for a, i in host.fed if a[:3] == ("sudo", "-n", "tee") and a[3].endswith("minions.slice")][-1]
+            sl = dict(x.split("=", 1) for x in text.splitlines() if "=" in x)
+            cores = int(sl["CPUQuota"].rstrip("%")) // 100
+            return 0, (f"CPUQuotaPerSecUSec={cores}s\nMemoryHigh={sl['MemoryHigh']}\nMemoryMax={sl['MemoryMax']}\n"
+                       f"MemorySwapMax={sl.get('MemorySwapMax', 'infinity')}\n")
+        host.runs[("systemctl", "show", "minions.slice")] = show
+        def look_again():  # a fresh look, the runner's record kept
+            d = M.load_state(host)
+            d["looks"][REPO]["time"] = M.dt.datetime.now(M.dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            M.save_state(host, d)
+        look_again()
+        host.ran.clear()
+        out = io.StringIO()
+        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, limits=(2, 40))
+        lines = out.getvalue().splitlines()
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue(any(x.startswith(f"ok the limits of {REPO}'s runner are changed, read back from systemd: jobs "
+                                         "here get at most 2 of") and "40 % of its memory" in x for x in lines), lines)
+        lim = M.load_state(host)["runners"][REPO]["limits"]
+        self.assertEqual((lim["cores"], lim["pct"]), (2, 40))
+        # The slice only: no runner unpacked, registered, or restarted; no service stopped.
+        self.assertFalse([a for a in host.ran if any(w in " ".join(a) for w in ("config.sh", "svc.sh", "stop", "restart",
+                                                                                   "tar"))], host.ran)
+        # Read back, or said: systemd reading other numbers is a stop, never an ok.
+        host.runs[("systemctl", "show", "minions.slice")] = (0, "CPUQuotaPerSecUSec=4s\nMemoryMax=1\nMemoryHigh=1\n")
+        look_again()
+        out = io.StringIO()
+        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, limits=(2, 40))
+        self.assertEqual(code, M.EXIT_STOP, out.getvalue())
+        self.assertIn("the new limits are not in force", out.getvalue())
 
     def test_G6_8_uninstall_all_ends_our_leftover_sleep_holds_and_names_anything_else(self):
         # Seen on a stock VM (2026-11-23): a job's sleep hold outlived a service stopped mid-job; `uninstall --all`
