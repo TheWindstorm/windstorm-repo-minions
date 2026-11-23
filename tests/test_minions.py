@@ -3088,6 +3088,24 @@ class G6(unittest.TestCase):
 
 
 class G8(unittest.TestCase):
+    def test_G8_15_below_its_python_floor_the_tool_stops_before_any_step(self):
+        # Seen on a stock Ubuntu 20.04 VM (2026-11-23, Python 3.8): setup made the runner, then failed on a 3.9+
+        # operator. Now every command stops first, nothing run, and the file still reads in 3.8's grammar.
+        import ast
+        from unittest import mock
+        src = open(M.__file__).read()
+        ast.parse(src, feature_version=(3, 8))
+        host = FakeHost()
+        out = io.StringIO()
+        with mock.patch.object(M.sys, "version_info", (3, 8, 10, "final", 0)):
+            code = M.main(["look", REPO], host=host, out=out)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertTrue(out.getvalue().startswith("stop this tool needs Python 3.10 or newer, and this computer's "
+                                                  "python3 is 3.8.10; nothing was changed."), out.getvalue())
+        self.assertIn("Ubuntu 22.04 or newer, Debian 12 or newer", out.getvalue())
+        self.assertEqual(host.ran, [])
+        self.assertNotIn(" | {", src.replace(" ", " "))  # no dict union operator (3.9+) in the tool
+
     def test_G8_4_doctor_checks_install_and_finishes_half_done_steps(self):
         # Every promise of G2 and G4 read back as kept, one line each, and nothing changed.
         host, sha = doctor_world()
@@ -3324,6 +3342,24 @@ class P1a(unittest.TestCase):
         code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, limits=(2, 40))
         self.assertEqual(code, M.EXIT_STOP, out.getvalue())
         self.assertIn("the new limits are not in force", out.getvalue())
+
+    def test_G6_9_a_runner_whose_setup_was_cut_before_its_unit_was_recorded_is_stopped_by_name(self):
+        # Seen on a stock VM (2026-11-23): uninstall after a setup cut before it recorded the unit printed
+        # "the service is Failed to mangle name: Invalid argument" inside an ok line.
+        unit = "actions.runner.example-org-example-repo.minions-box-1.service"
+        host = FakeHost(runs={("sudo", "-n", "cat", f"{FOLDER}/.service"): (0, unit + "\n"),
+                              ("systemctl", "is-active", unit): (3, "inactive\n")})
+        out = io.StringIO()
+        self.assertTrue(M.stop_runner(host, "", FOLDER, M.Report(out), True))
+        self.assertIn(("sudo", "-n", "systemctl", "stop", unit, "--no-pager"), host.ran)
+        self.assertIn("ok the runner is stopped: the service is inactive", out.getvalue())
+        self.assertFalse([a for a in host.ran if "" in a[1:]], host.ran)  # never an empty unit name
+        # No service file either: said as such, and nothing run against an empty name.
+        host = FakeHost()
+        out = io.StringIO()
+        self.assertTrue(M.stop_runner(host, "", FOLDER, M.Report(out), True))
+        self.assertIn("ok the runner had no service here", out.getvalue())
+        self.assertFalse([a for a in host.ran if a[:1] == ("systemctl",) or "systemctl" in a])
 
     def test_G6_8_uninstall_all_ends_our_leftover_sleep_holds_and_names_anything_else(self):
         # Seen on a stock VM (2026-11-23): a job's sleep hold outlived a service stopped mid-job; `uninstall --all`
