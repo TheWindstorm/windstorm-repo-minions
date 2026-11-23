@@ -1,9 +1,10 @@
 name: tests
-# Rule 17: a commit's checks run once: on pull requests, and on pushes only to main and release branches.
+# Rule 17: a commit's checks run once: on pull requests, and on pushes only to main and a release branch
+# (release-x.y.z; a release-sync-N branch is checked on its pull request only).
 on:
   pull_request:
   push:
-    branches: [main, "release-*"]
+    branches: [main, "release-[0-9]*"]
 permissions:
   contents: read
 # This repository is public: its jobs run on GitHub's standard runners only, never on a self-hosted one
