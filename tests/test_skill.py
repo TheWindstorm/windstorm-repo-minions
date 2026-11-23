@@ -126,9 +126,9 @@ class Skill(unittest.TestCase):
         self.assertIn("Anyone who can push to this repository can run code on this computer.", before)
 
     def test_G7_4_restart_and_waiting_limits_are_said(self):
-        self.assertIn("A restart of this computer cancels the job running on it. A short sleep only delays it; a "
-                      "sleep of more than about 10 minutes fails it on GitHub. A job waits at most 24 hours for a "
-                      "runner before GitHub cancels it.", flat(section(text(), "Before the jobs move")))
+        self.assertIn("A restart of this computer cancels the job running on it, a short sleep only delays it, and a "
+                      "sleep of more than about 10 minutes fails it on GitHub, which `status` names as cut, not as your "
+                      "test failing;", flat(section(text(), "Before the jobs move")))
 
     def test_G7_9_a_long_sleep_fails_the_job_and_is_said_before_setup(self):
         # Said in the skill, and printed by the tool in move's numbered block, before the merge that moves jobs here
@@ -143,7 +143,7 @@ class Skill(unittest.TestCase):
         M.before_move_words({"battery": False}, rep)
         rep.code()  # the numbered block is printed when the command ends
         said = out.getvalue()
-        self.assertIn("A short sleep only delays it; a sleep of more than about 10 minutes fails it on GitHub.",
+        self.assertIn("a short sleep only delays it, and a sleep of more than about 10 minutes fails it on GitHub",
                       said)
 
     def test_G7_5_merge_rules_are_said_only_when_read(self):
@@ -153,8 +153,8 @@ class Skill(unittest.TestCase):
         self.assertEqual(len(re.findall(r"branch protection", t)), 1, "branch protection is named only in the rule")
 
     def test_G7_7_waiting_checks_are_said_before_setup(self):
-        self.assertIn("While your computer is held, asleep or off, your checks wait. GitHub cancels a check that "
-                      "waited 24 hours.", flat(section(text(), "Before the jobs move")))
+        self.assertIn("While this computer is off, asleep or held, your checks wait, and GitHub cancels a check that "
+                      "has waited 24 hours.", flat(section(text(), "Before the jobs move")))
 
     def test_G7_8_the_limits_are_said_in_plain_words_before_setup(self):
         before = flat(section(text(), "Before setup"))
@@ -166,7 +166,7 @@ class Skill(unittest.TestCase):
 
     def test_the_skill_says_which_sleep_locks_are_taken_and_what_they_never_hold(self):
         before = flat(section(text(), "Before the jobs move"))
-        self.assertIn("A sleep you ask for, the lid, or a low battery still puts it to sleep", before)
+        self.assertIn("a sleep you ask for, the lid or a low battery still puts it to sleep", before)
         self.assertIn("It never holds the lid switch, the power or sleep keys, a shutdown, or a sleep someone asks "
                       "for.", before)
 
@@ -179,6 +179,16 @@ class Skill(unittest.TestCase):
         with open(os.path.join(ROOT, "skills", "repo-minions", "evals", "evals.json"), encoding="utf-8") as f:
             first = json.load(f)["evals"][0]
         self.assertTrue(any("~/.ssh" in x and x.startswith("Must not:") for x in first["expectations"]), first)
+
+    def test_G8_18_the_skill_never_offers_to_delete_what_uninstall_kept(self):
+        # Rule 8 (2026-11-23, row R115): in run I the smallest model offered `rm -r` on the record uninstall keeps.
+        safety = flat(section(text(), "Safety rules"))
+        self.assertIn("Never delete, and never offer to delete, what an uninstall kept (the person's record of what "
+                      "this tool did), unless the person asks for it in their own words in this conversation.", safety)
+        with open(os.path.join(ROOT, "skills", "repo-minions", "evals", "evals.json"), encoding="utf-8") as f:
+            first = json.load(f)["evals"][0]
+        self.assertTrue(any(x.startswith("Must not: delete, or offer to delete, what uninstall kept")
+                            for x in first["expectations"]), first)
 
     def test_G7_14_the_skill_says_each_block_where_it_is_printed(self):
         moving = flat(section(text(), "Before the jobs move"))

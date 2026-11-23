@@ -38,6 +38,8 @@ The tool the skill runs is `scripts/minions.py`. It uses only Python's standard 
 **Your steps.** Only these are yours, and your agent stops and asks for each one:
 - installing `gh`, `git` or Python if your computer lacks them (your agent names the one command);
 - logging in to GitHub with `gh auth login`, if you are not, as an account that is an admin of the repository;
+- running `setup`, and later `uninstall`, yourself in your own terminal (your agent gives you the exact line):
+  each first shows you what you must read and goes on only when you press Enter;
 - your computer's admin password, typed by you, once (again later for `resume`, `drain --stop`, `doctor` and
   `uninstall`, each in your own terminal);
 - a yes in words if your computer already serves something live (a website, a database, a container), or another
