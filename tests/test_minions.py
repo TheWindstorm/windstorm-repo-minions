@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -613,7 +614,7 @@ def runners_answer(status="online", busy=False, labels=("minions", "minions-medi
 
 DROPIN_NAME = "50-minions.conf"
 SHOW = ("Slice=minions.slice\nNice=10\nCPUWeight=50\nRestart=on-failure\n"
-        "Wants=network-online.target\nUnitFileState=enabled\nUser=minions-runner\n")
+        "Wants=network-online.target\nUnitFileState=enabled\nUser=minions-runner\nOOMPolicy=continue\n")
 
 
 def setup_host(**kw):
@@ -721,7 +722,8 @@ def doctor_world():
     assert code == M.EXIT_OK, lines
     lim = M.load_state(host)["runners"][REPO]["limits"]
     host.runs[("systemctl", "show", "minions.slice")] = (0, f"CPUQuotaPerSecUSec={lim['cores']}s\n"
-                                                            f"MemoryHigh={lim['MemoryHigh']}\nMemoryMax={lim['MemoryMax']}\n")
+                                                            f"MemoryHigh={lim['MemoryHigh']}\nMemoryMax={lim['MemoryMax']}\n"
+                                                            f"MemorySwapMax={lim['MemorySwapMax']}\n")
     host.runs[("sudo", "-n", "test", "-e", FOLDER)] = (0, "")
     host.runs[("sudo", "-n", "stat", "-c", "%a", "/home/minions-runner")] = (0, "750\n")
     return host, sha
@@ -1037,7 +1039,7 @@ class G2(unittest.TestCase):
         tees = {a[-1]: i for a, i in host.fed if a[:3] == ("sudo", "-n", "tee")}
         dropin = tees[f"/etc/systemd/system/{UNIT}.d/50-minions.conf"]
         for line in ("Wants=network-online.target", "Slice=minions.slice", "Nice=10", "CPUWeight=50",
-                     "Restart=on-failure", "RestartSec=30"):
+                     "Restart=on-failure", "RestartSec=30", "OOMPolicy=continue"):
             self.assertIn(line + "\n", dropin)
         sl = tees["/etc/systemd/system/minions.slice"]
         self.assertIn("CPUQuota=400%\n", sl)  # half of 8 cores
@@ -1626,6 +1628,45 @@ class G4(unittest.TestCase):
             finally:
                 if pid:
                     os.kill(pid, 15)
+        # R89 (seen on a stock machine): a job whose end hook never ran, because its service stopped mid-job, left the
+        # hold for up to 6 hours. The next job's start hook ends the old hold first, and the service's own stop ends
+        # it too (ExecStopPost in our drop-in).
+        def gone(p):
+            for _ in range(50):
+                try:
+                    os.kill(p, 0)
+                    if open(f"/proc/{p}/stat").read().split()[2] == "Z":
+                        return True
+                except (ProcessLookupError, FileNotFoundError):
+                    return True
+                M.time.sleep(0.1)
+            return False
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            folder = os.path.realpath(d)
+            env = self._hooks_for_real(folder, os.path.join(folder, "inhibit.log"))
+            pidfile = os.path.join(folder, "_minions", "inhibit.pid")
+            pids = []
+            try:
+                for _ in range(2):
+                    r = subprocess.run(["bash", os.path.join(folder, "start.sh")], env=env, capture_output=True,
+                                       text=True, timeout=30)
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    with open(pidfile) as f:
+                        pids.append(int(f.read()))
+                self.assertTrue(gone(pids[0]), "the next job's start ends an earlier hold")
+                post = next(x for x in M.dropin_text(folder).splitlines() if x.startswith("ExecStopPost="))
+                r = subprocess.run(shlex.split(post.split("=", 1)[1].lstrip("-")), capture_output=True, text=True,
+                                   timeout=30)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(gone(pids[1]), "the service's stop ends the hold")
+                self.assertFalse(os.path.exists(pidfile))
+                pids = []
+            finally:
+                for p in pids:
+                    try:
+                        os.kill(p, 15)
+                    except ProcessLookupError:
+                        pass
         # The lock ends by itself after GitHub's longest default job, if a runner dies before its hook runs.
         self.assertEqual(M.inhibitor_argv()[-2:], ["sleep", str(6 * 3600)])
 
@@ -1745,10 +1786,12 @@ class G4(unittest.TestCase):
 
     def test_G4_2_the_runner_runs_low_and_capped(self):
         gb = 1024 ** 3
-        # From the survey: half the processors (never less than one), memory high 50 % and max 60 %.
+        # From the survey: half the processors (never less than one), memory max 60 %, no high mark and no swap for
+        # jobs: a job that outgrows the max fails at once, by name, never crawls through swap (run26).
         lim = M.slice_limits({"cores": 8, "mem": 16 * gb})
         self.assertEqual((lim["cores"], lim["CPUQuota"]), (4, "400%"))
-        self.assertEqual((int(lim["MemoryHigh"]), int(lim["MemoryMax"])), (int(16 * gb * 0.5), int(16 * gb * 0.6)))
+        self.assertEqual((lim["MemoryHigh"], int(lim["MemoryMax"]), lim["MemorySwapMax"]),
+                         ("infinity", int(16 * gb * 0.6), "0"))
         self.assertEqual(M.slice_limits({"cores": 1, "mem": 8 * gb})["cores"], 1)
         self.assertEqual(M.slice_limits({"cores": 3, "mem": 8 * gb})["cores"], 1)
         # The person's own choice (G7.8) within bounds: never more processors than there are, never under one.
@@ -1759,7 +1802,7 @@ class G4(unittest.TestCase):
         for line in (f"Slice={M.SLICE}", "Nice=10", "CPUWeight=50"):
             self.assertIn(line + "\n", drop)
         sl = M.slice_text(lim)
-        for line in ("CPUQuota=400%", f"MemoryHigh={lim['MemoryHigh']}", f"MemoryMax={lim['MemoryMax']}"):
+        for line in ("CPUQuota=400%", "MemoryHigh=infinity", f"MemoryMax={lim['MemoryMax']}", "MemorySwapMax=0"):
             self.assertIn(line + "\n", sl)
         # setup installs both from the survey and reads them back from systemd.
         host, sha = setup_host()
@@ -1768,6 +1811,35 @@ class G4(unittest.TestCase):
         fed = {a[-1]: x for a, x in host.fed if a[:3] == ("sudo", "-n", "tee") or "tee" in a}
         self.assertTrue(any("CPUQuota=400%" in (x or "") for x in fed.values()), list(fed))
         self.assertTrue([a for a in host.ran if "show" in a and "CPUWeight" in a], "read back")
+        # R94: kept out of swap is read from the running slice, three answers; only "kept" is said or recorded so.
+        for swap_max, kind, said in (("0\n", "ok", "jobs are kept out of this computer's swap, read back"),
+                                     ("max\n", "warn", "this computer did not keep jobs out of swap: the running "
+                                                       "slice reads max for its swap cap, not 0"),
+                                     (None, "warn", "could not read whether jobs are kept out of swap")):
+            host, sha = setup_host()
+            fresh_look(host)
+            if swap_max is not None:
+                host.files[M.SWAP_MAX_FILE] = swap_max
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_OK, lines)
+            self.assertTrue(any(x.startswith(f"{kind} {said}") for x in lines), (swap_max, lines))
+            if kind == "warn":
+                self.assertFalse(any("kept out of this computer's swap" in x for x in lines), lines)
+                self.assertTrue(any("instead of failing by name. Next step:" in x for x in lines), lines)
+            rec = M.load_state(host)["runners"][REPO]["limits"]
+            self.assertEqual(rec.get("swap_kept"), True if kind == "ok" else None)
+        # doctor: kept at setup, then not held: a promise not kept, named, with the command that writes it again.
+        host, sha = setup_host()
+        fresh_look(host)
+        host.files[M.SWAP_MAX_FILE] = "0\n"
+        run_setup(setup_gh(sha), host)
+        lim = M.load_state(host)["runners"][REPO]["limits"]
+        host.runs[("systemctl", "show", "minions.slice")] = (0, f"CPUQuotaPerSecUSec={lim['cores']}s\nMemoryHigh=infinity\n"
+                                                                f"MemoryMax={lim['MemoryMax']}\nMemorySwapMax=0\n")
+        host.files[M.SWAP_MAX_FILE] = "max\n"
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(any("did not keep jobs out of swap" in x and "though setup read it kept" in x for x in lines),
+                        lines)
 
     def test_G11_1_a_laptop_is_named_and_its_limits_said_before_setup(self):
         page = load("look-recent-runs.jsonl")
@@ -2562,8 +2634,20 @@ class G5(unittest.TestCase):
         named = [x for x in lines if x.startswith("warn job 'check'")]
         self.assertEqual(named, ["warn job 'check' (run 555, started 22:40:00Z) was stopped by this computer's memory "
                                  "limit (4.0 GB), not by your code failing; GitHub shows it as failed. The one way to "
-                                 "change the limit: `setup --limits <processors>,<memory %>`. To run it again, once: "
+                                 f"change the limit: `setup {REPO} --limits <processors>,<memory %>`. To run it again, once: "
                                  f"`status {REPO} --rerun 9001`."])
+        # R93: the limit said is the one it was killed under; limits changed after that never rewrite it.
+        d = M.load_state(host)
+        d["runners"][REPO]["limits"]["MemoryMax"] = str(2 * 1024 ** 3)
+        M.save_state(host, d)
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any(x.startswith("warn job 'check'") and "memory limit (4.0 GB)" in x for x in lines), lines)
+        # A job named before the limit was kept: no number, rather than today's.
+        d = M.load_state(host)
+        d["named"]["9001"].pop("limit")
+        M.save_state(host, d)
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any(x.startswith("warn job 'check'") and "memory limit, not by your" in x for x in lines), lines)
         # No kill counted here: the person's own failure, never named.
         host, gh, _ = self._named(f"start {t0} 555 1 1 check\nend {t0 + 70} 555 1 1 check\n", failed)
         self.assertFalse(any(x.startswith("warn job") for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
@@ -3019,6 +3103,12 @@ class G8(unittest.TestCase):
         self.assertEqual(lines[-1], "ok every promise of the install read back as kept")
         changed = [a for a in admin_steps(host) if a[2] not in ("stat", "test", "cat", "-u")]
         self.assertEqual(changed, [], "doctor changes nothing it was not asked to finish")
+        # The swap cap is read back too: jobs given swap again (by hand, or by an older setup) is said, by name.
+        h2, sha2 = doctor_world()
+        show = h2.runs[("systemctl", "show", "minions.slice")][1]
+        h2.runs[("systemctl", "show", "minions.slice")] = (0, show.replace("MemorySwapMax=0", "MemorySwapMax=infinity"))
+        _, l2 = run_doctor(h2, sha2)
+        self.assertTrue(any("limits read MemorySwapMax='infinity'" in x for x in l2), l2)
         # A promise not kept: named with its way on; the last line counts them, exit 2; still nothing changed.
         host.runs[("sudo", "-n", "stat", "-c", "%a %U %n")] = (0, f"644 minions-runner {FOLDER}/.credentials\n"
                                                                     f"600 minions-runner {FOLDER}/.runner\n"
@@ -3198,6 +3288,84 @@ class P1a(unittest.TestCase):
         # They come after the reading, all together, so an agent says them before setup.
         first = min(i for i, x in enumerate(lines) if TELL.match(x))
         self.assertTrue(all(TELL.match(x) for x in lines[first:]), lines[first:])
+
+    def test_G7_11_setup_limits_changes_an_installed_runner_in_place(self):
+        # Seen on a stock VM (2026-11-23): the kill line named `setup --limits` the one way to change the limit, and
+        # on a runner set up here it stopped with "exists already", nothing changed.
+        host, sha = doctor_world()
+        def show(argv, _):
+            text = [i for a, i in host.fed if a[:3] == ("sudo", "-n", "tee") and a[3].endswith("minions.slice")][-1]
+            sl = dict(x.split("=", 1) for x in text.splitlines() if "=" in x)
+            cores = int(sl["CPUQuota"].rstrip("%")) // 100
+            return 0, (f"CPUQuotaPerSecUSec={cores}s\nMemoryHigh={sl['MemoryHigh']}\nMemoryMax={sl['MemoryMax']}\n"
+                       f"MemorySwapMax={sl.get('MemorySwapMax', 'infinity')}\n")
+        host.runs[("systemctl", "show", "minions.slice")] = show
+        def look_again():  # a fresh look, the runner's record kept
+            d = M.load_state(host)
+            d["looks"][REPO]["time"] = M.dt.datetime.now(M.dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            M.save_state(host, d)
+        look_again()
+        host.ran.clear()
+        out = io.StringIO()
+        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, limits=(2, 40))
+        lines = out.getvalue().splitlines()
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue(any(x.startswith(f"ok the limits of {REPO}'s runner are changed, read back from systemd: jobs "
+                                         "here get at most 2 of") and "40 % of its memory" in x for x in lines), lines)
+        lim = M.load_state(host)["runners"][REPO]["limits"]
+        self.assertEqual((lim["cores"], lim["pct"]), (2, 40))
+        # The slice only: no runner unpacked, registered, or restarted; no service stopped.
+        self.assertFalse([a for a in host.ran if any(w in " ".join(a) for w in ("config.sh", "svc.sh", "stop", "restart",
+                                                                                   "tar"))], host.ran)
+        # Read back, or said: systemd reading other numbers is a stop, never an ok.
+        host.runs[("systemctl", "show", "minions.slice")] = (0, "CPUQuotaPerSecUSec=4s\nMemoryMax=1\nMemoryHigh=1\n")
+        look_again()
+        out = io.StringIO()
+        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, limits=(2, 40))
+        self.assertEqual(code, M.EXIT_STOP, out.getvalue())
+        self.assertIn("the new limits are not in force", out.getvalue())
+
+    def test_G6_8_uninstall_all_ends_our_leftover_sleep_holds_and_names_anything_else(self):
+        # Seen on a stock VM (2026-11-23): a job's sleep hold outlived a service stopped mid-job; `uninstall --all`
+        # then stopped on "processes of minions-runner still run" with no way out, though the processes were ours.
+        def holds(world_pids, other=()):
+            gh, world, host = remove_setup()
+            alive = set(world_pids) | set(other)
+            def answer(argv, input=None):
+                if list(argv) == ["pgrep", "-u", "minions-runner"]:
+                    return (0, "".join(f"{p}\n" for p in sorted(alive, key=int))) if alive else (1, "")
+                if list(argv[:4]) == ["sudo", "-n", "kill", "-TERM"]:
+                    alive.difference_update(argv[4:])
+                    return 0, ""
+                return world.answer(argv, input)
+            host._answer = answer
+            who = "--who=Windstorm Repo Minions"
+            for pid, (argv, parent) in {"100": (["/usr/bin/systemd-inhibit", "--what=idle", who, "sleep", "21600"], "1"),
+                                        "101": (["sleep", "21600"], "100"),
+                                        "200": (["/usr/bin/systemd-inhibit", "--what=idle", "--who=someone else",
+                                                 "sleep", "9"], "1"),
+                                        "201": (["sleep", "9"], "200"), "300": (["python3", "x.py"], "1")}.items():
+                host.files[f"/proc/{pid}/cmdline"] = "\0".join(argv) + "\0"
+                host.files[f"/proc/{pid}/stat"] = f"{pid} ({os.path.basename(argv[0])[:15]}) S {parent} 1 1"
+                host.files[f"/proc/{pid}/comm"] = os.path.basename(argv[0])[:15] + "\n"
+            return gh, world, host, alive
+        gh, world, host, alive = holds(["100", "101"])
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        self.assertIn(("sudo", "-n", "kill", "-TERM", "100", "101"), host.ran)  # by exact PID, never by a pattern
+        self.assertFalse(any(a[:2] in (("pkill",), ("killall",)) or a[:1] in (("pkill",), ("killall",)) for a in host.ran))
+        self.assertTrue(any("sleep hold left behind" in x and "100, 101" in x for x in lines), lines)
+        self.assertFalse(world.user)
+        # Anything not made by our holds is never ended: it is named with its name, and the way out is said.
+        gh, world, host, alive = holds(["100", "101"], other=["200", "201", "300"])
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(("sudo", "-n", "kill", "-TERM", "100", "101"), host.ran)
+        self.assertEqual(alive, {"200", "201", "300"})
+        stop = next(x for x in lines if "still run" in x)
+        self.assertIn("200 (systemd-inhibit), 201 (sleep), 300 (python3)", stop)
+        self.assertIn("run the same command again", stop)
+        self.assertTrue(world.user)
 
     def test_G6_7_uninstall_says_the_put_back_checks_before_its_pull_request(self):
         gh, world, host = remove_setup()
@@ -3560,6 +3728,26 @@ class G8Limit(unittest.TestCase):
         self.assertIn("GitHub's API limit for this login is spent until 23:59Z", lines[-1])
         self.assertIn("Held, nothing stopped", lines[-1])
         self.assertLess(clock.t - M.parse_stamp("2026-11-22T23:00:00Z"), M.dt.timedelta(seconds=60))
+        # R90 (seen on a stock machine): one watch pass read every finished job in this computer's records again, each
+        # pass (16 calls with 13 records, against the 2 said). Now a finished job is read once; a pass after that reads
+        # the repository and its runners only, and the words say the true spend.
+        host, clock = g5_host()
+        d = M.load_state(host)
+        folder = d["runners"][REPO]["folder"]
+        recs = "".join(f"start {1795400000 + 60 * k} {4500 + k} 1 0 j\nend {1795400030 + 60 * k} {4500 + k} 1 0 j\n"
+                       for k in range(13))
+        host.files[M.records_dir_of(folder) + "/jobs.log"] = recs
+        gh = StatusGH()
+        gh.jobs = {4500 + k: [{"id": 9000 + k, "name": "j", "runner_name": "minions-box-1", "status": "completed",
+                               "conclusion": "success", "run_attempt": 1,
+                               "started_at": M.stamp(M.dt.datetime.fromtimestamp(1795400000 + 60 * k, M.dt.timezone.utc))}]
+                   for k in range(13)}
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.calls), 2 + 13)
+        gh.calls.clear()
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.calls), 2, gh.calls)
+        self.assertIn(f"and at most {M.WATCH_CALLS_PER_JOB} more for each job that ends here", M.limit_words(host.now()))
 
 
 class INV(unittest.TestCase):

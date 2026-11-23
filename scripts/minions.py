@@ -351,6 +351,7 @@ class GitHub:
 
 
 WATCH_CALLS_PER_HOUR = 24  # G8.14: one pass reads the repository and its runners (2 calls), every 5 minutes
+WATCH_CALLS_PER_JOB = 2  # R90: and each job that ends here is read once (its record, and its notes if it failed)
 
 
 def rate_limited_until(raw: str, status: int, data: object, now: dt.datetime) -> dt.datetime | None:
@@ -375,7 +376,7 @@ def rate_limited_until(raw: str, status: int, data: object, now: dt.datetime) ->
 def limit_words(until: dt.datetime) -> str:
     return (f"GitHub's API limit for this login is spent until {until.strftime('%H:%MZ')}, and it comes back by itself "
             "then. Every program logged in as this account shares that limit; this tool's watch uses about "
-            f"{WATCH_CALLS_PER_HOUR} calls an hour of it")
+            f"{WATCH_CALLS_PER_HOUR} calls an hour of it, and at most {WATCH_CALLS_PER_JOB} more for each job that ends here")
 
 
 def parse_include(raw: str) -> tuple[int, object]:
@@ -1479,14 +1480,15 @@ MEMORY_PCT_MOST = 90  # --limits never gives jobs more than this share: somethin
 
 def slice_limits(survey_: dict, chosen: tuple[int, int] | None = None) -> dict:
     """G2.9 / G4.2 / G4.8: what all our runners together may use. Interim fixed defaults (G4.2 is not built): half
-    the processors, never less than one (G4.8), memory high at 50 % and max at 60 %. `setup --limits` (G7.8)
-    chooses other shares."""
+    the processors, never less than one (G4.8), and memory max at 60 % with no high mark and no swap for jobs
+    (run26: a job held at a high mark with swap to fall into crawls; at the max alone with no swap it fails at once,
+    by name). `setup --limits` (G7.8) chooses other shares."""
     total = survey_.get("cores") or 2
     mem = survey_.get("mem") or 4 * 1024 ** 3
     cores, pct = chosen if chosen else (total // 2, DEFAULT_MEMORY_PCT)
     cores = max(1, min(cores, total))
     pct = max(10, min(pct, MEMORY_PCT_MOST))
-    return {"CPUQuota": f"{cores * 100}%", "MemoryHigh": str(int(mem * (pct - 10) / 100)),
+    return {"CPUQuota": f"{cores * 100}%", "MemoryHigh": "infinity", "MemorySwapMax": "0",
             "MemoryMax": str(int(mem * pct / 100)), "cores": cores, "total_cores": total, "pct": pct, "mem": mem}
 
 
@@ -1531,16 +1533,27 @@ def parse_limits(raw: str) -> tuple[int, int]:
     return int(m.group(1)), int(m.group(2))
 
 
-def dropin_text() -> str:
+def dropin_text(folder: str = "") -> str:
+    """G2.9; R88: when the kernel kills a job's process at our memory max, systemd's default (OOMPolicy=stop) stops
+    the whole runner service (seen: the runner offline 30 s, the job marked cancelled). The job's process is the one
+    that ends; the runner goes on. R89: a stop of the service mid-job skips the job-completed hook, so the stop
+    itself ends the idle-sleep hold the job-started hook took (seen: left running, it would hold for 6 hours)."""
+    stop_post = ""
+    if folder:
+        pidf = f"{folder}/_minions/inhibit.pid"
+        stop_post = ("ExecStopPost=-/bin/sh -c 'p=\"$(cat " + pidf + " 2>/dev/null)\"; case \"$p\" in \"\"|*[!0-9]*) ;; "
+                     "*) kill -TERM -- \"-$p\" 2>/dev/null || kill -TERM \"$p\" 2>/dev/null ;; esac; rm -f " + pidf + "'\n")
     return ("# Windstorm Repo Minions (G2.9): the runner's own unit has Restart=no and does not ask for the network.\n"
             "[Unit]\nWants=network-online.target\n\n"
-            f"[Service]\nSlice={SLICE}\nNice=10\nCPUWeight=50\nRestart=on-failure\nRestartSec=30\n")
+            f"[Service]\nSlice={SLICE}\nNice=10\nCPUWeight=50\nRestart=on-failure\nRestartSec=30\nOOMPolicy=continue\n"
+            + stop_post)
 
 
 def slice_text(limits: dict) -> str:
     return ("# Windstorm Repo Minions: every runner of ours on this computer, together (G2.9, G4.2, G12.1).\n"
             "[Unit]\nDescription=Windstorm Repo Minions runners\nBefore=slices.target\n\n"
-            f"[Slice]\nCPUQuota={limits['CPUQuota']}\nMemoryHigh={limits['MemoryHigh']}\nMemoryMax={limits['MemoryMax']}\n")
+            f"[Slice]\nCPUQuota={limits['CPUQuota']}\nMemoryHigh={limits['MemoryHigh']}\nMemoryMax={limits['MemoryMax']}\n"
+            f"MemorySwapMax={limits.get('MemorySwapMax', 'infinity')}\n")
 
 
 def sudo(host: Host, argv: list[str], input: str | None = None, timeout: int = 600) -> tuple[int, str]:
@@ -1804,6 +1817,65 @@ def lock_credentials(host: Host, folder: str, rep: Report) -> bool:
     return True
 
 
+SWAP_MAX_FILE = f"/sys/fs/cgroup/{SLICE}/memory.swap.max"
+
+
+def swap_cap_read(host: Host) -> tuple[str, str]:
+    """R94: whether this computer holds jobs out of swap, read from the running slice itself, never from what was
+    written: ("kept", line), ("not kept", line) or ("unread", line). Only "kept" is ever said or recorded as kept."""
+    v = host.read(SWAP_MAX_FILE)
+    after = ("A job that outgrows its cap here may run slowly through swap, with your disk, instead of failing by "
+             "name. Next step: none for jobs to run; `doctor` says this each time it reads it")
+    if v is None:
+        return "unread", (f"could not read whether jobs are kept out of swap: {SWAP_MAX_FILE} is not there (this "
+                          "computer does not count swap for each group of processes, or the slice is not running). "
+                          + after)
+    if v.strip() == "0":
+        return "kept", "jobs are kept out of this computer's swap, read back from the running slice"
+    return "not kept", (f"this computer did not keep jobs out of swap: the running slice reads {v.strip()} for its swap "
+                        "cap, not 0. " + after)
+
+
+def say_swap_cap(host: Host, rep: Report) -> bool:
+    kind, line = swap_cap_read(host)
+    (rep.ok if kind == "kept" else rep.warn)(line)
+    return kind == "kept"
+
+
+def change_limits(host: Host, repo: str, known: dict, lim: dict, rep: Report) -> int:
+    """R92 (G7.8): `setup <repo> --limits` on a runner already set up here rewrites the slice only, reads it back from
+    systemd and records it. Nothing else is touched: the runner, its registration and a job running now go on, and
+    a running job is held to the new limits from now on."""
+    path = f"/etc/systemd/system/{SLICE}"
+    journal(host, "write", f"{path} (new limits)")
+    rc, out = sudo(host, ["tee", path], input=slice_text(lim))
+    if rc != 0:
+        rep.stop(f"could not write {path}: {tail(out)}. The limits are as they were. Settle what it says, then run "
+                 "the same command again")
+        return rep.code()
+    sudo(host, systemctl("daemon-reload"))
+    rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh",
+                                 "-p", "MemorySwapMax"))
+    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    want = {"CPUQuotaPerSecUSec": f"{lim['cores']}s", "MemoryMax": str(lim["MemoryMax"]),
+            "MemoryHigh": str(lim["MemoryHigh"])}
+    if "MemorySwapMax" in lim:
+        want["MemorySwapMax"] = str(lim["MemorySwapMax"])
+    off = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
+    if off:
+        rep.stop(f"{SLICE} was written but systemd reads {', '.join(off)}: the new limits are not in force. Run the "
+                 "same command again; `doctor` says what differs")
+        return rep.code()
+    keep = ("cores", "pct", "CPUQuota", "MemoryHigh", "MemoryMax", "MemorySwapMax")
+    known["runners"][repo]["limits"] = {k: lim[k] for k in keep if k in lim}
+    if say_swap_cap(host, rep):
+        known["runners"][repo]["limits"]["swap_kept"] = True
+    save_state(host, known)
+    rep.ok(f"the limits of {repo}'s runner are changed, read back from systemd: {limits_in_words(lim).split(';')[0]}. "
+           "Nothing else was touched; a job running now goes on, held to these limits from now on")
+    return rep.code()
+
+
 def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits: dict | None = None) -> str | None:
     """G2.9: the runner's own unit, then our drop-in and slice, read back."""
     journal(host, "svc.sh install", folder)
@@ -1819,7 +1891,7 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits:
     limits = limits or slice_limits(survey_)
     journal(host, "write", f"/etc/systemd/system/{SLICE} and {unit}.d/{DROPIN}")
     for path, text in ((f"/etc/systemd/system/{SLICE}", slice_text(limits)),
-                       (f"/etc/systemd/system/{unit}.d/{DROPIN}", dropin_text())):
+                       (f"/etc/systemd/system/{unit}.d/{DROPIN}", dropin_text(folder))):
         sudo(host, ["install", "-d", "-m", "0755", os.path.dirname(path)])
         rc, out = sudo(host, ["tee", path], input=text)
         if rc != 0:
@@ -1832,10 +1904,10 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits:
             rep.stop(f"`{' '.join(argv)}` failed: {tail(out)}")
             return None
     rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
-                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User"))
+                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User", "-p", "OOMPolicy"))
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
-            "User": RUNNER_USER}
+            "User": RUNNER_USER, "OOMPolicy": "continue"}
     bad = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
     if "network-online.target" not in got.get("Wants", ""):
         bad.append("Wants has no network-online.target")
@@ -1947,6 +2019,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
                "then setup starts fresh")
         if not remove_one(gh, host, repo, known, rep, DRAIN_WAIT_S, 10, f"setup {repo}"):
             return rep.code()
+    if left.get("unit") and limits is not None:  # R92: an installed runner's limits change in place
+        return change_limits(host, repo, known, lim, rep)
     if not ensure_runner_user(host, rep):
         return rep.code()
     owner, name_ = repo.split("/", 1)
@@ -1973,11 +2047,13 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     unit = install_service(host, folder, survey_, rep, lim)
     if unit is None:
         return rep.code()
+    swap_kept = say_swap_cap(host, rep)  # R94: read from the running slice; only "kept" is recorded as kept
     data = load_state(host)
     data.setdefault("runners", {})[repo] = {"name": runner_name, "folder": folder, "unit": unit, "labels": labels,
                                             "version": version, "hooks": hook_dir(repo),
                                             "limits": {k: lim[k] for k in ("cores", "pct", "CPUQuota", "MemoryHigh",
-                                                                           "MemoryMax")},
+                                                                           "MemoryMax", "MemorySwapMax")}
+                                                      | ({"swap_kept": True} if swap_kept else {}),
                                             "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
     (data.get("setting_up") or {}).pop(repo, None)
     if "setting_up" in data and not data["setting_up"]:
@@ -2118,6 +2194,12 @@ fi
 if ! seen_ok; then
 {record_line("refused-stale", recs)}  echo "::error::Windstorm Repo Minions refused this job before any of its steps: the watch on that computer has not read the repository private in the last {fresh_s // 60} minutes, so it may not be private now. On that computer, \\`status\\` says why and what to do."
   exit 1
+fi
+# R89: a hold left by an earlier job whose end hook never ran (its service stopped mid-job) ends here first.
+if [ -f "$STATE/inhibit.pid" ]; then
+  old="$(cat "$STATE/inhibit.pid")"
+  case "$old" in ''|*[!0-9]*) ;; *) kill -TERM -- "-$old" 2>/dev/null || kill -TERM "$old" 2>/dev/null ;; esac
+  rm -f "$STATE/inhibit.pid"
 fi
 if command -v systemd-inhibit >/dev/null 2>&1; then
   env -u RUNNER_TRACKING_ID setsid {sh_quote(inhibitor_argv())} </dev/null >/dev/null 2>&1 &
@@ -2890,6 +2972,9 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
     here = computer_record(host, mine["unit"])
     now = int(host.now().timestamp())
     named = {}
+    keys = {f"{j['start']['run']}/{j['start']['attempt']}/{j['start']['t']}" for j in recs}
+    settled = {k: v for k, v in ((mine.get("settled_jobs") or {}).items()) if k in keys}
+    fresh_settled = len(settled) != len(mine.get("settled_jobs") or {})
     for i, j in enumerate(recs):
         nxt = recs[i + 1]["start"] if i + 1 < len(recs) else None
         until = nxt["t"] if nxt else now
@@ -2899,13 +2984,26 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
             oom_after = nxt["oom"] if nxt else here.get("oom")
         if j["end"] is None and nxt is None and runner_pids(host, mine["folder"], "Runner.Worker"):
             continue  # still running
-        g = github_job(gh, repo, j["start"], mine["name"])
-        if g is None or g.get("conclusion") != "failure":
-            continue
-        s, notes = gh.api("GET", f"repos/{repo}/check-runs/{g['id']}/annotations")
-        msgs = [n.get("message") or "" for n in (notes if s == 200 and isinstance(notes, list) else [])]
-        verdict = judge_cut(g, msgs, j["start"], j["end"], until, here, oom_after)
-        kept = (data.get("named") or {}).get(str(g["id"]))
+        key = f"{j['start']['run']}/{j['start']['attempt']}/{j['start']['t']}"
+        done_ = settled.get(key)
+        if done_ is not None:  # R90: a finished job is read from GitHub once, then judged from what was kept
+            if not done_.get("verdict"):
+                continue
+            g, verdict, kept = {"id": done_["id"], "name": done_.get("name")}, tuple(done_["verdict"]), True
+        else:
+            g = github_job(gh, repo, j["start"], mine["name"])
+            if g is None or g.get("status") not in (None, "completed") or g.get("conclusion") is None:
+                continue  # not on GitHub yet, or not finished there: read again next time
+            verdict = None
+            if g.get("conclusion") == "failure":
+                s, notes = gh.api("GET", f"repos/{repo}/check-runs/{g['id']}/annotations")
+                msgs = [n.get("message") or "" for n in (notes if s == 200 and isinstance(notes, list) else [])]
+                verdict = judge_cut(g, msgs, j["start"], j["end"], until, here, oom_after)
+            kept = (data.get("named") or {}).get(str(g["id"]))
+            if verdict is None and kept:
+                verdict = (kept["kind"], kept["why"])  # named once, while this computer still had its record
+            settled[key] = {"id": g["id"], "name": g.get("name"), "verdict": list(verdict) if verdict else None}
+            fresh_settled = True
         if verdict is None and kept:
             verdict = (kept["kind"], kept["why"])  # named once, while this computer still had its record
         if verdict is None:
@@ -2913,6 +3011,8 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
         if not kept:
             data.setdefault("named", {})[str(g["id"])] = {"kind": verdict[0], "why": verdict[1], "run": j["start"]["run"],
                                                          "time": stamp(host.now())}
+            if verdict[0] == "killed":  # R93: the limit it was killed under, kept; a later change never rewrites it
+                data["named"][str(g["id"])]["limit"] = (mine.get("limits") or {}).get("MemoryMax")
             save_state(host, data)
             journal(host, "named", f"{repo} job {g['id']}: {verdict[0]} by {verdict[1]}")
         named[int(g["id"])] = g
@@ -2925,17 +3025,38 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
                                   f"its first step by this computer's guard: {verdict[1]}. No step of it ran here; "
                                   f"GitHub shows it as failed, not a failing test of yours.{again}"))
         elif verdict[0] == "killed":
-            lim = (mine.get("limits") or {}).get("MemoryMax")
+            lim = ((data.get("named") or {}).get(str(g["id"])) or {}).get("limit")  # R93: as named, or no number
             lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was stopped by "
                                   f"this computer's memory limit{' (' + gb(int(lim)) + ')' if lim else ''}, not by your "
                                   "code failing; GitHub shows it as failed. The one way to change the limit: "
-                                  f"`setup --limits <processors>,<memory %>`.{again}"))
+                                  f"`setup {repo} --limits <processors>,<memory %>`.{again}"))
         else:
             lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was cut by "
                                   f"{verdict[1]}, not a failing test of yours; GitHub shows it as failed.{again}"))
+    if fresh_settled:
+        fresh = load_state(host)  # never write back an older copy of what other steps saved meanwhile
+        if repo in (fresh.get("runners") or {}):
+            fresh["runners"][repo]["settled_jobs"] = settled
+            save_state(host, fresh)
+        mine["settled_jobs"] = settled
     if rerun is not None:
         lines.append(rerun_once(gh, host, repo, rerun, named, data))
     return lines
+
+
+def our_leftover_holds(host: Host, pids: list[str]) -> list[str]:
+    """R91: which of the runner user's processes are a job's sleep hold of ours: `systemd-inhibit` with our name, or
+    the `sleep` it runs. Read from /proc (argv and parent), never by a pattern over every process."""
+    def argv(pid: str) -> list[str]:
+        return [x for x in (host.read(f"/proc/{pid}/cmdline") or "").split("\0") if x]
+    def ppid(pid: str) -> str:
+        st = host.read(f"/proc/{pid}/stat") or ""
+        rest = st.rsplit(")", 1)[-1].split()
+        return rest[1] if len(rest) > 1 else ""
+    inhibitors = {p for p in pids if (a := argv(p)) and os.path.basename(a[0]) == "systemd-inhibit"
+                  and "--who=Windstorm Repo Minions" in a}
+    sleeps = {p for p in pids if argv(p)[:1] == ["sleep"] and ppid(p) in inhibitors}
+    return sorted(inhibitors | sleeps, key=int)
 
 
 def rerun_once(gh: GitHub, host: Host, repo: str, job_id: int, named: dict, data: dict) -> tuple[str, str]:
@@ -4044,10 +4165,10 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
         rep.ok(f"{repo}: the credential files are 600, owned by {RUNNER_USER}")
     # G2.9, G4.2: the boot service as written, in our slice, and the slice's limits.
     rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
-                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User"))
+                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User", "-p", "OOMPolicy"))
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
-            "User": RUNNER_USER}
+            "User": RUNNER_USER, "OOMPolicy": "continue"}
     off = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
     if "network-online.target" not in got.get("Wants", ""):
         off.append("Wants has no network-online.target")
@@ -4057,11 +4178,21 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     else:
         rep.ok(f"{repo}: the boot service is enabled, in {SLICE}, nice 10, restarts on failure, after the network")
     lim = mine.get("limits") or {}
-    rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh"))
+    rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh",
+                                 "-p", "MemorySwapMax"))
     sl = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     want_l = {"CPUQuotaPerSecUSec": f"{lim.get('cores')}s", "MemoryHigh": str(lim.get("MemoryHigh")),
               "MemoryMax": str(lim.get("MemoryMax"))}
+    if "MemorySwapMax" in lim:  # set up before 0.1.0's no-swap default: not recorded, so not compared
+        want_l["MemorySwapMax"] = str(lim["MemorySwapMax"])
     off = [f"{k}={sl.get(k)!r}" for k, v in want_l.items() if sl.get(k) != v]
+    if lim.get("swap_kept"):  # R94: kept at setup, so a change since is a promise not kept
+        kind, line = swap_cap_read(host)
+        if kind != "kept":
+            bad("limits", f"{line.split('. ')[0]}, though setup read it kept: `setup {repo} --limits "
+                          f"{lim.get('cores')},{lim.get('pct')}` writes it again")
+    elif lim and "MemorySwapMax" in lim:
+        rep.warn(f"{repo}: {swap_cap_read(host)[1]}")
     if not lim:
         rep.warn(f"{repo}: the limits set up here: not recorded, so not compared")
     elif off:
@@ -4215,8 +4346,20 @@ def remove_shared(host: Host, rep: Report) -> bool:
         rep.ok(f"the tool's copy, the job hooks and the jobs' records are deleted ({HOOKS_ROOT}, {RECORDS_ROOT})")
     if host.run(["id", RUNNER_USER])[0] == 0:
         left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+        ours = our_leftover_holds(host, left)
+        if ours:  # R91: a job's sleep hold left behind (a service stopped mid-job): ours, so ended here, by exact PID
+            journal(host, "end", f"leftover sleep holds of ours: {', '.join(ours)}")
+            sudo(host, ["kill", "-TERM", *ours])
+            for _ in range(25):
+                left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+                if not set(ours) & set(left):
+                    break
+                host.sleep(0.2)
+            rep.ok(f"a job's sleep hold left behind by a stopped service ({', '.join(ours)}) is ended")
         if left:
-            rep.stop(f"processes of {RUNNER_USER} still run ({', '.join(left)}): the user is not deleted")
+            what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
+            rep.stop(f"processes of {RUNNER_USER} still run, not made by this tool's sleep holds: {what}. The user is "
+                     f"not deleted. End them (`sudo kill <pid>`), then run the same command again: it finishes from here")
             return False
         journal(host, "userdel", RUNNER_USER)
         sudo(host, ["userdel", "-r", RUNNER_USER])
