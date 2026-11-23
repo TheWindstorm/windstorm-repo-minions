@@ -27,6 +27,8 @@ the cap (row R94).
 - After `uninstall --all` the census names the folder the skill was downloaded into: still there and yours to keep
   or delete, or gone (G6.13, row R117). The skill says an agent never deletes, or offers to delete, what uninstall
   kept (G8.18, row R115), and never looks into your keys or saved logins (G8.17, row R110).
+- `status` names a job stopped at the memory cap, cut, or refused by its workflow file and its own name as well
+  as the run; when it cannot read the workflow, it says so (G5.18, row R118).
 - Each line for you is said where it matters: before setup, before the merge, when status names a job the memory
   cap stopped (G7.14, row R111). The cost line points to GitHub's own page and claims nothing (G7.13, row R109).
 - Every system command the tool prints for you is one that was run exactly as printed on that kind of system; the
