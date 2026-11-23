@@ -5,6 +5,7 @@ tests/fixtures/scrub.py); the computer by FakeHost. Run: python tests/test_minio
 """
 import atexit
 import copy
+import importlib.util
 import hashlib
 import io
 import json
@@ -130,7 +131,11 @@ class FakeHost(M.Host):
 
     def run(self, argv, timeout=20):
         self.ran.append(tuple(argv))
-        return self._answer(argv)
+        rc, out = self._answer(argv)
+        if rc == 0 and argv[:3] == ["sudo", "-n", "install"] and argv[-1] == M.TOOL_COPY:  # G4.10: the copy is there
+            with open(argv[-2], encoding="utf-8") as f:
+                self.files[M.TOOL_COPY] = f.read()
+        return rc, out
 
     def read(self, path):
         return self.files.get(path)
@@ -160,6 +165,28 @@ class FakeHost(M.Host):
 
     def home(self):
         return "/home/person"
+
+    # G6.10: the person's record, kept in the stand-in's files, never in a real home.
+    def keep_in_record(self, name, text, append=True):
+        if getattr(self, "record_unwritable", False):
+            raise OSError(28, "No space left on device")
+        path = f"{self.record_dir()}/{name}"
+        self.files[path] = (self.files.get(path, "") if append else "") + text
+
+    def record_count(self):
+        mine = [v for k, v in self.files.items() if k.startswith(self.record_dir() + "/")]
+        return len(mine), sum(len(v.splitlines()) for v in mine)
+
+    def delete_record(self):
+        for k in [k for k in self.files if k.startswith(self.record_dir() + "/")]:
+            del self.files[k]
+
+    def ask(self, prompt):
+        self.asked = prompt
+        return getattr(self, "answer", "")
+
+    def listdir_or_none(self, path):
+        return self.dirs.get(path, [])
 
     def user(self):
         return "person"
@@ -752,13 +779,37 @@ def run_doctor(host, sha, **kw):
 
 
 class G2(unittest.TestCase):
-    def test_G7_6_version_0_1_says_one_repository_and_more_next(self):
+    def test_G4_10_doctor_and_status_name_an_older_copy_running_the_watch(self):
+        # Found 2026-11-23 (row R101): after the plugin updates, the watch runs the copy setup installed until setup
+        # runs again; nothing said so.
+        host, sha = doctor_world()
+        self.assertIn(f'VERSION = "{M.VERSION}"', host.files[M.TOOL_COPY])  # setup put this version's copy there
+        status = lambda: run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))[1]
+        code, lines = run_doctor(host, sha)
+        self.assertIn(f"ok the watch runs this version of the tool ({M.VERSION})", lines)
+        self.assertTrue(lines[-1].startswith("ok every promise"), lines)
+        self.assertIn(f"ok the watch runs this version of the tool ({M.VERSION})", status())
+        # The plugin updated, the copy did not: doctor names it as a promise not kept, status says it.
+        with mock.patch.object(M, "VERSION", "99.0.0"):
+            code, lines = run_doctor(host, sha)
+            line = next(x for x in lines if "the watch runs version" in x)
+            self.assertTrue(line.startswith("warn ") and "the watch runs the older code" in line, line)
+            self.assertIn("`setup <owner/repo>` again puts this version's copy in place", line)
+            self.assertTrue(lines[-1].startswith("stop ") and "the watch's copy of the tool" in lines[-1], lines[-1])
+            self.assertTrue(any("the watch runs the older code" in x for x in status()))
+        # Not read is a third answer, never "the same" (rule 6), and not a broken promise.
+        del host.files[M.TOOL_COPY]
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(any(x.startswith("warn the version of the copy the watch runs") and "could not be read" in x
+                            for x in lines), lines)
+        self.assertFalse(any("the watch runs this version" in x for x in lines))
+
+    def test_G7_6_version_0_1_says_and_holds_one_repository_per_computer(self):
         host, sha = setup_host()
         fresh_look(host)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_OK, lines)
-        self.assertIn(f"ok this version serves one repository per computer: here, {REPO}; more come in the next "
-                      "version", lines)
+        self.assertIn(f"ok this version serves one repository per computer: here, {REPO}", lines)
         # A second repository: stopped before anything is touched, the one served named, and the way on.
         host, sha = setup_host()
         fresh_look(host)
@@ -770,10 +821,11 @@ class G2(unittest.TestCase):
         self.assertTrue(lines[-1].startswith("stop this computer already serves example-org/other-repo"), lines)
         self.assertIn("nothing was changed", lines[-1])
         self.assertIn(f"run `uninstall example-org/other-repo` first, then `setup {REPO}` again", lines[-1])
-        self.assertIn("more repositories per computer come in the next version", lines[-1])
+        self.assertNotIn("next version", lines[-1])  # G7.12: a line the person must hear promises no later version
         self.assertEqual(admin_steps(host), [], "nothing is touched for a second repository")
         skill = open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")).read()
-        self.assertIn("This version serves one repository per computer; more come in the next version.", skill)
+        self.assertIn("This version serves one repository per computer.", skill)
+        self.assertNotIn("next version", skill)
 
     def test_G2_1_setup_needs_a_fresh_clean_look(self):
         host, sha = setup_host()
@@ -2837,6 +2889,9 @@ def remove_setup(own_removal_works=True, interrupt_on=None, busy=(False,), moved
     world = World(gh, own_removal_works, interrupt_on)
     host = linux_host()
     host._answer = world.answer
+    # A folder lists what the world holds under it (G6.10: the records left after a copy that failed).
+    host.listdir_or_none = lambda path: (sorted({p[len(path) + 1:].split("/")[0] for p in world.paths
+                                                 if p.startswith(path.rstrip("/") + "/")}) if path in world.paths else [])
     Clock(host)
     data = {"runners": {REPO: {"name": OURS, "folder": FOLDER, "unit": UNIT, "labels": ["minions", "minions-medium"]}}}
     if moved:
@@ -2854,6 +2909,96 @@ def run_uninstall(gh, host, repo=REPO, **kw):
 
 
 class G6(unittest.TestCase):
+    def test_G6_10_uninstall_keeps_the_persons_record_in_one_folder_they_own(self):
+        # Rule 8 and INV6 (plan 3.0, row R99): the record of what the tool did is the person's. It is moved into one
+        # plain-text folder they own, named last by the census, and deleted only on a flag typed at a terminal.
+        jobs = M.records_dir_of(FOLDER) + "/jobs.log"
+        lines_ = "start 1795440000 4521 1 0 build\nend 1795440090 4521 1 0 build\n"
+        def world_with_jobs():
+            gh, world, host = remove_setup()
+            world.paths.add(jobs)
+            host.files[jobs] = lines_
+            return gh, world, host
+        gh, world, host = world_with_jobs()
+        code, out = run_uninstall(gh, host, repo=None, everything=True)
+        rec = host.record_dir()
+        self.assertEqual(rec, "/home/person/repo-minions-record")
+        self.assertEqual(host.files[f"{rec}/jobs-{os.path.basename(FOLDER)}.log"], lines_)
+        self.assertIn(" delete ", host.files[f"{rec}/journal.log"])  # the journal, to its last step
+        self.assertIn("Nothing secret is in here", host.files[f"{rec}/README.txt"])
+        self.assertFalse(any(RM_TOKEN in v for k, v in host.files.items() if k.startswith(rec)))  # INV2
+        self.assertNotIn(M.RECORDS_ROOT, world.paths)  # moved, then deleted: nothing of the tool left installed
+        self.assertFalse(os.path.isdir(host.state_dir()))
+        n = host.record_count()
+        self.assertEqual(out[-1], f"ok census: your record of what this tool did: {rec}, {n[1]} lines in 3 files, "
+                                  "kept: it is yours. Delete it whenever you like, or run `uninstall --all "
+                                  "--delete-record` in your own terminal")
+        # Run twice, it is safe, and the record is still there.
+        M.main(["uninstall", "--all"], host=host, out=io.StringIO(), gh=gh)
+        self.assertEqual(host.files[f"{rec}/jobs-{os.path.basename(FOLDER)}.log"], lines_)
+        # The record cannot be written: the jobs' records and the journal stay where they are, never deleted on a
+        # failed copy (rule 6), and the person still leaves: everything else is taken.
+        gh, world, host = world_with_jobs()
+        host.record_unwritable = True
+        code, out = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertNotEqual(code, M.EXIT_STOP, out)
+        self.assertIn(M.records_dir_of(FOLDER), world.paths)
+        self.assertNotIn(M.HOOKS_ROOT, world.paths)
+        self.assertFalse(world.user)
+        self.assertTrue(any(x.startswith("warn the jobs' records in") and "kept where they are" in x for x in out))
+        self.assertTrue(os.path.isfile(os.path.join(host.state_dir(), "journal.log")))
+        self.assertIn("census:", out[-1])
+        # Deleting it is a separate choice typed at a terminal: an agent with no terminal is told it is the person's.
+        gh, world, host = world_with_jobs()
+        o = io.StringIO()
+        M.uninstall(None, everything=True, host=host, gh=gh, out=o, interactive=False, delete_record=True)
+        self.assertNotEqual(host.record_count(), (0, 0))
+        self.assertTrue(any(x.startswith("need you: deleting your record") and "your own terminal" in x
+                            for x in o.getvalue().splitlines()))
+        self.assertTrue(o.getvalue().splitlines()[-1].startswith("ok census: your record"))
+        for typed, kept in (("", True), ("yes", True), ("delete", False)):
+            gh, world, host = world_with_jobs()
+            host.tty, host.answer = True, typed
+            o = io.StringIO()
+            M.uninstall(None, everything=True, host=host, gh=gh, out=o, interactive=False, delete_record=True)
+            self.assertIn("Type delete", host.asked)
+            self.assertEqual(host.record_count() != (0, 0), kept, typed)
+            self.assertIn("census:", o.getvalue().splitlines()[-1])
+
+    def test_G6_11_the_tools_own_copy_alone_runs_uninstall_all_to_the_end(self):
+        # Rule 8 (2026-11-23): a person may leave by Claude Code's own `plugin uninstall`, which leaves our runner
+        # and watch running by design. The one command that takes them off runs from the copy setup installed,
+        # with the plugin's folder gone: a lone file, standard library only.
+        src = os.path.join(ROOT, "scripts", "minions.py")
+        with tempfile.TemporaryDirectory(dir=TMP) as alone:
+            copy = os.path.join(alone, "minions.py")
+            shutil.copy(src, copy)
+            for argv in (["--help"], ["uninstall", "--help"]):
+                p = subprocess.run([sys.executable, "-I", copy, *argv], cwd=alone, capture_output=True, text=True,
+                                   timeout=60)
+                self.assertEqual(p.returncode, 0, p.stderr)
+            spec = importlib.util.spec_from_file_location("minions_copy", copy)
+            M2 = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(M2)
+            self.assertEqual(M2.TOOL_COPY, "/usr/local/lib/windstorm-repo-minions/minions.py")
+            gh, world, host = remove_setup()
+            out = io.StringIO()
+            code = M2.uninstall(None, everything=True, host=host, gh=gh, out=out, interactive=False)
+            lines = out.getvalue().splitlines()
+            self.assertEqual(code, M.EXIT_NEED, lines)  # to the end: only the put-back pull request is the person's
+            self.assertTrue(lines[-1].startswith("ok census:"), lines[-3:])
+            self.assertIsNone(gh.runner)
+        with open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md"), encoding="utf-8") as f:
+            skill = " ".join(f.read().split())
+        self.assertIn("plugin uninstall", skill)
+        self.assertIn(f"`python3 -I {M.TOOL_COPY} uninstall --all`", skill)
+        # The release branch's README says it too (main's says nothing can be installed yet).
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f:
+            readme = " ".join(f.read().split())
+        if "nothing can be installed yet" not in readme:
+            self.assertIn("plugin uninstall", readme)
+            self.assertIn(f"python3 -I {M.TOOL_COPY} uninstall --all", readme)
+
     def test_G6_1_uninstall_takes_a_runner_away_on_both_sides(self):
         gh, world, host = remove_setup(busy=(True, True, True, False))
         code, lines = run_uninstall(gh, host, wait_s=600, poll_s=10)
@@ -3008,8 +3153,12 @@ class G6(unittest.TestCase):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host, everything=True)
         census = [x for x in lines if "census:" in x]
-        self.assertEqual(len(census), 5, census)
-        self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census), census)
+        self.assertEqual(len(census), 7, census)
+        self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census[:-1]), census)
+        # Rule 8: the census is the last thing printed; it names this tool's state folder, and last the person's
+        # record, kept (G6.10).
+        self.assertIn("ok census: this tool's state folder: none", census)
+        self.assertTrue(lines[-1].startswith("ok census: your record of what this tool did:"), lines[-3:])
         # Something left is named as a `warn`, never "none".
         gh, world, host = remove_setup()
         gh.runner = dict(gh.runner, name="someone-elses-runner")
@@ -3324,6 +3473,21 @@ class P1a(unittest.TestCase):
         # They come after the reading, all together, so an agent says them before setup.
         first = min(i for i, x in enumerate(lines) if TELL.match(x))
         self.assertTrue(all(TELL.match(x) for x in lines[first:]), lines[first:])
+
+    def test_G7_12_the_tell_block_carries_only_what_the_person_must_hear_within_a_bound(self):
+        # Seen 2026-11-23 (row R104): the smallest model kept all nine lines in meaning but reworded seven and lost
+        # three clauses, each only good to know. What is only good to know lives in the README; the block is bound.
+        for host in (linux_host(), linux_host(files={"/sys/class/power_supply/BAT0/type": "Battery\n"},
+                                              dirs={"/sys/class/power_supply": ["BAT0"]})):
+            tells = tells_of(look(StandIn(load("look-recent-runs.jsonl")), host)[1])
+            self.assertLessEqual(len(tells), 10, tells)
+            rest = [x for x in tells if not x.startswith("GitHub's billing page, read ")]  # G7.1 holds its words
+            self.assertEqual(len(rest), len(tells) - 1, "the cost sentence is one line of the block")
+            self.assertLessEqual(max(len(x) for x in rest), 420, rest)
+            self.assertLessEqual(sum(len(x) for x in rest), 1700, rest)
+            said = " ".join(tells)
+            for never in ("next version", "(seen)", "GitHub's own computers come with"):
+                self.assertNotIn(never, said)
 
     def test_G7_11_setup_limits_changes_an_installed_runner_in_place(self):
         # Seen on a stock VM (2026-11-23): the kill line named `setup --limits` the one way to change the limit, and

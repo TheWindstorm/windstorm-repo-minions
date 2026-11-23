@@ -121,15 +121,15 @@ before setup. These are what they carry; if one is missing, say it in these word
   and let the person decide.
 - **A job too big for the cap.** "A job that needs more memory than that fails when it reaches the cap, and
   `status` names it, instead of running slowly."
-- **A job's tools.** "A job here has only the tools installed on this computer. GitHub's own computers come with
-  many tools already installed, so a job that stops with "command not found" needs that tool installed here."
+- **A job's tools.** "A job here has only the tools installed on this computer: a job that stops with "command not
+  found" needs that tool installed here."
 
 - **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
   low battery still puts it to sleep, about N seconds later." Give the delay look's numbered block names for this
   computer, not a number of your own. "A job cut that way is named as cut, not as your test failing." The tool takes two locks during a job: one that holds only the computer's own idle sleep, and one
   that puts off a requested sleep by the short delay the system allows. It never holds the lid switch, the power
   or sleep keys, a shutdown, or a sleep someone asks for.
-- **One repository.** "This version serves one repository per computer; more come in the next version."
+- **One repository.** "This version serves one repository per computer."
 - **Storage.** "Artifact and cache storage count the same whichever computer ran the job."
 
 ## Cost
@@ -161,4 +161,5 @@ that something costs nothing, or that the person spends less: the tool did not r
 | "My test failed on my computer" | `status`; it names a job cut by a restart or stopped by this computer's memory limit; otherwise it is the job's own result |
 | "I need my computer now" | `drain`, wait for its `ok` |
 | "Something is wrong with it", or a command was cut part-way | `doctor <owner/repo>`, in the person's own terminal: it reads back every promise of the install, names each one not kept with its next step, and finishes or undoes a step that was cut |
-| "Take it off" | `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this skill on the computer and opens a pull request that puts moved jobs back (theirs to merge); pass on its `tell the person` line about that pull request's own checks |
+| "I removed it with Claude Code's own `plugin uninstall`" | That takes the skill out of Claude Code only. The runner, its service, the watch, the limits and the runner user stay and go on taking the repository's jobs: they do the person's jobs, not Claude Code's. The one command that takes them off runs from the copy setup installed: `python3 -I /usr/local/lib/windstorm-repo-minions/minions.py uninstall --all`, in the person's own terminal |
+| "Take it off" | `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this tool installed or running, keeps the person's record of what it did in one folder they own (the census names it last; say where), and opens a pull request that puts moved jobs back (theirs to merge). Deleting that record is the person's own choice, typed at their terminal (`uninstall --all --delete-record`): never yours; pass on its `tell the person` line about that pull request's own checks |
