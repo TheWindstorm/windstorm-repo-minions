@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Tests: a new recorded fixture, `tests/fixtures/runner-life.jsonl`, holds GitHub's real answers for one runner's
+  life (registered, idle, busy, held, resumed, removed; tokens removed, scrubbed). The test stand-in answers every
+  recorded call exactly as recorded, and the hand-made runner answers carry only what a recorded one carries (G9.3).
 - New command `doctor [OWNER/NAME]` (G8.4, INV8): it reads back every promise of the install on this computer as
   it is now (the runner's user, its folder and credential files, the boot service, the limits, the job hooks, the
   disk floor, the runner's version, one copy only, both sides with our labels, the watch), one line each, and
