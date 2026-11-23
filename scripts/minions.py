@@ -1845,6 +1845,11 @@ case "$ws" in
   "$FOLDER/_work/"?*) find "$ws" -mindepth 1 -delete 2>/dev/null; echo "minions: this job's work folder was emptied" ;;
 esac
 [ -d "$FOLDER/_work/_temp" ] && find "$FOLDER/_work/_temp" -mindepth 1 -delete 2>/dev/null
+# The actions a job fetched: downloaded before any hook runs, even for a job the start hook refuses (seen).
+acts="$FOLDER/_work/_actions"
+if [ -d "$acts" ] && [ -n "$(find "$acts" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+  find "$acts" -mindepth 1 -delete 2>/dev/null; echo "minions: the actions this job fetched were deleted"
+fi
 avail="$(df --output=avail -B1 "$FOLDER" 2>/dev/null | tail -n 1 | tr -d ' ')"
 case "$avail" in
   ''|*[!0-9]*) ;;
