@@ -834,6 +834,48 @@
    "issue": 95,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R60",
+   "seen": "2026-11-23, a stock Ubuntu 24.04 machine: the job hooks are named in the runner's own settings file (`.env` in its folder), which the runner's user can write, so a job that was allowed to run could change them for later jobs.",
+   "promise": "The job hooks are named where only an administrator can change them (a root step in the service's drop-in restores them at every start), and `doctor` reads back that the settings file still names both; the cure for a job that changes the runner's own programs is a fresh runner per job, later.",
+   "codon": "G5.15",
+   "owner": "maintainer",
+   "first_ship_in": "0.2.0",
+   "ship_in": "0.2.0",
+   "test": "",
+   "proven": "",
+   "issue": 97,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R61",
+   "seen": "2026-11-22: G5.4's test passed on a stand-in computer that said yes to `sudo -n` inside the watch, while a real watch, a system timer run as the person, has no sudo ticket.",
+   "promise": "A stand-in for this computer grants nothing a real machine refuses: in the watch's tests `sudo -n` fails.",
+   "codon": "G9.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 98,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R62",
+   "seen": "2026-11-22: G5.4 (a repository no longer private) had been held by its unit test only, on a stand-in that granted sudo.",
+   "promise": "G5.4 is seen on a real machine before the tag: every action real (labels through GitHub on the private proof repository, the watch's record, the hook refusing a real job, what the system answers), the one read steered and said; and the tool's real read of a public repository that has no runner.",
+   "codon": "G5.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "",
+   "proven": "",
+   "issue": 99,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
