@@ -2230,6 +2230,11 @@ def unix_of(value: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+# systemd-sleep's line when the computer goes to sleep: "Entering sleep state 'suspend'..." in older systemd,
+# "Performing sleep operation 'suspend'..." in systemd 255 (seen on a stock Ubuntu 24.04, 2026-11-23).
+SLEEP_ENTERED = re.compile(r"Entering sleep state|Performing sleep operation")
+
+
 def computer_record(host: Host, unit: str) -> dict:
     """What this computer itself knows: when the runner's service last started and stopped, when it booted, when it
     slept, and the slice's kill count now."""
@@ -2239,7 +2244,7 @@ def computer_record(host: Host, unit: str) -> dict:
     m = re.search(r"^btime (\d+)$", host.read("/proc/stat") or "", re.M)
     rc, out = host.run(journalctl("-u", "systemd-suspend.service", "-o", "short-unix", "--since", "-3d"))
     sleeps = [int(float(x.split()[0])) for x in (out.splitlines() if rc == 0 else [])
-              if "Entering sleep state" in x and re.match(r"^\d+(\.\d+)?\s", x)]
+              if re.search(SLEEP_ENTERED, x) and re.match(r"^\d+(\.\d+)?\s", x)]
     oom = re.search(r"^oom_kill (\d+)$", host.read(MEMORY_EVENTS) or "", re.M)
     # systemd keeps only the LAST start and stop times (seen: a reboot replaced the record of an earlier stop), so
     # every stop of the runner's unit is also read from its journal.

@@ -1830,6 +1830,11 @@ class G5(unittest.TestCase):
                  (0, "%d.5 box-1 systemd-sleep[9]: Entering sleep state 'suspend'...\n" % (t0 + 40))}
         host, gh, _ = self._named(start + f"end {t0 + 900} 555 1 0 check\n", cut, sleep)
         self.assertTrue(any("was cut by this computer going to sleep" in x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
+        # systemd 255 (Ubuntu 24.04) writes the same moment in other words (seen on a stock virtual machine).
+        sleep255 = {("journalctl", "-u", "systemd-suspend.service"):
+                    (0, "%d.8 box-1 systemd-sleep[9]: Performing sleep operation 'suspend'...\n" % (t0 + 40))}
+        host, gh, _ = self._named(start + f"end {t0 + 900} 555 1 0 check\n", cut, sleep255)
+        self.assertTrue(any("was cut by this computer going to sleep" in x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
         # Not named: a job that came through a sleep (GitHub: success); the person's own failing test (no step
         # cancelled), even with a stop here; GitHub's cut with nothing on this computer's side.
         for job, runs, rec in (({"conclusion": "success", "steps": []}, sleep, start + f"end {t0 + 900} 555 1 0 check\n"),
