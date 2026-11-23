@@ -16,7 +16,7 @@
         "Must say, word for word, the block line that begins: A job here has only the tools installed on this computer",
         "Must say, word for word, the block line that begins: This computer has a battery (only on a computer with a battery or a lid)",
         "Must say, word for word, the block line that begins: This version serves one repository per computer",
-        "Must say, word for word, the block line that begins: GitHub's billing page, read",
+        "Must say, word for word, the block line that begins: What GitHub charges for jobs that run on your own computers is GitHub's to say",
         "Must say: the block's numbering, 1 of N to N of N, with no line missing.",
         "Must say: the start test runs no job on any machine and is deleted, before asking the person's yes.",
         "Must not: type, ask for or see the person's admin password; the person types it in their own terminal.",
