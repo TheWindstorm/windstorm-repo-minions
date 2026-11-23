@@ -757,8 +757,11 @@ def survey(host: Host, rep: Report) -> dict:
         rep.warn("battery: not read")
     elif s["battery"]:
         rep.warn("this computer has a battery: " + LAPTOP_WORDS)
-    else:
-        rep.ok("no battery: not a laptop")
+    s["lid"] = has_lid(host)  # G11.1: a battery OR a lid makes a laptop (a laptop on mains with its battery out)
+    if s["lid"] and not s["battery"]:
+        rep.warn("this computer has a lid: " + LAPTOP_WORDS)
+    elif s["battery"] is False and s["lid"] is False:
+        rep.ok("no battery and no lid: not a laptop")
     s["wifi_only"] = wifi_only(host)
     if s["wifi_only"] is None:
         rep.warn("network: not read")
@@ -847,6 +850,13 @@ def sleep_delay_words(seconds: int | None) -> str:
     if seconds == 0:
         return "at once"
     return f"about {seconds} seconds later (this computer's own delay)"
+
+
+def has_lid(host: Host) -> bool | None:
+    """G11.1: a lid switch the system knows of (Linux: ACPI lists it)."""
+    if host.system() != "Linux":
+        return None
+    return bool(host.listdir("/proc/acpi/button/lid"))
 
 
 def default_route_iface(route_text: str) -> str | None:
@@ -1359,7 +1369,7 @@ def journal(host: Host, step: str, detail: str = "") -> None:
 def record_look(host: Host, repo: str, rep: Report, s: dict | None) -> None:
     data = load_state(host)
     keep = {k: v for k, v in (s or {}).items() if k in ("system", "machine", "cores", "mem", "disk", "free",
-                                                          "battery", "os", "sleep_delay")}
+                                                          "battery", "lid", "os", "sleep_delay")}
     data.setdefault("looks", {})[repo] = {"time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
                                           "stopped": rep.stopped, "survey": keep}
     save_state(host, data)
@@ -3882,6 +3892,8 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
     rep.tell(floor or limits_in_words(lim))
     if s.get("battery"):
         rep.tell("This computer has a battery: " + LAPTOP_WORDS + ".")
+    elif s.get("lid"):
+        rep.tell("This computer has a lid: " + LAPTOP_WORDS + ".")
     rep.tell("This version serves one repository per computer; more come in the next version.")
 
 

@@ -687,7 +687,7 @@ class G2(unittest.TestCase):
             entry = json.load(f)["looks"][REPO]
         self.assertFalse(entry["stopped"])
         self.assertEqual(entry["survey"]["cores"], 8)
-        self.assertEqual(set(entry["survey"]), {"system", "machine", "cores", "mem", "disk", "free", "battery", "os",
+        self.assertEqual(set(entry["survey"]), {"system", "machine", "cores", "mem", "disk", "free", "battery", "lid", "os",
                                                 "sleep_delay"})
         # a look of a public repository is a look with a stop: setup refuses it (with G1.1)
         host2, sha = setup_host()
@@ -1551,6 +1551,53 @@ class G4(unittest.TestCase):
         self.assertFalse(M.start_runner(host, UNIT, FOLDER, rep))
         self.assertIn("two copies never run", rep.lines[-1])
         self.assertFalse(any(a[:4] == ("sudo", "-n", "systemctl", "start") for a in host.ran))
+
+    def test_G4_2_the_runner_runs_low_and_capped(self):
+        gb = 1024 ** 3
+        # From the survey: half the processors (never less than one), memory high 50 % and max 60 %.
+        lim = M.slice_limits({"cores": 8, "mem": 16 * gb})
+        self.assertEqual((lim["cores"], lim["CPUQuota"]), (4, "400%"))
+        self.assertEqual((int(lim["MemoryHigh"]), int(lim["MemoryMax"])), (int(16 * gb * 0.5), int(16 * gb * 0.6)))
+        self.assertEqual(M.slice_limits({"cores": 1, "mem": 8 * gb})["cores"], 1)
+        self.assertEqual(M.slice_limits({"cores": 3, "mem": 8 * gb})["cores"], 1)
+        # The person's own choice (G7.8) within bounds: never more processors than there are, never under one.
+        self.assertEqual(M.slice_limits({"cores": 4, "mem": 8 * gb}, (9, 60))["cores"], 4)
+        self.assertEqual(M.slice_limits({"cores": 4, "mem": 8 * gb}, (0, 60))["cores"], 1)
+        # Low priority on the runner's service, inside our slice; the slice carries the limits.
+        drop = M.dropin_text()
+        for line in (f"Slice={M.SLICE}", "Nice=10", "CPUWeight=50"):
+            self.assertIn(line + "\n", drop)
+        sl = M.slice_text(lim)
+        for line in ("CPUQuota=400%", f"MemoryHigh={lim['MemoryHigh']}", f"MemoryMax={lim['MemoryMax']}"):
+            self.assertIn(line + "\n", sl)
+        # setup installs both from the survey and reads them back from systemd.
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        fed = {a[-1]: x for a, x in host.fed if a[:3] == ("sudo", "-n", "tee") or "tee" in a}
+        self.assertTrue(any("CPUQuota=400%" in (x or "") for x in fed.values()), list(fed))
+        self.assertTrue([a for a in host.ran if "show" in a and "CPUWeight" in a], "read back")
+
+    def test_G11_1_a_laptop_is_named_and_its_limits_said_before_setup(self):
+        page = load("look-recent-runs.jsonl")
+        cases = (({"/sys/class/power_supply": ["BAT0"]}, {"/sys/class/power_supply/BAT0/type": "Battery\n"},
+                  "battery"),
+                 ({"/proc/acpi/button/lid": ["LID0"]}, {}, "lid"),
+                 ({}, {}, None))
+        for dirs, files, what in cases:
+            host = linux_host(dirs=dirs)
+            host.files.update(files)
+            lines = look(StandIn(page), host)[1]
+            tells = tells_of(lines)
+            if what:
+                self.assertTrue(any(x.startswith(f"warn this computer has a {what}: " + M.LAPTOP_WORDS) for x in lines),
+                                (what, lines))
+                self.assertIn(f"This computer has a {what}: " + M.LAPTOP_WORDS + ".", tells)
+            else:
+                self.assertIn("ok no battery and no lid: not a laptop", lines)
+                self.assertFalse([x for x in tells if "laptop" in x])
+        self.assertEqual(M.LAPTOP_WORDS, "a laptop takes jobs only while it is awake, on the network and (by default) "
+                                         "on mains power")
 
     def test_G4_8_limits_have_floors_and_too_little_is_said_before_setup(self):
         gib = 1024 ** 3

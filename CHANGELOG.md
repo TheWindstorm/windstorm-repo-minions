@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `look` names a computer with a lid as a laptop too, not only one with a battery (G11.1).
 - Every wait says its deadline once it really waits: `setup`'s wait for the runner online, the start test and
   `resume` now say it too; every `waiting` line names the command to run next (G8.6, G8.7, rows R39, R40).
 - The watch reads GitHub's cost rule again once a week; when its words on self-hosted runners change, the next
