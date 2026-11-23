@@ -467,18 +467,35 @@ GH_SCOPE_DOCS = "https://cli.github.com/manual/gh_auth_refresh"
 # prompts answered by hand). Empty: not yet run as printed; its version is refused (test_strand) until it is, or the
 # line is replaced by what is missing and where to read. Our own subcommands are run by the tests themselves.
 PRINTED_COMMANDS = {
-    "sudo apt update && sudo apt install gh": "",
-    "gh auth login": "",
-    "sudo -v": "",
-    "journalctl -u {}.service": "",
-    "sudo systemctl start {}.timer": "",
-    "gh run cancel {} -R {}": "",
-    "chmod 750 {}": "",
-    "sudo chmod 750 /home/{}": "",
-    "sudo chmod 600 {}": "",
-    "sudo gpasswd -d {} {}": "",
-    "sudo kill {}": "",
-    "python3 -I {} uninstall --all": "",
+    "sudo apt update && sudo apt install gh":
+        "2026-11-23, stock Ubuntu 22.04.5 (gh 2.4.0), Debian 12 (gh 2.23.0) and Ubuntu 24.04.5 (gh 2.45.0) virtual "
+        "machines, typed as printed by the person, sudo's password typed at its own prompt",
+    "gh auth login":
+        "2026-11-23, the same three stock virtual machines: run as printed up to GitHub's one-time code, gh's own "
+        "questions answered with their first choice; the login itself is the person's own act and was not done",
+    "sudo -v": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, as printed, the password typed at sudo's prompt",
+    "journalctl -u {}.service": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, as printed, as the person",
+    "sudo systemctl start {}.timer":
+        "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the watch's timer stopped by hand): as printed "
+        "by status once the watch was silent 15 minutes; the timer active again",
+    "chmod 750 {}":
+        "2026-11-23, a stock Debian 12 virtual machine: copied from setup's own line (chmod 750 /home/debian) and run "
+        "as printed; setup again then went through",
+    "sudo chmod 750 /home/{}":
+        "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner's home opened to 755 by hand): copied "
+        "from doctor's line and run as printed; doctor then read it kept",
+    "sudo chmod 600 {}":
+        "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (one credential file made 644 by hand): doctor's "
+        "line with the three files, run as printed; doctor then read them kept",
+    "sudo gpasswd -d {} {}":
+        "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner user put in a group by hand): "
+        "doctor's line run as printed; doctor then read it kept",
+    "sudo kill {}":
+        "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner's unit blanked in the state and its "
+        "service file moved aside by hand): uninstall's line with the one PID, run as printed; no process of it left",
+    "python3 -I {} uninstall --all":
+        "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: status, run from the tool's copy with the skill's folder "
+        "deleted, printed it; run as printed, uninstall went to the end",
 }
 
 
@@ -3470,7 +3487,10 @@ def memory_held_words(repo: str, mine: dict, recs: list[dict]) -> str:
     high = ((mine.get("limits") or {}).get("MemoryHigh") or "")
     limit = f" ({gb(int(high))})" if str(high).isdigit() else ""
     stall = f"; its tasks all stood still {h['full_pct']:.0f} % of the last minute" if h.get("full_pct") is not None else ""
-    cancel = f"`gh run cancel {run['run']} -R {repo}`" if run else "on GitHub, from the run's page"
+    # G8.16, the owner's ruling (11-23): no install since jobs were kept out of swap reaches this state, so no command
+    # here was run as printed; the line names the run's own page on GitHub, where its Cancel button is.
+    cancel = (f"on GitHub, from the run's page: https://github.com/{repo}/actions/runs/{run['run']}" if run else
+              "on GitHub, from the run's page")
     return (f"{what} has been held at this computer's memory limit for jobs{limit} since {h['since'][11:19]}Z, "
             f"{h['passes']} watch passes in a row: it needs more memory than jobs here may use, so it barely moves"
             f"{stall}, and it may go on like this until GitHub's own time limit. Your two ways out: cancel it "

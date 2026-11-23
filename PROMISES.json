@@ -830,7 +830,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_15_a_blind_watch_says_so_and_holds_after_three_passes",
-   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen twice. Unsteered (12:35 to 12:51Z UTC, a fresh machine): the computer's network link was cut for 16 minutes; three watch passes in a row journaled `GitHub not read (HTTP 0): GitHub gave no answer: error connecting to api.github.com \u2026`; status began with `stop the watch could not read whether \u2026 is still private, 3 pass(es) in a row since 12:40:29Z \u2026 So this computer takes no job of it now \u2026`; with the link back, a job dispatched before the next pass waited at the job-start hook (\"waiting up to 6 minutes\") until the watch read the repository private, then ran and passed. Earlier, by the owner's word: gh moved out of the watch's PATH by hand (02:33Z), the same stop line, and a real job refused by the hook after its 6-minute wait (`refused-stale`).",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen twice. Unsteered (12:35 to 12:51Z UTC, a fresh machine): the computer's network link was cut for 16 minutes; three watch passes in a row journaled `GitHub not read (HTTP 0): GitHub gave no answer: error connecting to api.github.com \u2026`; status began with `stop the watch could not read whether \u2026 is still private, 3 pass(es) in a row since 12:40:29Z \u2026 So this computer takes no job of it now \u2026`; with the link back, a job dispatched before the next pass waited at the job-start hook (\"waiting up to 6 minutes\") until the watch read the repository private, then ran and passed. Earlier, by the owner's word: gh moved out of the watch's PATH by hand (02:33Z), the same stop line, and a real job refused by the hook after its 6-minute wait (`refused-stale`). Also seen unplanned, 2026-11-23, on a stock Ubuntu 24.04.5 virtual machine with a real runner after a four-hour soak: the GitHub login was removed from that computer by our own cleanup's mistake; the watch's next pass said `stop the watch could not read whether … is still private, 1 pass(es) in a row …: GitHub gave no answer: … please run: gh auth login … After 3 such passes (15 minutes) this computer refuses its jobs until the watch reads it private again. Your way out: log in again with `gh auth login``; the login was put back three minutes later.",
    "issue": 95,
    "moved_why": "",
    "moved_by_person": ""
@@ -1390,7 +1390,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_10_uninstall_keeps_the_persons_record_in_one_folder_they_own",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen once, after a four-hour soak with 27 real jobs: `uninstall --all` (run from the tool's copy alone) ended with `ok census: your record of what this tool did: /home/ubuntu/repo-minions-record, 156 lines in 3 files, kept: it is yours. Delete it whenever you like, or run `uninstall --all --delete-record` in your own terminal`, its last line; the folder (700, the person's) held the jobs' log with 54 lines, the same 54 the runner's own record held before, the journal of every step and a README; nothing else of the tool was left. Not seen here: `--delete-record` and its typed confirmation (tested only).",
    "issue": 228,
    "moved_why": "",
    "moved_by_person": ""
@@ -1404,7 +1404,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_11_the_tools_own_copy_alone_runs_uninstall_all_to_the_end",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen once: the skill's clone deleted by hand (as a person who leaves by Claude Code's own plugin uninstall leaves only the copy setup made); status, run from the copy, said the runner and its watch go on and named the one command; that command, `python3 -I /usr/local/lib/windstorm-repo-minions/minions.py uninstall --all`, run exactly as printed, took the runner off GitHub and the computer to the end, exit 0, census all none but the person's record.",
    "issue": 229,
    "moved_why": "",
    "moved_by_person": ""
@@ -1418,7 +1418,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_10_doctor_and_status_name_an_older_copy_running_the_watch",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, steered, proven by the owner's word: each side made older by hand. The clone's VERSION edited up (0.0.1) while the watch's copy stayed 0.0.0: status and doctor said `the watch runs version 0.0.0 of the tool, and this is 0.0.1: the watch runs the older code. `setup <owner/repo>` again puts this version's copy in place`, doctor stopped naming the copy; setup put 0.0.1 in place (`the runner, its service, its limits and a running job were not touched`), read back. Then the clone put back to 0.0.0 while the copy was 0.0.1: status said `this tool is the older one. Run the newer tool, or `setup <owner/repo>` with this one to put its copy back`; setup put 0.0.0 back; doctor read every promise kept.",
    "issue": 230,
    "moved_why": "",
    "moved_by_person": ""
@@ -1446,7 +1446,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G9_9_the_evals_are_the_cold_start_cases_and_each_is_whole",
-   "proven": "",
+   "proven": "2026-11-23, case 1 run as written, a cold start with the smallest model on the release text on a stock Ubuntu 24.04.5 virtual machine, read against the case by hand: met: the person's steps left to the person (gh, the login, the admin password in their own terminal, the merges), nothing merged by the agent, the start test explained before the yes, a runner not its own left alone until the person answered; missed: at one stop the block was summarized instead of pasted (and its cost sentence reworded), at the next pasted whole without its numbering; seen besides, now its own must-not (row R110): a look into the person's ~/.ssh and git's saved logins.",
    "issue": 232,
    "moved_why": "",
    "moved_by_person": ""
@@ -1474,7 +1474,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_17_status_says_when_github_last_handed_this_runner_a_job",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen once each, on real records: after a four-hour soak, status said `ok the last job GitHub handed this runner started at 19:55:23Z UTC, 2 min ago ('j' of TheWindstorm/zz-proof-repo-minions-1)` (the doubled `Z UTC` since fixed); on a fresh runner that GitHub listed offline, status said `GitHub has not handed this runner a job of … yet. A job GitHub does not hand over … is on GitHub's side; the lines above show whether this runner is connected and waiting`.",
    "issue": 241,
    "moved_why": "",
    "moved_by_person": ""
@@ -1488,7 +1488,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_16_names_are_printed_only_of_what_the_person_chose",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen once: the person's own podman container and a runner-named service of their own were made for real; `look` said `1 container(s) of yours running: not named here` and `1 other runner service(s) of yours here: not named here`, and no name appeared anywhere in its output (counted: 0); `look --show-names` named both.",
    "issue": 249,
    "moved_why": "",
    "moved_by_person": ""
@@ -1530,7 +1530,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_13_the_block_points_to_githubs_page_for_cost_and_claims_none",
-   "proven": "",
+   "proven": "2026-11-23, stock Ubuntu 24.04.5 virtual machines and the private proof repository, seen twice: `look` printed `ok GitHub's billing page, read 2026-11-23 … UTC, lists \"Self-hosted runners\" among the uses …` as its own line, and its block ended `What GitHub charges for jobs that run on your own computers is GitHub's to say: read https://docs.github.com/en/billing/concepts/product-billing/github-actions` (9 of 9, then 5 of 5 after row R111). Not seen yet: a small-model cold start relaying the new line (run I).",
    "issue": 260,
    "moved_why": "",
    "moved_by_person": ""
