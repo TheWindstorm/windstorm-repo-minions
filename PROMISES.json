@@ -1194,7 +1194,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, with no job running, from 10:58:50Z to 11:33:17Z (UTC), as a stalled process is held; the tool's files were not touched. The watch's own pass wrote the offline record at 11:03:24Z; the person then asked for a 12-minute sleep (`systemctl suspend`) with the listener still held. 45 seconds after the wake, 13 minutes after the record and 12 of them asleep, status said only `not ready`, GitHub offline, and did not name it; once two intervals of waking time had passed it named it, with the span and its waking minutes (`22 min, 10 min of it awake`). After the listener went on (SIGCONT), status said `ok idle` and the watch's next pass ended the record. Steered: the listener's hold. Not seen unsteered; not seen on a real laptop's sleep.",
    "issue": 169,
    "moved_why": "",
    "moved_by_person": ""
@@ -1208,7 +1208,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, in the same run as row R85: the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, with no job running, from 10:58:50Z to 11:33:17Z (UTC), as a stalled process is held; the tool's files were not touched. After a 12-minute sleep and two intervals of waking time, status said `GitHub has shown it offline at every watch pass since 11:03:24Z (22 min, 10 min of it awake), and now, while its service runs here`, and no longer that GitHub had shown it offline the whole span. Steered: the listener's hold. Not seen unsteered; not seen on a real laptop.",
    "issue": 171,
    "moved_why": "",
    "moved_by_person": ""
