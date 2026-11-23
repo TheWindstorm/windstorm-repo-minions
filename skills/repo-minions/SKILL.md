@@ -84,6 +84,10 @@ folder).
   user and its boot service. Say: "Setup will ask for this computer's admin password once. Please type it where
   sudo asks, in your own terminal. I never see it." Run setup in that same terminal: the permission belongs to one
   terminal, and another one asks again.
+- **A yes beside something live.** If setup says `need you: this computer serves something live`, say what it
+  names (ports open to the network, containers) and that jobs here would share its processors, memory and disk.
+  Ask whether to use another computer or to run jobs here anyway. Only on their yes in words, run
+  `setup <owner/repo> --beside-live-too`.
 - **The start test's yes.** Before `--start-test`, say what it does, in look's own words: one temporary branch
   with one workflow file, a job that runs on no machine, then the run and the branch are deleted and read back gone.
   Run it only after the person says yes.
@@ -102,17 +106,21 @@ they carry; if one is missing, say it in these words:
 
 - **What a job can reach.** Name what look listed: the secrets a job can read (names only) and what already runs
   on this computer. Then say: "Anyone who can push to this repository can run code on this computer."
-- **Restarts and sleep.** "A restart of this computer cancels the job running on it; a sleep delays it or cancels
-  it. A job waits at most 24 hours for a runner before GitHub cancels it."
+- **Restarts and sleep.** "A restart of this computer cancels the job running on it. A short sleep only delays it;
+  a sleep of more than about 10 minutes fails it on GitHub. A job waits at most 24 hours for a runner before GitHub
+  cancels it."
 - **Waiting checks.** "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that
   waited 24 hours."
 - **The limits.** Read look's limits line to the person word for word. It sounds like "at most half of this
   computer's processors and 60 % of its memory", with the real numbers. The one way to change them is
   `setup <owner/repo> --limits <processors>,<memory %>`. If look says the memory share is too small for a job,
-  give the person its way out and what that costs their own work, as the line says.
+  give the person its way out and what that costs their own work, as the line says. On a computer with one
+  processor the line says "1 of 1" and that everything else there will be slow while a job runs: read that too,
+  and let the person decide.
+
 - **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
-  low battery still puts it to sleep, a little later. A job cut that way is named as cut, not as your test
-  failing." The tool takes two locks during a job: one that holds only the computer's own idle sleep, and one
+  low battery still puts it to sleep, about N seconds later." Give the delay look's numbered block names for this
+  computer, not a number of your own. "A job cut that way is named as cut, not as your test failing." The tool takes two locks during a job: one that holds only the computer's own idle sleep, and one
   that puts off a requested sleep by the short delay the system allows. It never holds the lid switch, the power
   or sleep keys, a shutdown, or a sleep someone asks for.
 - **One repository.** "This version serves one repository per computer; more come in the next version."
@@ -146,4 +154,5 @@ that something costs nothing, or that the person spends less: the tool did not r
 | "My job is waiting" | `status`; read its lines; if the runner is held, `resume` |
 | "My test failed on my computer" | `status`; it names a job cut by a restart or stopped by this computer's memory limit; otherwise it is the job's own result |
 | "I need my computer now" | `drain`, wait for its `ok` |
+| "Something is wrong with it", or a command was cut part-way | `doctor <owner/repo>`, in the person's own terminal: it reads back every promise of the install, names each one not kept with its next step, and finishes or undoes a step that was cut |
 | "Take it off" | `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this skill on the computer and opens a pull request that puts moved jobs back (theirs to merge); pass on its `tell the person` line about that pull request's own checks |

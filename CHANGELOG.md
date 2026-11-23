@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+- Tests: a new recorded fixture, `tests/fixtures/runner-life.jsonl`, holds GitHub's real answers for one runner's
+  life (registered, idle, busy, held, resumed, removed; tokens removed, scrubbed). The test stand-in answers every
+  recorded call exactly as recorded, and the hand-made runner answers carry only what a recorded one carries (G9.3).
+- New command `doctor [OWNER/NAME]` (G8.4, INV8): it reads back every promise of the install on this computer as
+  it is now (the runner's user, its folder and credential files, the boot service, the limits, the job hooks, the
+  disk floor, the runner's version, one copy only, both sides with our labels, the watch), one line each, and
+  changes nothing else. The last line counts the promises not kept, each named above with its next step (exit 2).
+  A setup or removal cut part-way is undone or finished, read back. Without admin rights or a terminal to ask,
+  what only an admin can read is said as not read.
+- On a computer with one processor, the limits sentence in `look` and `setup` says "1 of 1" and, plainly, that
+  while a job runs it uses all of it, at low priority, and everything else there will be slow (G7.8).
+- `status`'s warning for a job waiting on an offline runner names the command that starts it: `resume OWNER/NAME`.
+  "1 core" and "1 processor" are singular now.
+- Row R17's second half (load and disk kind beside a slow result in `status`) moves to 0.2.0; 0.1.0 keeps
+  `look`'s memory and swap reading and `status`'s naming of a job killed by the memory limit.
+- `resume` (when it has to start the runner's service) and `drain --stop` now ask for the admin password
+  themselves, once, before their admin step. Before, in a terminal where none was asked, `resume` stopped and sent
+  the person back to "the terminal where you typed the password" (G2.12, row R73).
+- `setup` now asks before it runs jobs on a computer that serves something live, as `look` said it would: it
+  names what look found and changes nothing until the person says yes in words (`setup OWNER/NAME
+  --beside-live-too`) or chooses another computer. Any port open to the network counts, except the computer's
+  own upkeep; a port on 127.0.0.53 (a stock Ubuntu's own name service) is no longer counted as open to the
+  network (G1.7, row R72).
+- A setup cut part-way (for example when sudo's permission ran out) is found again: `uninstall` takes the
+  half-made runner away, and `setup` run again takes it away first, read back, then sets up fresh. A read as
+  root that sudo refused is said as not read in the census, never as none (G2.12, row R71).
+- When sudo's permission runs out part-way, or the command runs in another terminal, the stop now says to run
+  it again from the terminal where the password was typed, and that nothing is done twice (G2.12, row R32).
+- On battery a laptop's runner is held by the watch, by default, and the hold lifts on mains power; the laptop
+  sentence said this already, and now it is so. `resume OWNER/NAME --on-battery-too` takes jobs on battery,
+  `--on-battery-held` goes back (G11.2, row R19).
+- `look` names a computer with a lid as a laptop too, not only one with a battery (G11.1).
+- Every wait says its deadline once it really waits: `setup`'s wait for the runner online, the start test and
+  `resume` now say it too; every `waiting` line names the command to run next (G8.6, G8.7, rows R39, R40).
+- The watch reads GitHub's cost rule again once a week; when its words on self-hosted runners change, the next
+  `status` says so first, with both versions and dates (G5.10, for row R16).
+- Before setup the person hears that a short sleep only delays a job and a sleep of more than about 10 minutes
+  fails it on GitHub, from `look`'s numbered block and the skill (G7.9, row R49).
+- The recorded GitHub answers used by the tests no longer carry the numbers of the accounts they were recorded
+  from (an account's id, node id and avatar link); the scrubber removes them and a test refuses them (G9.4).
+- GitHub's API limit: when GitHub refuses for it, the tool names it with GitHub's reset time, makes no call until
+  then, and a drain's or `move --verify`'s wait ends with a `waiting` line instead of polling into it; the
+  watch's line says it comes back by itself (G8.14, row R68).
+- `status` begins with its worst true line: a runner neither idle nor busy is a `warn`, and jobs waiting on a
+  runner that is offline or held are a `warn`, first, with what they wait behind and the way on (G5.1, row R67).
+- Below 5 GB free for the work folders, the watch holds our runner before the disk fills, and lifts the hold by
+  itself once 6 GB are free; until now only `setup` and `resume` checked the floor (G4.3, row R66).
+- `look` reads the delay this computer gives a sleep during a job (logind's own setting, no admin rights) and
+  the words for the person name it, or say it could not be read, instead of "a little later" (G4.9, row R48).
+- `setup` says this version serves one repository per computer, and holds it: a second repository's `setup`
+  changes nothing, names the repository already served and says to uninstall it first (G7.6).
 - The skill names where to clone: the person's home folder. Seen once, over a restart: nothing that `setup`
   installs ran from a clone under `/tmp`; the watch, the job hooks and the runner came back, and the clone was gone.
 - `look` prints the words for the person as one numbered block (`tell the person 1 of 7:` to `7 of 7:`), and the
