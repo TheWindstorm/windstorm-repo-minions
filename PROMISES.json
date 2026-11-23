@@ -240,11 +240,11 @@
    "codon": "G1.6",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
-   "ship_in": "0.1.0",
+   "ship_in": "0.2.0",
    "test": "test_G1_6_look_surveys_the_computer",
    "proven": "",
    "issue": 23,
-   "moved_why": "",
+   "moved_why": "Moved to 0.2.0 by the owner's word, 2026-11-23: nothing of status's half is built and no codon carries it (G1.6 is look's survey); it helps a person understand a slow job but guards nothing. What 0.1.0 shows: look reads memory available and swap in use, and warns when swap in use is over 512 MB; status names a job killed by this computer's memory limit, never as the person's test failing, and warns when a job waits.",
    "moved_by_person": ""
   },
   {

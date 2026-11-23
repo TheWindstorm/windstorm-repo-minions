@@ -156,6 +156,8 @@ class Skill(unittest.TestCase):
         self.assertIn("at most half of this computer's processors and 60 % of its memory", before)
         self.assertIn("with the real numbers", before)
         self.assertIn("`setup <owner/repo> --limits <processors>,<memory %>`", before)
+        self.assertIn('On a computer with one processor the line says "1 of 1" and that everything else there will be '
+                      "slow while a job runs: read that too, and let the person decide.", before)
 
     def test_the_skill_says_which_sleep_locks_are_taken_and_what_they_never_hold(self):
         before = flat(section(text(), "Before setup"))

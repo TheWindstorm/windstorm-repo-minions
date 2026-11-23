@@ -732,7 +732,7 @@ def survey(host: Host, rep: Report) -> dict:
         s["os"], s["mem"], s["mem_avail"], s["swap_used"] = s["system"] or "unknown", None, None, None
     mem = gb(s["mem"]) if s["mem"] else "memory not read"
     avail = f", {gb(s['mem_avail'])} available" if s.get("mem_avail") else ""
-    rep.ok(f"{s['os']}, {s['machine']}, {s['cores'] or 'cores not read'} cores, {mem}{avail}")
+    rep.ok(f"{s['os']}, {s['machine']}, {plural(s['cores'], 'core') if s['cores'] else 'cores not read'}, {mem}{avail}")
     if s["swap_used"] is None:
         rep.warn("swap in use: not read")
     elif s["swap_used"] > 512 * 1024 ** 2:
@@ -1452,9 +1452,18 @@ def slice_limits(survey_: dict, chosen: tuple[int, int] | None = None) -> dict:
 
 def limits_in_words(lim: dict) -> str:
     """G7.8: the limits as the person hears them, with the real numbers and the one way to change them."""
-    return (f"jobs here get at most {lim['cores']} of this computer's {lim['total_cores']} processors and "
-            f"{lim['pct']} % of its memory ({gb(int(lim['MemoryMax']))}); the one way to change that is "
-            "`setup <owner/repo> --limits <processors>,<memory %>`")
+    total = lim["total_cores"]
+    words = (f"jobs here get at most {lim['cores']} of this computer's {plural(total, 'processor')} and "
+             f"{lim['pct']} % of its memory ({gb(int(lim['MemoryMax']))}); the one way to change that is "
+             "`setup <owner/repo> --limits <processors>,<memory %>`")
+    if total == 1:  # the owner's ruling, 2026-11-23: warned plainly, never refused, never hidden by a rounding
+        words += (". This computer has one processor: while a job runs it uses all of it, at low priority, and "
+                  "everything else here will be slow")
+    return words
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
 
 
 def memory_floor_line(repo: str, lim: dict) -> str | None:
@@ -2633,7 +2642,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                                       + (f"`resume {rp}` lets them land here" if held and mine.get("held_for") in
                                          (None, "drain") else
                                          "The hold lifts by itself (see the line below)" if held else
-                                         "Start this computer's runner (`setup` again if it does not come back)")))
+                                         f"Start this computer's runner: `resume {rp}` (it asks for the admin "
+                                         f"password once; `setup {rp}` again if it does not come back)")))
             else:
                 rest.append(("ok", line))
         else:
@@ -2645,7 +2655,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                     first.append(("warn", f"job '{j['name']}' ({j['workflow']}) of {rp} has waited {minutes(age)} behind "
                                           f"{blocked_by}; GitHub cancels a job that waits {GITHUB_GIVES_UP_H} hours. "
                                           + (f"`resume {rp}` lets it land here" if held else
-                                             "Start this computer's runner, or `drain` and move the job back")))
+                                             f"Start this computer's runner (`resume {rp}`), or `drain {rp}` and "
+                                             "move the job back")))
         first.extend(summary)
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now)

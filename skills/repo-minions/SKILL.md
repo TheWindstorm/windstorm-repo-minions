@@ -114,7 +114,10 @@ they carry; if one is missing, say it in these words:
 - **The limits.** Read look's limits line to the person word for word. It sounds like "at most half of this
   computer's processors and 60 % of its memory", with the real numbers. The one way to change them is
   `setup <owner/repo> --limits <processors>,<memory %>`. If look says the memory share is too small for a job,
-  give the person its way out and what that costs their own work, as the line says.
+  give the person its way out and what that costs their own work, as the line says. On a computer with one
+  processor the line says "1 of 1" and that everything else there will be slow while a job runs: read that too,
+  and let the person decide.
+
 - **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
   low battery still puts it to sleep, about N seconds later." Give the delay look's numbered block names for this
   computer, not a number of your own. "A job cut that way is named as cut, not as your test failing." The tool takes two locks during a job: one that holds only the computer's own idle sleep, and one

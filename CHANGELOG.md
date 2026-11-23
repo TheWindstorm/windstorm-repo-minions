@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- On a computer with one processor, the limits sentence in `look` and `setup` says "1 of 1" and, plainly, that
+  while a job runs it uses all of it, at low priority, and everything else there will be slow (G7.8).
+- `status`'s warning for a job waiting on an offline runner names the command that starts it: `resume OWNER/NAME`.
+  "1 core" and "1 processor" are singular now.
+- Row R17's second half (load and disk kind beside a slow result in `status`) moves to 0.2.0; 0.1.0 keeps
+  `look`'s memory and swap reading and `status`'s naming of a job killed by the memory limit.
 - `resume` (when it has to start the runner's service) and `drain --stop` now ask for the admin password
   themselves, once, before their admin step. Before, in a terminal where none was asked, `resume` stopped and sent
   the person back to "the terminal where you typed the password" (G2.12, row R73).
