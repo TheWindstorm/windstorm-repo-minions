@@ -1845,6 +1845,11 @@ case "$ws" in
   "$FOLDER/_work/"?*) find "$ws" -mindepth 1 -delete 2>/dev/null; echo "minions: this job's work folder was emptied" ;;
 esac
 [ -d "$FOLDER/_work/_temp" ] && find "$FOLDER/_work/_temp" -mindepth 1 -delete 2>/dev/null
+# The actions a job fetched: downloaded before any hook runs, even for a job the start hook refuses (seen).
+acts="$FOLDER/_work/_actions"
+if [ -d "$acts" ] && [ -n "$(find "$acts" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+  find "$acts" -mindepth 1 -delete 2>/dev/null; echo "minions: the actions this job fetched were deleted"
+fi
 avail="$(df --output=avail -B1 "$FOLDER" 2>/dev/null | tail -n 1 | tr -d ' ')"
 case "$avail" in
   ''|*[!0-9]*) ;;
@@ -1946,10 +1951,17 @@ def runner_version(host: Host, folder: str, rep: Report) -> str | None:
     return None
 
 
-def listed_runner(gh: GitHub, repo: str, name: str) -> dict | None:
+def read_runner(gh: GitHub, repo: str, name: str) -> tuple[int, dict | None]:
+    """GitHub's answer and our runner in it. An error answer is not "not listed": GitHub answered errors while it
+    still listed our runner (HTTP 502, seen), and an uninstall that took that for gone left a runner on GitHub."""
     s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
     mine = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == name]
-    return mine[0] if mine else None
+    return s, (mine[0] if mine else None)
+
+
+def listed_runner(gh: GitHub, repo: str, name: str) -> dict | None:
+    """Our runner as GitHub lists it; None when not listed OR not read. Where gone must mean gone: read_runner."""
+    return read_runner(gh, repo, name)[1]
 
 
 def runner_pids(host: Host, folder: str, part: str = "Runner.") -> list[int]:
@@ -2017,7 +2029,10 @@ def start_runner(host: Host, unit: str, folder: str, rep: Report) -> bool:
 def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why: str = "drain") -> dict | None:
     """The hold (Part 7 C3): our runner carries only `minions-held`, so no new job lands on it. Labels kept to lift it."""
     mine = data["runners"][repo]
-    r = listed_runner(gh, repo, mine["name"])
+    s, r = read_runner(gh, repo, mine["name"])
+    if s != 200:
+        rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing was held, nothing else was changed")
+        return None
     if r is None:
         rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}: nothing to hold")
         return None
@@ -2029,8 +2044,12 @@ def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why:
         mine["held_at"] = host.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         save_state(host, data)
         if set_labels(gh, repo, r["id"], [HELD_LABEL]) != [HELD_LABEL]:
-            rep.stop("GitHub did not take the hold label: nothing else was changed")
-            return None
+            # GitHub can answer an error and still take the change (HTTP 502, seen): what it lists decides.
+            back = listed_runner(gh, repo, mine["name"])
+            if back is None or sorted(x.get("name") for x in back.get("labels", [])) != [HELD_LABEL]:
+                rep.stop("GitHub did not take the hold label: nothing else was changed")
+                return None
+            journal(host, "hold read back", f"{repo} {mine['name']}: GitHub answered an error, and lists it held")
     rep.ok(f"held: {mine['name']} now carries only `{HELD_LABEL}`, so no new job lands on it; jobs wait on GitHub")
     return r
 
@@ -2122,14 +2141,22 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
         return rep.code()
     if mine.get("public_stop"):
         if not private_again:
-            rep.stop(f"{repo} was not private at {mine['public_stop']['time']}, so its runner was stopped and kept "
-                     f"stopped. Once you have made it private again: `resume {repo} --private-again`")
+            rep.stop(f"{repo} was not private at {mine['public_stop']['time']}, so this computer refuses its jobs. "
+                     f"Once you have made it private again: `resume {repo} --private-again`")
             return rep.code()
         s, d = gh.api("GET", f"repos/{repo}")
         if s != 200 or not (d or {}).get("private"):
-            rep.stop(f"GitHub does not say {repo} is private (HTTP {s}): the runner stays stopped")
+            rep.stop(f"GitHub does not say {repo} is private (HTTP {s}): this computer keeps refusing its jobs")
             return rep.code()
         rep.ok(f"GitHub says {repo} is private again, and you said so")
+        write_seen(host, mine, str(int(host.now().timestamp())))  # G5.15: just read private
+        if mine["public_stop"].get("removed"):  # G5.4: coming back is registering again, the person's step
+            mine.pop("public_stop", None)
+            mine["gone_on_github"] = stamp(host.now())
+            save_state(host, data)
+            rep.need(f"run `setup {repo}`: it registers the runner again in place, with its folders and labels "
+                     "(it asks for this computer's admin password once; this step is yours)")
+            return rep.code()
         journal(host, "enable", mine["unit"])
         sudo(host, systemctl("enable", mine["unit"]))
     if mine.get("gone_on_github"):
@@ -2180,7 +2207,6 @@ def lift_hold(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, tries:
 WATCH_EVERY_S = 300  # G5.3: the watch's default interval
 WATCH_UNIT = "minions-watch"
 TOOL_COPY = f"{HOOKS_ROOT}/minions.py"  # the copy the watch runs: root's, so neither the runner nor a job can change it
-PUBLIC_DRAIN_S = 120  # G5.4: the short drain before a runner of a repository no longer private is stopped
 WAIT_WARN_S = 1800  # G5.13: a job waiting longer than this behind our hold is a `warn`, first
 GITHUB_GIVES_UP_H = 24  # GitHub cancels a job that waited this long for a runner
 
@@ -2284,14 +2310,15 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         mine = runners[rp]
         ps = mine.get("public_stop")
         if ps:
-            first.append(("stop", f"{rp} was not private at {ps['time']}: its runner was held, drained for at most "
-                                  f"{PUBLIC_DRAIN_S // 60} minutes and stopped, and stays stopped, because anyone's "
-                                  f"fork can ask a public repository's runner for a job. Once it is private again: "
-                                  f"`resume {rp} --private-again`"))
-        r = listed_runner(gh, rp, mine["name"])
+            first.append(("stop", public_words(rp, public_now(gh, host, rp, mine)) + ". Anyone's fork can ask a "
+                                  "public repository's runner for a job"))
+        s_r, r = read_runner(gh, rp, mine["name"])
         gh_at = host.now()
         active, worker, at = computer_side(host, mine)
-        if r is None:
+        if s_r != 200:
+            first.append(("warn", f"GitHub could not be read for {rp}'s runners now (HTTP {s_r}): what this says "
+                                  "of GitHub's side is not read; `status` again later"))
+        elif r is None:
             if mine.get("gone_on_github") or active in ("active", "activating"):
                 first.append(("warn", gone_words(rp, mine)))
         word, sides = both_sides_words(r, gh_at, active, worker, at)
@@ -2343,9 +2370,10 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
 
 def gone_words(repo: str, mine: dict) -> str:
     return (f"GitHub no longer lists our runner {mine['name']} for {repo}. GitHub removes a runner it has not seen "
-            "connect for more than 14 days (a computer away or switched off that long). Its service is held so it does "
-            f"not restart in a loop. Run `setup {repo}` again: it registers the runner again with your login, keeping "
-            "its folders and labels")
+            "connect for more than 14 days (a computer away or switched off that long), and the watch takes it off a "
+            "repository that is no longer private. GitHub hands it no job now. Run "
+            f"`setup {repo}` again: it stops what is left of the runner here, then registers it again with your login, keeping its "
+            "folders and labels")
 
 
 CANCELED = "The operation was canceled."
@@ -2584,12 +2612,21 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
     """One repository's pass: what to journal, and why the watch could not read it private ("" when it did)."""
     mine = data["runners"][repo]
     if mine.get("public_stop"):
-        return f"{repo}: stopped, not private at {mine['public_stop']['time']}", ""
+        write_seen(host, mine, "public")  # G5.15: kept so until the person says it is private again
+        ps = mine["public_stop"]
+        if not ps.get("removed"):
+            if not ps.get("labels_off", True):
+                ps["labels_off"] = hold_runner(gh, host, repo, data, rep,
+                                               "the repository being no longer private") is not None
+            remove_public_runner(gh, host, repo, mine)
+            save_state(host, data)
+        return (f"{repo}: refusing its jobs, not private at {ps['time']}"
+                + ("; our runner is off it on GitHub" if ps.get("removed") else "")), ""
     s, d = gh.api("GET", f"repos/{repo}")
     if s == 200 and d is not None and (d.get("private") is False or d.get("visibility") == "public"):
         write_seen(host, mine, "public")  # G5.15: the hook refuses at once, whatever the steps below manage
         public_guard(gh, host, repo, data, rep)
-        return f"{repo}: no longer private: held, drained, stopped", ""
+        return f"{repo}: no longer private: every job of it refused here", ""
     why = ""
     if s == 200 and d is not None and d.get("private") is True:
         why = write_seen(host, mine, str(int(host.now().timestamp())))
@@ -2608,26 +2645,82 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
 
 
 def public_guard(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None:
-    """G5.4 (INV1): a repository no longer private: our labels off at once, a short drain, then stopped and kept so."""
+    """G5.4 (INV1): a repository no longer private. The hook already refuses every job of it (the record says
+    `public`, G5.15); here our labels come off when GitHub can be reached. The watch stops no service and kills no
+    job: it runs as the person, with no admin rights (plan 2.0; a system timer has no sudo ticket)."""
     mine = data["runners"][repo]
     journal(host, "public", f"{repo} is no longer private")
-    hold_runner(gh, host, repo, data, rep, "the repository being no longer private")
-    state = wait_idle(gh, host, repo, mine, PUBLIC_DRAIN_S, 10, rep, f"status {repo}")
-    journal(host, "public stop", f"{repo} after a drain that ended {state}")
-    stop_runner(host, mine["unit"], mine["folder"], rep, drained=True)  # the short drain was the drain (G5.4)
-    sudo(host, systemctl("disable", mine["unit"]))
-    mine["public_stop"] = {"time": stamp(host.now()), "drain": state}
+    labels_off = hold_runner(gh, host, repo, data, rep, "the repository being no longer private") is not None
+    mine["public_stop"] = {"time": stamp(host.now()), "labels_off": labels_off, "removed": False}
+    remove_public_runner(gh, host, repo, mine)
     save_state(host, data)
-    rep.stop(f"{repo} is no longer private: its runner is stopped and kept stopped (`status {repo}` says why)")
+    rep.stop(public_words(repo, mine["public_stop"]))
+
+
+def remove_public_runner(gh: GitHub, host: Host, repo: str, mine: dict) -> None:
+    """G5.4 (INV1): our runner taken off a repository no longer private, on GitHub's side, with the person's own
+    rights, once no job runs on it. GitHub refuses while one does (HTTP 422, seen); once it is removed the runner stops
+    its own service ("terminated error, stop the service, no retry needed", seen). Tried again each pass until done."""
+    ps = mine["public_stop"]
+    s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+    if s != 200:
+        return  # GitHub not reached: the hook holds meanwhile; the next pass tries again
+    r = next((x for x in (d or {}).get("runners", []) if x.get("name") == mine["name"]), None)
+    if r is not None and r.get("busy"):
+        return  # a job that began before the turn finishes (INV4); the next pass tries again
+    if r is not None:
+        journal(host, "remove on GitHub", f"{repo} {mine['name']}: the repository is no longer private")
+        s, _ = gh.api("DELETE", f"repos/{repo}/actions/runners/{r['id']}")
+        if s not in (204, 404):
+            return
+    ps["removed"] = True
+    ps["removed_at"] = stamp(host.now())
+
+
+def public_now(gh: GitHub, host: Host, repo: str, mine: dict) -> dict:
+    """What `status` says of a repository no longer private is read now, never taken from the watch's last pass:
+    GitHub's list of runners (an error answer can hide a change GitHub made, seen) and this computer's service."""
+    ps = dict(mine["public_stop"])
+    s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+    if s == 200:
+        r = next((x for x in (d or {}).get("runners", []) if x.get("name") == mine["name"]), None)
+        ps["removed"] = r is None
+        ps["labels_off"] = r is None or sorted(x.get("name") for x in r.get("labels", [])) == [HELD_LABEL]
+        ps["owed_idle"] = r is not None and not r.get("busy")
+    else:
+        ps["unread"] = f"GitHub not read now (HTTP {s}): from the watch's pass"
+    rc, active = host.run(systemctl("is-active", mine["unit"]))
+    ps["service"] = active.strip() or "not read"
+    return ps
+
+
+def public_words(repo: str, ps: dict) -> str:
+    return (f"{repo} is no longer private (read {ps['time']}): this computer refuses every job of it before its "
+            "first step"
+            + ("; our runner is off the repository on GitHub's side, so GitHub hands this computer no job of it"
+               if ps.get("removed") else
+               "; our runner is still on the repository on GitHub's side, with no job on it: the watch could not "
+               "take it off yet (each pass tries again)" if ps.get("owed_idle") else
+               "; our runner is taken off the repository on GitHub's side as soon as no job runs on it (each pass "
+               "tries again)")
+            + ("" if ps.get("labels_off", True) or ps.get("removed") else "; our labels could not be taken off yet")
+            + (f" ({ps['unread']})" if ps.get("unread") else "")
+            + (f"; its service here is {ps['service']}" + (" (a removed runner's listener can wait idle for a long "
+               "while; GitHub hands it nothing, and `setup` stops it before registering again)"
+               if ps["service"] == "active" and ps.get("removed") else "") if ps.get("service") else "")
+            + f"; a job already running finishes. Once it is private again: `resume {repo} --private-again`, then "
+            f"`setup {repo}` registers the runner again")
 
 
 def gone_on_github(host: Host, repo: str, data: dict, rep: Report) -> None:
-    """G5.12: GitHub removed the runner; its service would restart in a loop. Held stopped, named plainly."""
+    """G5.12: GitHub removed the runner and hands it no job. Its listener stops itself, or waits idle for a long while
+    (both seen, no restart loop); the watch, which has no admin rights (G9.7), only reads the service and names it.
+    `setup` again stops what still runs before it registers again."""
     mine = data["runners"][repo]
     if runner_pids(host, mine["folder"], "Runner.Worker"):
-        return  # a job process still runs here: nothing is stopped under it
-    journal(host, "gone on GitHub", f"{repo} {mine['name']}")
-    stop_runner(host, mine["unit"], mine["folder"], rep, drained=True)  # GitHub can give it no job: nothing to cut
+        return  # a job process still runs here: named once it ends
+    rc, active = host.run(systemctl("is-active", mine["unit"]))
+    journal(host, "gone on GitHub", f"{repo} {mine['name']}: its service is {active.strip() or 'not read'}")
     mine["gone_on_github"] = stamp(host.now())
     save_state(host, data)
     rep.warn(gone_words(repo, mine))
@@ -2735,6 +2828,15 @@ def reregister(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> bo
     """G5.12: `setup` again for a runner GitHub removed: registered again in place, its folders and labels kept."""
     mine = data["runners"][repo]
     folder = mine["folder"]
+    if runner_pids(host, folder, "Runner.Worker"):
+        rep.wait(f"a job process of {mine['name']} still runs here; nothing is changed. Next: `setup {repo}` again "
+                 "once it has ended")
+        return False
+    # A removed runner's listener can keep running, idle, long after GitHub dropped it (13 minutes and more, seen):
+    # it is stopped and read back before the new registration, or the old process keeps the service and the new
+    # registration never connects (seen). GitHub hands a removed runner no job, so nothing is cut.
+    if not stop_runner(host, mine["unit"], folder, rep, drained=True):
+        return False
     journal(host, "re-register", f"{repo} {mine['name']} in {folder}")
     as_runner(host, ["rm", "-f", f"{folder}/.runner", f"{folder}/.credentials", f"{folder}/.credentials_rsaparams"])
     if not register(gh, host, repo, folder, mine["name"], mine["labels"], rep):
@@ -3160,7 +3262,11 @@ def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Repor
     """G6.1, G6.6: the GitHub side goes first. The runner's own removal runs as the runner user, the removal token on
     standard input (INV2); never by entering the runner's home as the person. If it cannot run: GitHub's API deletes
     the runner. Either way, read back that GitHub no longer lists it."""
-    r = listed_runner(gh, repo, mine["name"])
+    s, r = read_runner(gh, repo, mine["name"])
+    if s != 200:
+        rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing on this computer is deleted yet. "
+                 f"Run `uninstall {repo}` again")
+        return False
     if r is None:
         rep.ok(f"GitHub no longer lists {mine['name']} for {repo}")
         return True
@@ -3183,8 +3289,11 @@ def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Repor
         if s not in (204, 404):
             rep.stop(f"GitHub did not remove {mine['name']} (HTTP {s}): nothing on this computer is deleted yet")
             return False
-    if listed_runner(gh, repo, mine["name"]) is not None:
-        rep.stop(f"GitHub still lists {mine['name']} for {repo}: nothing on this computer is deleted yet")
+    s, back = read_runner(gh, repo, mine["name"])
+    if s != 200 or back is not None:
+        rep.stop(f"GitHub still lists {mine['name']} for {repo}: nothing on this computer is deleted yet"
+                 if s == 200 else f"GitHub could not be read back for {repo}'s runners (HTTP {s}): nothing on this "
+                 f"computer is deleted yet. Run `uninstall {repo}` again")
         return False
     rep.ok(f"GitHub no longer lists {mine['name']} for {repo} (" +
            ("the runner's own removal, as the runner user" if own else "removed through GitHub's API") + "), read back")
@@ -3242,7 +3351,12 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
         mine["removing"] = host.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         save_state(host, data)
     folder = mine.get("folder") or ""
-    if listed_runner(gh, repo, mine["name"]) is not None:
+    s, listed = read_runner(gh, repo, mine["name"])
+    if s != 200:
+        rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing is changed. Run `uninstall "
+                 f"{repo}` again")
+        return False
+    if listed is not None:
         if hold_runner(gh, host, repo, data, rep, "removal") is None:
             return False
         state = wait_idle(gh, host, repo, mine, wait_s, poll_s, rep, next_cmd)

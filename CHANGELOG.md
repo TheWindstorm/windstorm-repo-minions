@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- An error answer from GitHub is never taken for "our runner is not listed": `uninstall` deletes nothing here
+  until GitHub, read, no longer lists it; `status` and the hold say "could not be read". `status` says a removal
+  is owed when an idle runner of a repository no longer private is still listed (G6.1, G5.4). Dates in the plan
+  are the day in New York.
+- A removed runner's listener can keep running for a while: `setup` again now stops it before registering
+  again (without that, the new registration stayed offline); `status` reads GitHub and the service for a
+  repository no longer private instead of repeating the watch's record; a hold GitHub took behind an error answer
+  is read back (G5.4, G5.12). G5.15 says what the runner fetches before the hook.
+- The job-completed hook also deletes the actions a job fetched: GitHub's runner downloads them before any hook
+  runs, so even a refused job left them on disk (G4.3).
+- Plan 2.0: INV1, INV4 and G5.4 corrected to the guard a real machine has (the job-start hook refuses every
+  later job; labels off, and the runner taken off the repository on GitHub's side once idle, with the person's
+  own rights; the watch stops no service; G5.12 reads the service the runner stopped itself); G9.7; rows R60
+  to R62.
 - From two cold starts: `look` prints what the person must hear before setup as `tell the person` lines;
   every open `need you` is exit 3; the gh install line refreshes apt first; `uninstall` says the put-back pull
   request's checks first; every program a service runs is resolved at setup; this computer's guard (the job-start
