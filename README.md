@@ -84,6 +84,8 @@ The one command that takes them off, in your own terminal:
 - While your computer is off, asleep or held, your checks wait.
 - GitHub cancels a check that has waited 24 hours.
 - A job cut by a restart or a sleep shows on GitHub as failed. `status` names it as cut, never as your test failing.
+- If nothing runs: `status` shows whether the runner is connected and waiting, and when GitHub last handed it a
+  job. A job GitHub has not handed over is on GitHub's side: a schedule there can be late, or not come.
 
 **Seen to work** (each on a stock virtual machine, with the versions it installs, against a private repository,
 2026-11-22 and 2026-11-23):
