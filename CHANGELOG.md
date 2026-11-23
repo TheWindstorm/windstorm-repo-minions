@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The watch reads a finished job from GitHub once. It read every job in this computer's records again each
+  pass (16 calls a pass with 13 jobs, about 190 an hour, against the 24 it said). The words now say the true
+  spend: about 24 calls an hour, and at most 2 more for each job that ends here (G8.14, row R90).
 - A kill by our memory limit ends the job's process only: the runner's service now goes on (`OOMPolicy=continue`),
   where systemd's default stopped the whole service and the runner went offline (G2.9, row R88).
 - The idle-sleep hold of a job ends when the runner's service stops, or when the next job starts, as well as when the

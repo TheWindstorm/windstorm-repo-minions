@@ -1254,6 +1254,20 @@
    "issue": 188,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R90",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: one real watch pass, every GitHub call counted, made 16 calls, not the 2 said: it read again the jobs of every run in this computer's last records (13 there) each pass, about 190 calls an hour, while the tool told the person about 24.",
+   "promise": "A finished job is read from GitHub once; a watch pass after that reads the repository and its runners only, and what the tool says it spends is what it spends: about 24 calls an hour, and at most 2 more for each job that ends here.",
+   "codon": "G8.14",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_14_a_spent_api_limit_is_named_and_never_polled_into",
+   "proven": "",
+   "issue": 192,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
