@@ -39,7 +39,7 @@ VERSION = "0.0.0"
 # G8.3: every way a command can end. The worst line decides among 0, 2, 3 and 4.
 EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 64, 130
 LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting", "tell the person")
-COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain", "uninstall")  # built so far, in G8.3's order
+COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain", "doctor", "uninstall")  # built so far, in G8.3's order
 RUNNER_USER = "minions-runner"
 SLICE = "minions.slice"
 DROPIN = "50-minions.conf"
@@ -3788,6 +3788,191 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
     return True
 
 
+# ------------------------------------------------------------------------------------------------------- G8.4 doctor
+def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None = None, out=None,
+           interactive: bool | None = None) -> int:
+    """G8.4, INV8: every promise of G2 and G4 read back on this computer as it is now, and a half-done step finished
+    or undone. It changes nothing else: a promise not kept is named with its way on, and the last line says how many.
+    A read it cannot make (no admin rights open here) is said as not read, never as kept."""
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    if repo and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        rep.stop(f"not a repository name: {repo!r} (write owner/name)")
+        return rep.code()
+    data = load_state(host)
+    wanted = None if repo is None else {repo}
+    half = sorted(r for r in (data.get("setting_up") or {}) if wanted is None or r in wanted)
+    cut = sorted(r for r, m in (data.get("runners") or {}).items()
+                 if (wanted is None or r in wanted) and (m.get("removing") or m.get("unfinished")))
+    repos = sorted(r for r in (data.get("runners") or {}) if wanted is None or r in wanted)
+    if not (half or repos):
+        rep.ok(f"no runner of ours serves {repo} on this computer: nothing to check" if repo else
+               "no runner of ours on this computer: nothing to check")
+        return rep.code()
+    interactive = host.isatty() if interactive is None else interactive
+    if interactive or half or cut or host.run(["sudo", "-n", "true"])[0] == 0:
+        # INV8: finishing a half-done step is an admin step; with no terminal to ask, the need line says how.
+        admin = ask_admin_once(host, rep, interactive, "`doctor`" if repo is None else f"`doctor {repo}`")
+        if not admin:
+            return rep.code()
+    else:
+        admin = False
+        rep.warn("admin rights are not open here and no terminal can ask: what only an admin can read is said as "
+                 "not read below; run `doctor` in your own terminal to read it all")
+    broken: list[str] = []
+    # INV8: a setup or a removal cut part-way is finished (a removal) or undone (a setup), read back.
+    for rp in sorted(set(half) | set(cut)):
+        adopt_unfinished(host, data, {rp})
+        rep.ok(f"a {'setup' if rp in half or data['runners'][rp].get('unfinished') else 'removal'} of {rp} here was "
+               "cut part-way: what it made is taken away, read back")
+        if not remove_one(gh, host, rp, data, rep, DRAIN_WAIT_S, 10, f"doctor {rp}"):
+            return rep.code()
+        rep.ok(f"`setup {rp}` sets it up again, fresh, when you want it")
+    for rp in [r for r in repos if r not in cut]:
+        broken += doctor_one(gh, host, rp, data["runners"][rp], rep)
+    rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
+    if active.strip() == "active":
+        rep.ok("the watch's timer is active")
+    else:
+        rep.warn(f"the watch's timer is {active.strip() or 'not read'}: `setup` again puts it back")
+        broken.append("the watch")
+    if broken:
+        rep.stop(f"{len(broken)} promise(s) not kept here: {', '.join(broken)}. Nothing was changed: run the command "
+                 "each line above names, then `doctor` again")
+    else:
+        rep.ok("every promise of the install read back as kept" + ("" if admin else ", of those that could be read"))
+    return rep.code()
+
+
+def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> list[str]:
+    """One runner's promises, each read now. Returns the names of those not kept."""
+    broken: list[str] = []
+    folder, unit, name = mine.get("folder") or "", mine.get("unit") or "", mine.get("name") or ""
+    again = f"`setup {repo}` again after `uninstall {repo}`"
+
+    def bad(what: str, words: str) -> None:
+        rep.warn(f"{repo}: {words}")
+        broken.append(f"{repo} {what}")
+
+    # G2.2: the runner's user has no admin rights and its home is closed.
+    rc, groups = host.run(["id", "-nG", RUNNER_USER])
+    extra = sorted(set(groups.split()) - {RUNNER_USER}) if rc == 0 else None
+    if extra is None:
+        bad("runner user", f"the user {RUNNER_USER} is not there: {again}")
+    elif extra:
+        bad("runner user", f"{RUNNER_USER} is in other groups ({', '.join(extra)}): take it out of them "
+                           f"(`sudo gpasswd -d {RUNNER_USER} <group>`)")
+    else:
+        rep.ok(f"{repo}: {RUNNER_USER} is in its own group only, no admin rights")
+    rc, mode = sudo(host, ["stat", "-c", "%a", f"/home/{RUNNER_USER}"])
+    if rc != 0:
+        rep.warn(f"{repo}: the mode of /home/{RUNNER_USER}: not read")
+    elif mode.strip() not in ("750", "700"):
+        bad("runner home", f"/home/{RUNNER_USER} is open to others (mode {mode.strip()}): "
+                           f"`sudo chmod 750 /home/{RUNNER_USER}`")
+    # G2.4: its own folder and work folder.
+    for path in (folder, f"{folder}/_work"):
+        t = root_test(host, path)
+        if t is None:
+            rep.warn(f"{repo}: {path}: not read")
+        elif not t and path == folder:
+            bad("folder", f"the runner's folder {folder} is gone: {again}")
+    # G2.8: the credential files are the runner's own, 600.
+    files = [f"{folder}/.credentials", f"{folder}/.runner", f"{folder}/.credentials_rsaparams"]
+    rc, out = sudo(host, ["stat", "-c", "%a %U %n"] + files)
+    rows = [x.split(None, 2) for x in out.splitlines() if x.strip()]
+    if "a password is required" in out:
+        rep.warn(f"{repo}: the credential files: not read")
+    elif rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
+        bad("credential files", f"the runner's credential files are not 600 and its own ({tail(out, 3)}): "
+                                f"`sudo chmod 600` them, or {again}")
+    else:
+        rep.ok(f"{repo}: the credential files are 600, owned by {RUNNER_USER}")
+    # G2.9, G4.2: the boot service as written, in our slice, and the slice's limits.
+    rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
+                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User"))
+    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
+            "User": RUNNER_USER}
+    off = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
+    if "network-online.target" not in got.get("Wants", ""):
+        off.append("Wants has no network-online.target")
+    if off:
+        bad("boot service", f"the boot service {unit or '(none recorded)'} is not as written: {', '.join(off)}: "
+                            f"{again}")
+    else:
+        rep.ok(f"{repo}: the boot service is enabled, in {SLICE}, nice 10, restarts on failure, after the network")
+    lim = mine.get("limits") or {}
+    rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh"))
+    sl = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    want_l = {"CPUQuotaPerSecUSec": f"{lim.get('cores')}s", "MemoryHigh": str(lim.get("MemoryHigh")),
+              "MemoryMax": str(lim.get("MemoryMax"))}
+    off = [f"{k}={sl.get(k)!r}" for k, v in want_l.items() if sl.get(k) != v]
+    if not lim:
+        rep.warn(f"{repo}: the limits set up here: not recorded, so not compared")
+    elif off:
+        bad("limits", f"{SLICE}'s limits read {', '.join(off)}, not those set up ({want_l['CPUQuotaPerSecUSec']}, "
+                      f"{want_l['MemoryHigh']}, {want_l['MemoryMax']}): `uninstall {repo}`, then `setup {repo} "
+                      f"--limits {lim.get('cores')},{lim.get('pct')}`")
+    else:
+        rep.ok(f"{repo}: the limits read back: at most {plural(int(lim['cores']), 'processor')} and {lim['pct']} % of "
+               f"the memory ({gb(int(lim['MemoryMax']))}), in {SLICE}")
+    # G4.3, G4.4: the two job hooks, root's and read-only to the runner.
+    d = hook_dir(repo)
+    rc, out = sudo(host, ["stat", "-c", "%a %U", f"{d}/job-started.sh", f"{d}/job-completed.sh"])
+    if "a password is required" in out:
+        rep.warn(f"{repo}: the job hooks: not read")
+    elif rc != 0 or [x.strip() for x in out.splitlines() if x.strip()] != ["755 root", "755 root"]:
+        bad("job hooks", f"the job hooks are not root's and read-only to the runner ({tail(out)}): {again}")
+    else:
+        rep.ok(f"{repo}: the job hooks are root's and read-only to the runner")
+    # G4.3: the disk floor.
+    free = host.disk_free(folder) if folder else None
+    free = free or host.disk_free(host.home())
+    if free is None:
+        rep.warn(f"{repo}: free space for the work folders: not read")
+    elif free[0] < DISK_FLOOR:
+        bad("disk", f"only {gb(free[0])} free for the work folders, under the {gb(DISK_FLOOR)} floor: the watch holds "
+                    "the runner until there is more; free some space")
+    else:
+        rep.ok(f"{repo}: {gb(free[0])} free for the work folders, over the {gb(DISK_FLOOR)} floor")
+    # G4.5: the version, GitHub's self-update on.
+    runner_version(host, folder, rep)
+    # G4.7: never two copies.
+    listeners = runner_pids(host, folder, "Runner.Listener")
+    if len(listeners) > 1:
+        bad("one copy", f"{len(listeners)} copies of the runner run ({', '.join(map(str, listeners))}): "
+                        f"`drain {repo} --stop`, then `resume {repo}`")
+    # G2.6, G2.7, G2.10: GitHub's side and the service, with only our labels (or our hold's).
+    s, r = read_runner(gh, repo, name)
+    rc, active = host.run(systemctl("is-active", unit))
+    active = active.strip() or "not read"
+    if s != 200:
+        rep.warn(f"{repo}: GitHub's list of runners: not read (HTTP {s})")
+    elif r is None:
+        bad("on GitHub", f"GitHub does not list {name}: `setup {repo}` registers it again in place")
+    else:
+        labels = sorted(x.get("name") for x in r.get("labels", []))
+        held = bool(mine.get("held_for"))
+        ok_labels = [HELD_LABEL] if held else sorted(mine.get("labels") or [])
+        if labels != ok_labels:
+            bad("labels", f"GitHub lists {name} with labels {', '.join(labels)}, not "
+                          f"{', '.join(ok_labels)}" + (" (held)" if held else "") + f": `drain {repo}`, then "
+                          f"`resume {repo}` puts ours back")
+        if r.get("status") == "online" and active == "active":
+            rep.ok(f"{repo}: both sides: GitHub lists {name} online, "
+                   f"{'busy' if r.get('busy') else 'idle'}" + (f", held for {mine['held_for']}" if held else "")
+                   + "; the service is active")
+        elif mine.get("held_for") and active != "active":
+            rep.ok(f"{repo}: held for {mine['held_for']} and stopped, as a drain leaves it: `resume {repo}` "
+                   "starts it")
+        else:
+            bad("both sides", f"GitHub says {name} is {r.get('status')}; the service is {active}: "
+                              f"`resume {repo}` starts it")
+    return broken
+
+
 def restore_runs_on(text: str, job_id: str, original: str) -> str | None:
     """G6.2: put one job's runs-on back as it was before `move`, by line; None when the job no longer asks for ours."""
     for job in read_workflow(text):
@@ -4120,6 +4305,8 @@ def parser() -> Parser:
     dr.add_argument("--restart", action="store_true", help="before a planned restart: hold every runner here, wait")
     dr.add_argument("--stop", action="store_true", help="then stop the runner's service (only after the drain)")
     dr.add_argument("--wait-minutes", type=int, default=DRAIN_WAIT_S // 60, help="how long to wait for a job to end")
+    dc = sub.add_parser("doctor", help="read back every promise of the install here; finish or undo a half-done step")
+    dc.add_argument("repo", nargs="?", help="owner/name (default: every runner here)")
     rm = sub.add_parser("uninstall", help="take a runner away on both sides; --all leaves nothing of this tool here")
     rm.add_argument("repo", nargs="?", help="owner/name (with --all: default every runner here)")
     rm.add_argument("--all", dest="everything", action="store_true",
@@ -4151,6 +4338,8 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: 
             return watch(host=host)
         if a.cmd == "move":
             return move(a.repo, verify=a.verify, include=a.include_job, host=host)
+        if a.cmd == "doctor":
+            return doctor(a.repo, host=host)
         if a.cmd == "uninstall":
             if not a.repo and not a.everything:
                 parser().error("uninstall needs owner/name, or --all")
