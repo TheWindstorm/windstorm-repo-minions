@@ -4174,10 +4174,24 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     files = [u for u in ("minions.slice", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service")
              if there(unit_path(u))]
     shared = {SLICE, f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"}
-    runner_units = [u for u in units if u.startswith("actions.runner.")]
-    line("runner services", runner_units)
+    # R78 (G1.12): a runner service that runs as neither our runner user nor the person is counted, never named,
+    # as look does; and the slice is said to be kept for other runners only when runners of ours are left.
+    named, others = [], 0
+    for u in (u for u in units if u.startswith("actions.runner.")):
+        urc, who = host.run(systemctl("show", "-p", "User", "--value", u))
+        if urc == 0 and who.strip() in (RUNNER_USER, host.user()):
+            named.append(u)
+        else:
+            others += 1
+    if named or not others:
+        line("runner services", named)
+    if others:
+        rep.warn(f"census: {plural(others, 'runner service')} here not running as you or as {RUNNER_USER} "
+                 "(not named: they may be another person's; this tool did not make them)")
+    ours_left = bool(load_state(host).get("runners"))
     line("the slice and the watch (scheduled checks)", sorted(set(u for u in units if u in shared) | set(files)),
-         "" if everything else "kept for the other runners here; `uninstall --all` takes them", mark)
+         "" if everything else ("kept for this tool's other runners here; `uninstall --all` takes them" if ours_left
+                                else "kept until `uninstall --all`, which takes them"), mark)
     rc, _ = host.run(["id", RUNNER_USER])
     line("the runner user", [RUNNER_USER] if rc == 0 else [],
          "" if everything else "kept; `uninstall --all` takes it")
