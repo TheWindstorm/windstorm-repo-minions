@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `uninstall`'s census now counts a runner service that runs as neither this tool's runner user nor you, without
+  naming it, as `look` does. Before, it printed such a service's name. It also says the slice and the watch are
+  kept for this tool's other runners only when runners of ours are left (G1.12, row R78).
 - The `need you` lines for a missing or logged-out GitHub CLI now say, in the line itself, that this skill
   reaches GitHub only through the GitHub CLI and its own login, that no SSH key and no other saved login on the
   computer is used or looked for, and that the step is the person's, in their own terminal (G1.10, row R77).

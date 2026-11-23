@@ -368,7 +368,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_12_other_peoples_things_are_counted_never_named",
-   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 06:23-06:59 UTC: another user's runner service counted and not named; our own runner named as ours.",
+   "proven": "",
    "issue": 35,
    "moved_why": "",
    "moved_by_person": ""
@@ -1084,6 +1084,20 @@
    "test": "test_G1_10_no_github_cli_or_login_is_the_first_need_you",
    "proven": "",
    "issue": 150,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R78",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine where another user ran a runner service: look counted it without naming it, but uninstall's census named its unit, and kept the slice and the watch \"for the other runners here\" with no runner of this tool left. Found on rereading the log; R26's proven line, written from the same run, was taken back.",
+   "promise": "uninstall's census counts a runner service that runs as neither our runner user nor the person, never naming it, as look does; it says the slice and the watch are kept for this tool's other runners only when runners of ours are left.",
+   "codon": "G1.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_12_other_peoples_things_are_counted_never_named",
+   "proven": "",
+   "issue": 154,
    "moved_why": "",
    "moved_by_person": ""
   }

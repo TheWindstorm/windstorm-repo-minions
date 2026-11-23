@@ -411,6 +411,18 @@ class G1(unittest.TestCase):
         _, lines = look(StandIn(self.recent), host)
         self.assertIn("ok this tool's own runner here: actions.runner.o-q.box-q.service", lines)
         self.assertFalse(any("do not run as you" in x for x in lines), lines)
+        # R78: uninstall's census counts another person's runner service the same way, never naming it; with no
+        # runner of ours left, the slice is not said to be kept "for the other runners".
+        M.save_state(host, {"runners": {}})
+        out = io.StringIO()
+        M.census(StandIn(self.recent), host, [], False, M.Report(out))
+        said = out.getvalue()
+        self.assertNotIn("box-q", said)
+        self.assertNotIn("someone-else", said)
+        self.assertIn("warn census: runner services: actions.runner.o-r.box-r.service", said)
+        self.assertIn("warn census: 1 runner service here not running as you or as minions-runner (not named: "
+                      "they may be another person's; this tool did not make them)", said)
+        self.assertNotIn("kept for this tool's other runners", said)
 
     def test_G1_8_look_lists_each_jobs_needs_against_the_computer(self):
         wf = """name: ci
