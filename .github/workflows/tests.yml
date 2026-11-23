@@ -75,5 +75,6 @@ jobs:
           elif gh skill --help >/dev/null 2>&1; then
             gh skill publish --dry-run
           else
-            echo "::warning::this runner's gh has no 'skill' command; the strict YAML step above still ran"
+            echo "::error::this runner's gh has no 'skill' command, so the Agent Skills validator did not run (rule: it is a gate, never a warning)"
+            exit 1
           fi

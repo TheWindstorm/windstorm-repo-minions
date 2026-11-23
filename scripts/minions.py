@@ -191,6 +191,25 @@ class Host:
         except OSError:
             return []
 
+    def there(self, path: str) -> bool | None:
+        """As this user, with no admin rights: True, False, or None when it could not be told (rule 6)."""
+        try:
+            os.stat(path)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return None
+
+    def listdir_or_none(self, path: str) -> list[str] | None:
+        """[] when the folder is not there; None when it could not be read (rule 6: never read as empty)."""
+        try:
+            return sorted(os.listdir(path))
+        except FileNotFoundError:
+            return []
+        except OSError:
+            return None
+
     def system(self) -> str:
         return platform.system()
 
@@ -223,6 +242,41 @@ class Host:
 
     def state_dir(self) -> str:
         return os.path.join(self.home(), ".minions")
+
+    def record_dir(self) -> str:
+        """G6.10, INV6: the person's record of what this tool did, kept by `uninstall` in a folder they own."""
+        return os.path.join(self.home(), RECORD_NAME)
+
+    def keep_in_record(self, name: str, text: str, append: bool = True) -> None:
+        """Adds `text` to one plain-text file of the record. Raises OSError when it cannot."""
+        os.makedirs(self.record_dir(), mode=0o700, exist_ok=True)
+        with open(os.path.join(self.record_dir(), name), "a" if append else "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def record_count(self) -> tuple[int, int] | None:
+        """(files, lines) in the record; (0, 0) when there is none; None when it could not be read (rule 6)."""
+        d = self.record_dir()
+        if not os.path.lexists(d):
+            return 0, 0
+        try:
+            files = [os.path.join(d, x) for x in sorted(os.listdir(d))]
+            lines = 0
+            for x in files:
+                with open(x, encoding="utf-8", errors="replace") as f:
+                    lines += sum(1 for _ in f)
+            return len(files), lines
+        except OSError:
+            return None
+
+    def delete_record(self) -> None:
+        shutil.rmtree(self.record_dir(), ignore_errors=True)
+
+    def ask(self, prompt: str) -> str:
+        """A word typed by the person at this terminal; "" when nothing could be read."""
+        try:
+            return input(prompt)
+        except (EOFError, OSError):
+            return ""
 
     def fetch_to(self, url: str, path: str, timeout: int = 300) -> None:
         req = urllib.request.Request(url, headers={"User-Agent": "windstorm-repo-minions/" + VERSION})
@@ -1974,9 +2028,9 @@ def one_repository_here(host: Host, repo: str, rep: Report) -> bool:
     if others:
         rep.stop(f"this computer already serves {others[0]}, and this version serves one repository per computer, so "
                  f"nothing was changed. To serve {repo} here instead, run `uninstall {others[0]}` first, then "
-                 f"`setup {repo}` again; more repositories per computer come in the next version")
+                 f"`setup {repo}` again")
         return False
-    rep.ok(f"this version serves one repository per computer: here, {repo}; more come in the next version")
+    rep.ok(f"this version serves one repository per computer: here, {repo}")
     return True
 
 
@@ -2081,6 +2135,12 @@ HOOKS_ROOT = "/usr/local/lib/windstorm-repo-minions"
 DISK_FLOOR = 5 * 1024 ** 3  # G4.3: under this much free space for the work folders, the runner is to be held
 JOB_HOURS_MOST = 6  # GitHub's default job time limit; a lock left by a runner that died ends by itself after this
 HELD_LABEL = "minions-held"
+RECORD_NAME = "repo-minions-record"  # G6.10: in the person's home, theirs
+RECORD_README = ("What Windstorm Repo Minions did on this computer, kept for you by its uninstall.\n"
+                 "journal.log: every step it took, written before the step ran.\n"
+                 "jobs-*.log: each job's start and end on this computer (start or end, the time in seconds since 1970, "
+                 "the run, its attempt, the memory limit's kill count, the job).\n"
+                 "Nothing secret is in here. The folder is yours: keep it, or delete it whenever you like.\n")
 RECORDS_ROOT = "/var/lib/windstorm-repo-minions"  # G5.7, G5.14: each job's start and end, as this computer saw them
 # G5.15 (P1a): the watch writes, as you, the time it last READ the repository private; the job-start hook, as the
 # runner user, refuses a job when that is older than SEEN_FRESH_S (after waiting HOLD_WAIT_S for a fresh one) or says
@@ -2139,6 +2199,78 @@ def hook_dir(repo: str) -> str:
 
 def records_dir_of(folder: str) -> str:
     return f"{RECORDS_ROOT}/{os.path.basename(folder.rstrip('/'))}"
+
+
+def keep_jobs_record(host: Host, records: str, rep: Report) -> bool:
+    """G6.10: before a runner's jobs' records are deleted, they are added to the person's record. False when they
+    could not be read or written: then they stay where they are (rule 6), and the removal goes on without them."""
+    path = records.rstrip("/") + "/jobs.log"
+    text = host.read(path)
+    if text is None:
+        there = root_test(host, path)
+        if there is False:
+            return True  # no job ever ran: nothing to keep
+        rc, out = sudo(host, ["cat", path]) if there else (1, "")
+        text = out if rc == 0 else None
+    if text is None:
+        rep.warn(f"the jobs' records in {records} could not be read, so they are kept where they are, not deleted; "
+                 "the same command run again in your own terminal moves them to your record")
+        return False
+    try:
+        if text:
+            host.keep_in_record(f"jobs-{os.path.basename(records.rstrip('/'))}.log", text if text.endswith("\n")
+                                else text + "\n")
+        host.keep_in_record("README.txt", RECORD_README, append=False)
+    except OSError as e:
+        rep.warn(f"the jobs' records in {records} could not be added to your record ({host.record_dir()}: "
+                 f"{e.strerror or e}), so they are kept where they are, not deleted; free the space or the folder, "
+                 "then run the same command again")
+        return False
+    return True
+
+
+def keep_journal_record(host: Host, rep: Report) -> bool:
+    """G6.10: the journal of every step goes to the person's record before the tool's state folder is deleted."""
+    path = os.path.join(host.state_dir(), "journal.log")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return True
+    except OSError as e:
+        rep.warn(f"the journal ({path}) could not be read ({e.strerror or e}), so this tool's state folder is kept "
+                 "where it is; the same command run again moves it to your record")
+        return False
+    try:
+        host.keep_in_record("journal.log", text)
+        host.keep_in_record("README.txt", RECORD_README, append=False)
+    except OSError as e:
+        rep.warn(f"the journal could not be added to your record ({host.record_dir()}: {e.strerror or e}), so this "
+                 "tool's state folder is kept where it is; free the space or the folder, then run the same command "
+                 "again")
+        return False
+    return True
+
+
+def delete_record_if_typed(host: Host, rep: Report) -> None:
+    """G6.10: the person's record is deleted only on `--delete-record`, confirmed by a word typed at a terminal."""
+    d = host.record_dir()
+    if host.record_count() == (0, 0):
+        rep.ok(f"no record of yours to delete ({d} is not there)")
+        return
+    if not host.isatty():
+        rep.need(f"deleting your record ({d}) is your own choice, typed at your own terminal: run the same command "
+                 "there and type delete when it asks; until then it is kept", blocks=False)
+        return
+    word = host.ask(f"Type delete to delete your record of what this tool did ({d}), or press Enter to keep it: ")
+    if word.strip() != "delete":
+        rep.ok(f"your record ({d}) is kept, as you chose")
+        return
+    host.delete_record()
+    if host.record_count() == (0, 0):
+        rep.ok(f"your record ({d}) is deleted, as you typed")
+    else:
+        rep.warn(f"your record ({d}) could not be deleted whole; it is yours to delete by hand")
 
 
 def record_line(kind: str, records: str) -> str:
@@ -2730,6 +2862,25 @@ def queued_jobs(gh: GitHub, repo: str) -> list[dict]:
     return out
 
 
+def copy_version_line(host: Host) -> tuple[str, str]:
+    """G4.10 (R101): the version of the copy the watch runs, against this tool's own. Three answers (rule 6): the
+    same ("ok"), different ("warn", which is older and the one step), or not read ("warn", never "same")."""
+    text = host.read(TOOL_COPY)
+    m = re.search(r'^VERSION = "(\d+\.\d+\.\d+)"', text or "", re.M)
+    if not m:
+        return "warn", (f"the version of the copy the watch runs ({TOOL_COPY}) could not be read"
+                        + ("" if text is None else ": it names none") + "; `setup <owner/repo>` again puts this "
+                        f"version's copy in place")
+    theirs = m.group(1)
+    if theirs == VERSION:
+        return "ok", f"the watch runs this version of the tool ({VERSION})"
+    older = tuple(int(x) for x in theirs.split(".")) < tuple(int(x) for x in VERSION.split("."))
+    return "warn", (f"the watch runs version {theirs} of the tool, and this is {VERSION}: "
+                    + ("the watch runs the older code. `setup <owner/repo>` again puts this version's copy in place"
+                       if older else "this tool is the older one. Run the newer tool, or `setup <owner/repo>` "
+                       "with this one to put its copy back"))
+
+
 def watch_heartbeat(data: dict, now: dt.datetime, slept_now: float | None = None) -> tuple[bool, str]:
     """G5.3: a heartbeat older than three intervals of waking time is "the watch is not running". R83: the watch's
     timer counts only waking time, so time this computer slept since the last pass is not counted against it."""
@@ -2832,6 +2983,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                 rest.append(("ok", line))
         else:
             rest.append(("ok", f"queue for {rp}: no job waiting for our runner"))
+        rest.append(last_job_line(host, rp, mine, now))  # G5.17 (R105)
         if blocked_by:
             for j in q:  # G5.13's per-job warnings first, then the queue's summary
                 age = (now - j["created"]).total_seconds() if j["created"] else 0
@@ -2845,6 +2997,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now, host.slept_s())
     rest.append(("ok" if ok_ else "warn", words))
+    rest.append(copy_version_line(host))  # G4.10: a watch running older code is said
     w = data.get("watch") or {}
     every = int(w.get("every_s") or WATCH_EVERY_S)
     for rp in repos:  # G5.15: a blind watch is a stop line, first, never "ok"
@@ -2882,6 +3035,24 @@ def gone_words(repo: str, mine: dict) -> str:
 CANCELED = "The operation was canceled."
 RECORDS_KEPT = 30  # the last jobs read back by `status`
 MATCH_S = 300  # a record and GitHub's job are the same job when they started this close together
+
+
+def last_job_line(host: Host, repo: str, mine: dict, now: dt.datetime) -> tuple[str, str]:
+    """G5.17 (R105): when GitHub last handed a job to this runner, from this computer's own record of each start. A
+    job GitHub never hands over (a schedule that is late or does not come) is GitHub's side, and this says so."""
+    path = records_dir_of(mine.get("folder") or "") + "/jobs.log"
+    text = host.read(path)
+    if text is None and host.there(path) is not False:  # no admin rights: the watch runs this too
+        return "warn", f"when GitHub last handed a job of {repo} to this runner could not be read here ({path})"
+    starts = [x.split(" ", 5) for x in (text or "").splitlines() if x.startswith("start ")]
+    starts = [x for x in starts if len(x) == 6 and x[1].isdigit()]
+    if not starts:
+        return "ok", (f"GitHub has not handed this runner a job of {repo} yet. A job GitHub does not hand over (a "
+                      "schedule there can be late, or not come) is on GitHub's side; the lines above show whether "
+                      "this runner is connected and waiting")
+    t = dt.datetime.fromtimestamp(int(starts[-1][1]), dt.timezone.utc)
+    return "ok", (f"the last job GitHub handed this runner started at {hms(t)} UTC, "
+                  f"{minutes(max(0.0, (now - t).total_seconds()))} ago ('{starts[-1][5]}' of {repo})")
 
 
 def read_records(host: Host, folder: str) -> list[dict]:
@@ -4005,8 +4176,11 @@ def remove_service(host: Host, mine: dict, rep: Report) -> bool:
 def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
     """The runner's own folders (only under the runner user's runners folder), its hooks and its jobs' records."""
     folder = mine.get("folder") or ""
+    records = records_dir_of(folder) if folder else ""
+    if records and exists_as_root(host, records) and not keep_jobs_record(host, records, rep):
+        records = ""  # G6.10: not kept in the person's record, so not deleted (rule 6)
     paths = [x for x in (folder if folder.startswith(RUNNERS_HOME) and "/.." not in folder else "",
-                         hook_dir(repo), records_dir_of(folder) if folder else "") if x]
+                         hook_dir(repo), records) if x]
     for path in paths:
         if exists_as_root(host, path):
             journal(host, "delete", path)
@@ -4015,7 +4189,8 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
     if left:
         rep.stop(f"could not delete {', '.join(left)}. Run the same command again: it finishes a removal that was not finished")
         return False
-    rep.ok("the runner's folders, its hooks and its jobs' records are deleted, read back")
+    rep.ok("the runner's folders and its hooks are deleted, read back"
+           + (f"; its jobs' records are in your record ({host.record_dir()})" if records else ""))
     return True
 
 
@@ -4132,6 +4307,10 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
     else:
         rep.warn(f"the watch's timer is {active.strip() or 'not read'}: `setup` again puts it back")
         broken.append("the watch")
+    kind, words = copy_version_line(host)  # G4.10 (R101)
+    (rep.ok if kind == "ok" else rep.warn)(words)
+    if kind != "ok" and "could not be read" not in words:
+        broken.append("the watch's copy of the tool")
     if broken:
         rep.stop(f"{len(broken)} promise(s) not kept here: {', '.join(broken)}. Nothing was changed: run the command "
                  "each line above names, then `doctor` again")
@@ -4356,15 +4535,25 @@ def remove_shared(host: Host, rep: Report) -> bool:
         rep.ok("the watch's timer and service are gone, read back")
     if not remove_slice(host, rep):
         return False  # the user stays, so `uninstall --all` run again finishes from here (G6.4)
-    for path in (HOOKS_ROOT, RECORDS_ROOT):
+    # G6.10: any runner's jobs' records still here go to the person's record first; one that cannot stays.
+    names = host.listdir_or_none(RECORDS_ROOT)
+    if names is None:
+        rep.warn(f"{RECORDS_ROOT} could not be read, so the jobs' records in it are kept where they are, not deleted")
+        kept_here = [RECORDS_ROOT]
+    else:
+        kept_here = [x for x in (f"{RECORDS_ROOT}/{n}" for n in names if n != os.path.basename(SEEN_ROOT))
+                     if not keep_jobs_record(host, x, rep)]
+    for path in [HOOKS_ROOT] + ([SEEN_ROOT] if kept_here else [RECORDS_ROOT]):
         if exists_as_root(host, path):
             journal(host, "delete", path)
             sudo(host, ["rm", "-rf", "--one-file-system", path])
-    if any(exists_as_root(host, x) for x in (HOOKS_ROOT, RECORDS_ROOT)):
+    if any(exists_as_root(host, x) for x in [HOOKS_ROOT] + ([SEEN_ROOT] if kept_here else [RECORDS_ROOT])):
         rep.stop(f"could not delete {HOOKS_ROOT} or {RECORDS_ROOT}. Run the same command again: it finishes a removal that was not finished")
         ok = False
     else:
-        rep.ok(f"the tool's copy, the job hooks and the jobs' records are deleted ({HOOKS_ROOT}, {RECORDS_ROOT})")
+        rep.ok(f"the tool's copy and the job hooks are deleted ({HOOKS_ROOT}); the jobs' records are "
+               + (f"kept where they are, not deleted: {', '.join(kept_here)}" if kept_here else
+                  f"in your record ({host.record_dir()}), and {RECORDS_ROOT} is deleted"))
     if host.run(["id", RUNNER_USER])[0] == 0:
         left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
         ours = our_leftover_holds(host, left)
@@ -4408,7 +4597,8 @@ def remove_slice(host: Host, rep: Report) -> bool:
     return True
 
 
-def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report) -> None:
+def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report,
+           state_left: bool | None = None) -> None:
     """G6.3, INV6: what is left, each "none" or named. With --all every line should read none."""
     unread: list[str] = []
 
@@ -4467,10 +4657,22 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     mark = len(unread)
     folders = [x for x in (HOOKS_ROOT, RECORDS_ROOT, f"/home/{RUNNER_USER}") if there(x)]
     line("folders", folders, "" if everything else "kept; `uninstall --all` takes them", mark)
+    if state_left is not None:
+        line("this tool's state folder", [host.state_dir()] if state_left else [],
+             "kept: its journal could not be moved to your record (said above)" if state_left else "")
+    # G6.10, INV6: last, the person's record, kept: theirs.
+    n = host.record_count()
+    if n is None:
+        rep.warn(f"census: your record of what this tool did ({host.record_dir()}): not read")
+    elif n != (0, 0):
+        rep.ok(f"census: your record of what this tool did: {host.record_dir()}, {plural(n[1], 'line')} in "
+               f"{plural(n[0], 'file')}, kept: it is yours. Delete it whenever you like, or run `uninstall --all "
+               "--delete-record` in your own terminal")
 
 
 def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
-           host: Host | None = None, gh: GitHub | None = None, out=None, interactive: bool | None = None) -> int:
+           host: Host | None = None, gh: GitHub | None = None, out=None, interactive: bool | None = None,
+           delete_record: bool = False) -> int:
     """G6: `uninstall <owner/repo>` takes one runner away on both sides; `uninstall --all` also takes the runner user, the
     watch, the slice, the tool's folders and `~/.minions/`, and opens a pull request that puts moved jobs back."""
     host = host or Host()
@@ -4501,15 +4703,16 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
             return rep.code()
         for rp in sorted(data.get("moves") or {}):
             put_back(gh, host, rp, data, rep)
-        census(gh, host, known, True, rep)
         journal(host, "delete", f"{host.state_dir()} (the last step)")
-        shutil.rmtree(host.state_dir(), ignore_errors=True)
-        if os.path.isdir(host.state_dir()):
-            rep.stop(f"could not delete {host.state_dir()}. Run the same command again: it finishes a removal that was not finished")
-        else:
-            rep.ok(f"this tool's state ({host.state_dir()}) is deleted: nothing of Windstorm Repo Minions is left "
-                   "on this computer")
+        if keep_journal_record(host, rep):  # G6.10: the journal is the person's record; not kept, not deleted
+            shutil.rmtree(host.state_dir(), ignore_errors=True)
+        if delete_record:
+            delete_record_if_typed(host, rep)
+        # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
+        census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()))
         return rep.code()
+    if delete_record:
+        delete_record_if_typed(host, rep)
     census(gh, host, known, False, rep)
     return rep.code()
 
@@ -4569,8 +4772,8 @@ LAPTOP_WORDS = ("a laptop takes jobs only while it is awake, on the network and 
 
 MEMORY_TRADE_OFF = ("A job that needs more memory than that fails when it reaches the cap, and `status` names it, "
                     "instead of running slowly; jobs are kept out of this computer's swap where it holds that.")
-JOB_TOOLS = ("A job here has only the tools installed on this computer. GitHub's own computers come with many tools "
-             "already installed, so a job that stops with \"command not found\" needs that tool installed here.")
+JOB_TOOLS = ("A job here has only the tools installed on this computer: a job that stops with \"command not found\" "
+             "needs that tool installed here.")  # G7.12: what GitHub's computers carry is only good to know (README)
 
 
 def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
@@ -4584,7 +4787,7 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
     rep.tell("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has waited "
              f"{GITHUB_GIVES_UP_H} hours.")
     rep.tell("A restart of this computer cancels the job running on it. A short sleep only delays it; a sleep of more "
-             f"than about {LONG_SLEEP_MIN} minutes fails it on GitHub (seen). While a job "
+             f"than about {LONG_SLEEP_MIN} minutes fails it on GitHub. While a job "
              "runs, this computer does not fall asleep by itself; a sleep you ask for, the lid, or a low battery still "
              f"puts it to sleep, {sleep_delay_words(s.get('sleep_delay'))}. `status` names a job cut that way as cut, "
              "not as your test failing.")
@@ -4595,7 +4798,7 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
         rep.tell("This computer has a battery: " + LAPTOP_WORDS + ".")
     elif s.get("lid"):
         rep.tell("This computer has a lid: " + LAPTOP_WORDS + ".")
-    rep.tell("This version serves one repository per computer; more come in the next version.")
+    rep.tell("This version serves one repository per computer.")  # G7.12: no promise about a later version
 
 
 class Parser(argparse.ArgumentParser):
@@ -4651,6 +4854,8 @@ def parser() -> Parser:
     rm.add_argument("--all", dest="everything", action="store_true",
                     help="also the runner user, the watch, the slice, the tool's folders and ~/.minions, and a pull "
                          "request that puts moved jobs back")
+    rm.add_argument("--delete-record", action="store_true",
+                    help="also delete your record of what this tool did; asks you to type delete at your terminal")
     rm.add_argument("--wait-minutes", type=int, default=DRAIN_WAIT_S // 60, help="how long to wait for a job to end")
     return ap
 
@@ -4695,7 +4900,7 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: 
             if not a.repo and not a.everything:
                 parser().error("uninstall needs owner/name, or --all")
             return uninstall(a.repo, everything=a.everything, wait_s=max(0, a.wait_minutes) * 60, host=host, gh=gh,
-                          out=out)
+                          out=out, delete_record=a.delete_record)
         return EXIT_USAGE
     except KeyboardInterrupt:
         step = last_journal_step(host)
