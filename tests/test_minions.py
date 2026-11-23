@@ -3600,6 +3600,26 @@ class G8Limit(unittest.TestCase):
         self.assertIn("GitHub's API limit for this login is spent until 23:59Z", lines[-1])
         self.assertIn("Held, nothing stopped", lines[-1])
         self.assertLess(clock.t - M.parse_stamp("2026-11-22T23:00:00Z"), M.dt.timedelta(seconds=60))
+        # R90 (seen on a stock machine): one watch pass read every finished job in this computer's records again, each
+        # pass (16 calls with 13 records, against the 2 said). Now a finished job is read once; a pass after that reads
+        # the repository and its runners only, and the words say the true spend.
+        host, clock = g5_host()
+        d = M.load_state(host)
+        folder = d["runners"][REPO]["folder"]
+        recs = "".join(f"start {1795400000 + 60 * k} {4500 + k} 1 0 j\nend {1795400030 + 60 * k} {4500 + k} 1 0 j\n"
+                       for k in range(13))
+        host.files[M.records_dir_of(folder) + "/jobs.log"] = recs
+        gh = StatusGH()
+        gh.jobs = {4500 + k: [{"id": 9000 + k, "name": "j", "runner_name": "minions-box-1", "status": "completed",
+                               "conclusion": "success", "run_attempt": 1,
+                               "started_at": M.stamp(M.dt.datetime.fromtimestamp(1795400000 + 60 * k, M.dt.timezone.utc))}]
+                   for k in range(13)}
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.calls), 2 + 13)
+        gh.calls.clear()
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.calls), 2, gh.calls)
+        self.assertIn(f"and at most {M.WATCH_CALLS_PER_JOB} more for each job that ends here", M.limit_words(host.now()))
 
 
 class INV(unittest.TestCase):
