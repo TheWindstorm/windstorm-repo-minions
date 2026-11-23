@@ -3083,6 +3083,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                            "restarted and GitHub reads the runner online"))
     for kind, text in first + rest:
         {"ok": rep.ok, "warn": rep.warn, "stop": rep.stop, "need": rep.need}[kind](text)
+    if any("stopped by this computer's memory limit" in text for _, text in first + rest):
+        rep.tell(MEMORY_TRADE_OFF)  # G7.14: said where a job the cap stopped is named
     return rep.code()
 
 
@@ -4009,6 +4011,7 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     save_state(host, data)
     rep.ok(f"pull request #{pr['number']} opened: {len(moved)} job(s) to move, {len(left) + len(publish)} left "
            "as they are and named in it")
+    before_move_words(survey_, rep)  # G7.14: its own block, the last thing before the merge it asks for
     rep.need(f"read and merge pull request #{pr['number']} yourself ({pr['url']}); this tool never merges. Then "
              f"run `move {repo} --verify`")
     return rep.code()
@@ -4849,20 +4852,17 @@ LAPTOP_WORDS = ("a laptop takes jobs only while it is awake, on the network and 
                 "`resume <owner/repo> --on-battery-too` lets it take jobs on battery as well")
 
 
-MEMORY_TRADE_OFF = ("A job that needs more memory than that fails when it reaches the cap, and `status` names it, "
-                    "instead of running slowly; jobs are kept out of this computer's swap where it holds that.")
+MEMORY_TRADE_OFF = ("A job that needs more memory than this computer's limit for jobs fails when it reaches it, and "
+                    "`status` names it, instead of running slowly; jobs are kept out of this computer's swap where it "
+                    "holds that.")
 JOB_TOOLS = ("A job here has only the tools installed on this computer: a job that stops with \"command not found\" "
              "needs that tool installed here.")  # G7.12: what GitHub's computers carry is only good to know (README)
 
 
-def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
-    """G7.10 (P1a run B): what the person must hear before setup, printed by the tool for the agent to pass on word
-    for word. A list in the skill file was skipped by a small model; a line the tool prints is not."""
-    rep.tell(f"Anyone who can push to {repo} can run code on this computer, as its own user {RUNNER_USER}, which "
-             "has no admin rights.")
-    rep.tell("This is for a private repository only: on a public one, a stranger's pull request could run code on "
-             f"this computer. The tool refuses a public repository, and if {repo} is made public later, its runner "
-             "stops taking jobs.")
+def before_move_words(s: dict, rep: Report) -> None:
+    """G7.14 (R111): what the person must hear before their merge moves jobs here, printed by `move` as its own
+    numbered block just before it asks for that merge (the owner's ruling, 2026-11-23: each line at the moment it
+    matters; nine lines before setup were more than the smallest model carried whole)."""
     rep.tell("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has waited "
              f"{GITHUB_GIVES_UP_H} hours.")
     rep.tell("A restart of this computer cancels the job running on it. A short sleep only delays it; a sleep of more "
@@ -4870,9 +4870,21 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
              "runs, this computer does not fall asleep by itself; a sleep you ask for, the lid, or a low battery still "
              f"puts it to sleep, {sleep_delay_words(s.get('sleep_delay'))}. `status` names a job cut that way as cut, "
              "not as your test failing.")
-    rep.tell(floor or limits_in_words(lim))
-    rep.tell(MEMORY_TRADE_OFF)  # R98: said by the tool, so it reaches the person; the README alone did not
     rep.tell(JOB_TOOLS)
+
+
+def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
+    """G7.10 (P1a run B): what the person must hear before setup, printed by the tool for the agent to pass on word
+    for word. A list in the skill file was skipped by a small model; a line the tool prints is not. Only what matters
+    before setup (G7.14): the rest is said where it matters."""
+    rep.tell(f"Anyone who can push to {repo} can run code on this computer, as its own user {RUNNER_USER}, which "
+             "has no admin rights.")
+    rep.tell("This is for a private repository only: on a public one, a stranger's pull request could run code on "
+             f"this computer. The tool refuses a public repository, and if {repo} is made public later, its runner "
+             "stops taking jobs.")
+    rep.tell(floor or limits_in_words(lim))
+    # G7.14 (R111): waiting checks, restarts and sleep, and a job's tools are said by `move`, before the merge that
+    # moves jobs here; the memory cap's trade-off by `status`, where it names a job the cap stopped.
     if s.get("battery"):
         rep.tell("This computer has a battery: " + LAPTOP_WORDS + ".")
     elif s.get("lid"):
