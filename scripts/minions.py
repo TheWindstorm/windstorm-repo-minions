@@ -1817,6 +1817,31 @@ def lock_credentials(host: Host, folder: str, rep: Report) -> bool:
     return True
 
 
+SWAP_MAX_FILE = f"/sys/fs/cgroup/{SLICE}/memory.swap.max"
+
+
+def swap_cap_read(host: Host) -> tuple[str, str]:
+    """R94: whether this computer holds jobs out of swap, read from the running slice itself, never from what was
+    written: ("kept", line), ("not kept", line) or ("unread", line). Only "kept" is ever said or recorded as kept."""
+    v = host.read(SWAP_MAX_FILE)
+    after = ("A job that outgrows its cap here may run slowly through swap, with your disk, instead of failing by "
+             "name. Next step: none for jobs to run; `doctor` says this each time it reads it")
+    if v is None:
+        return "unread", (f"could not read whether jobs are kept out of swap: {SWAP_MAX_FILE} is not there (this "
+                          "computer does not count swap for each group of processes, or the slice is not running). "
+                          + after)
+    if v.strip() == "0":
+        return "kept", "jobs are kept out of this computer's swap, read back from the running slice"
+    return "not kept", (f"this computer did not keep jobs out of swap: the running slice reads {v.strip()} for its swap "
+                        "cap, not 0. " + after)
+
+
+def say_swap_cap(host: Host, rep: Report) -> bool:
+    kind, line = swap_cap_read(host)
+    (rep.ok if kind == "kept" else rep.warn)(line)
+    return kind == "kept"
+
+
 def change_limits(host: Host, repo: str, known: dict, lim: dict, rep: Report) -> int:
     """R92 (G7.8): `setup <repo> --limits` on a runner already set up here rewrites the slice only, reads it back from
     systemd and records it. Nothing else is touched: the runner, its registration and a job running now go on, and
@@ -1843,6 +1868,8 @@ def change_limits(host: Host, repo: str, known: dict, lim: dict, rep: Report) ->
         return rep.code()
     keep = ("cores", "pct", "CPUQuota", "MemoryHigh", "MemoryMax", "MemorySwapMax")
     known["runners"][repo]["limits"] = {k: lim[k] for k in keep if k in lim}
+    if say_swap_cap(host, rep):
+        known["runners"][repo]["limits"]["swap_kept"] = True
     save_state(host, known)
     rep.ok(f"the limits of {repo}'s runner are changed, read back from systemd: {limits_in_words(lim).split(';')[0]}. "
            "Nothing else was touched; a job running now goes on, held to these limits from now on")
@@ -2020,11 +2047,13 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     unit = install_service(host, folder, survey_, rep, lim)
     if unit is None:
         return rep.code()
+    swap_kept = say_swap_cap(host, rep)  # R94: read from the running slice; only "kept" is recorded as kept
     data = load_state(host)
     data.setdefault("runners", {})[repo] = {"name": runner_name, "folder": folder, "unit": unit, "labels": labels,
                                             "version": version, "hooks": hook_dir(repo),
                                             "limits": {k: lim[k] for k in ("cores", "pct", "CPUQuota", "MemoryHigh",
-                                                                           "MemoryMax", "MemorySwapMax")},
+                                                                           "MemoryMax", "MemorySwapMax")}
+                                                      | ({"swap_kept": True} if swap_kept else {}),
                                             "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
     (data.get("setting_up") or {}).pop(repo, None)
     if "setting_up" in data and not data["setting_up"]:
@@ -4157,6 +4186,13 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     if "MemorySwapMax" in lim:  # set up before 0.1.0's no-swap default: not recorded, so not compared
         want_l["MemorySwapMax"] = str(lim["MemorySwapMax"])
     off = [f"{k}={sl.get(k)!r}" for k, v in want_l.items() if sl.get(k) != v]
+    if lim.get("swap_kept"):  # R94: kept at setup, so a change since is a promise not kept
+        kind, line = swap_cap_read(host)
+        if kind != "kept":
+            bad("limits", f"{line.split('. ')[0]}, though setup read it kept: `setup {repo} --limits "
+                          f"{lim.get('cores')},{lim.get('pct')}` writes it again")
+    elif lim and "MemorySwapMax" in lim:
+        rep.warn(f"{repo}: {swap_cap_read(host)[1]}")
     if not lim:
         rep.warn(f"{repo}: the limits set up here: not recorded, so not compared")
     elif off:

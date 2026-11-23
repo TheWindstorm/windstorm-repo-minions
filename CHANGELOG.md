@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- Jobs get a memory maximum with no high mark and no swap by default. A job that needs more memory than its
-  limit fails at once and is named, with the way to raise the limit. With a high mark and swap, such a job was
-  pushed through swap and the person's own disk writes became about 10 times slower while it ran. `doctor` reads
-  the swap cap back too (G4.2, row R94).
+- Memory: a job that needs more than its cap now fails when it reaches the cap, by name, instead of running
+  slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises the cap. Jobs get no high mark and are kept
+  out of swap, where this computer holds that: `setup` reads it back from the running slice and says kept, not
+  kept, or could not be read, and `doctor` tells you if it stops being held (G4.2, row R94).
 - A job killed by our memory limit is said with the limit it was killed under. After a limit change, `status` said
   the new limit for a job killed under the old one (G5.14, row R93).
 - `setup <owner/repo> --limits` changes the limits of a runner already set up here, in place: the slice is

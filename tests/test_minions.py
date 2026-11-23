@@ -1811,6 +1811,35 @@ class G4(unittest.TestCase):
         fed = {a[-1]: x for a, x in host.fed if a[:3] == ("sudo", "-n", "tee") or "tee" in a}
         self.assertTrue(any("CPUQuota=400%" in (x or "") for x in fed.values()), list(fed))
         self.assertTrue([a for a in host.ran if "show" in a and "CPUWeight" in a], "read back")
+        # R94: kept out of swap is read from the running slice, three answers; only "kept" is said or recorded so.
+        for swap_max, kind, said in (("0\n", "ok", "jobs are kept out of this computer's swap, read back"),
+                                     ("max\n", "warn", "this computer did not keep jobs out of swap: the running "
+                                                       "slice reads max for its swap cap, not 0"),
+                                     (None, "warn", "could not read whether jobs are kept out of swap")):
+            host, sha = setup_host()
+            fresh_look(host)
+            if swap_max is not None:
+                host.files[M.SWAP_MAX_FILE] = swap_max
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_OK, lines)
+            self.assertTrue(any(x.startswith(f"{kind} {said}") for x in lines), (swap_max, lines))
+            if kind == "warn":
+                self.assertFalse(any("kept out of this computer's swap" in x for x in lines), lines)
+                self.assertTrue(any("instead of failing by name. Next step:" in x for x in lines), lines)
+            rec = M.load_state(host)["runners"][REPO]["limits"]
+            self.assertEqual(rec.get("swap_kept"), True if kind == "ok" else None)
+        # doctor: kept at setup, then not held: a promise not kept, named, with the command that writes it again.
+        host, sha = setup_host()
+        fresh_look(host)
+        host.files[M.SWAP_MAX_FILE] = "0\n"
+        run_setup(setup_gh(sha), host)
+        lim = M.load_state(host)["runners"][REPO]["limits"]
+        host.runs[("systemctl", "show", "minions.slice")] = (0, f"CPUQuotaPerSecUSec={lim['cores']}s\nMemoryHigh=infinity\n"
+                                                                f"MemoryMax={lim['MemoryMax']}\nMemorySwapMax=0\n")
+        host.files[M.SWAP_MAX_FILE] = "max\n"
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(any("did not keep jobs out of swap" in x and "though setup read it kept" in x for x in lines),
+                        lines)
 
     def test_G11_1_a_laptop_is_named_and_its_limits_said_before_setup(self):
         page = load("look-recent-runs.jsonl")
