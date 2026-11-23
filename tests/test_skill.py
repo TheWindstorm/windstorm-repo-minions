@@ -75,6 +75,24 @@ class Skill(unittest.TestCase):
                      "never press Agree or Accept"):
             self.assertIn(must, persons, must)
 
+    def test_G8_10_a_persons_step_is_never_done_another_way(self):
+        persons = flat(section(text(), "The person's steps"))
+        self.assertIn("A step that is the person's is never done another way", persons)
+        self.assertIn("If you cannot do what a line says, or the command fails, tell the person what it printed and "
+                      "ask", persons)
+        self.assertIn("a download instead of the named install", persons)
+
+    def test_G8_11_the_tools_words_are_quoted_exactly_or_not_called_its_words(self):
+        lines = flat(section(text(), "What the tool prints"))
+        self.assertIn("give them exactly as printed: add nothing inside them (no other time zone, no conversion, "
+                      "no comment)", lines)
+        self.assertIn("Your own explanation is never presented as the tool's", lines)
+        self.assertIn("| `tell the person` | words the person must hear | say them to the person exactly as printed",
+                      lines)
+        before = flat(section(text(), "Before setup"))
+        self.assertIn("look's last lines are `tell the person` lines. Say each one to the person, exactly as printed",
+                      before)
+
     def test_G8_8_the_skill_says_waiting_is_not_done(self):
         w = flat(section(text(), "Waiting"))
         self.assertIn("`waiting` is not done", w)

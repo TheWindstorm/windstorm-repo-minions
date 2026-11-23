@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import tempfile
 import unittest
 from unittest import mock
@@ -57,9 +58,11 @@ class StandIn(M.GitHub):
 
 
 class FakeHost(M.Host):
-    def __init__(self, system="Linux", files=None, runs=None, which=("gh", "sudo", "systemctl"), uid=1000,
+    def __init__(self, system="Linux", files=None, runs=None, which=None, uid=1000,
                  groups=("users",), dirs=None, links=None, page="", free=(100 * 1024 ** 3, 500 * 1024 ** 3)):
         self._system, self.files, self.runs = system, dict(files or {}), dict(runs or {})
+        if which is None:  # every program the tool and its hooks run (G8.9); no container engine
+            which = ("gh", "sudo", "systemctl", *M.PROGRAMS, *M.HOOK_PROGRAMS)
         self._which, self._uid, self._groups = set(which), uid, list(groups)
         self.dirs, self.links, self.page, self.free = dict(dirs or {}), dict(links or {}), page, free
         self.ran, self.fed = [], []  # every argv run; (argv, standard input) of every run_in
@@ -109,6 +112,11 @@ class FakeHost(M.Host):
 
     def read(self, path):
         return self.files.get(path)
+
+    def write_text(self, path, text):
+        if os.path.dirname(path) == M.SEEN_ROOT and getattr(self, "seen_unwritable", False):
+            raise PermissionError(13, "Permission denied", path)
+        self.files[path] = text
 
     def listdir(self, path):
         return self.dirs.get(path, [])
@@ -444,19 +452,20 @@ jobs:
         host.now = lambda: M.dt.datetime(2026, 11, 22, 18, 0, tzinfo=M.dt.timezone.utc)
         _, lines = look(StandIn(self.recent), host)
         line = [x for x in lines if "billing page" in x][0]
-        self.assertTrue(line.startswith("ok GitHub's billing page, read 2026-11-22 18:00 UTC"), line)
+        self.assertTrue(line.startswith("tell the person: GitHub's billing page, read 2026-11-22 18:00 UTC"), line)
         self.assertIn("Self-hosted runners.", line)
         self.assertIn(M.COST_URL, line)
         for page in (OSError("offline"), "<html><p>Something else entirely.</p></html>"):
             host = linux_host(page=page)
             _, lines = look(StandIn(self.recent), host)
             self.assertTrue(any(x.startswith("warn I could not read GitHub's rule today") for x in lines), lines)
+            self.assertIn("tell the person: I could not read GitHub's page about charges today.", lines)
             self.assertFalse(any("lists \"Self-hosted runners\"" in x for x in lines))
 
     def test_G1_10_no_github_cli_or_login_is_the_first_need_you(self):
         gh = StandIn(self.recent)
         code, lines = look(gh, linux_host(which=("sudo",)))
-        self.assertEqual(lines, ["need you: install the GitHub CLI: sudo apt install gh"])
+        self.assertEqual(lines, ["need you: install the GitHub CLI: sudo apt update && sudo apt install gh"])
         self.assertEqual(code, M.EXIT_NEED)
         self.assertEqual(gh.calls, [])
         host = linux_host(runs={("gh", "auth", "status"): (1, "You are not logged into any GitHub hosts.")})
@@ -546,6 +555,11 @@ def setup_host(**kw):
         ("sudo", "-n", "stat", "-c", "%a %U", f"{M.hook_dir(REPO)}/job-started.sh"): (0, "755 root\n755 root\n"),
         ("sudo", "-n", "-u", "minions-runner", "--", f"{FOLDER}/bin/Runner.Listener", "--version"): (0, "2.338.2\n"),
     })
+    # G5.15: setup's first watch pass runs the real watch, as the timer would, against a GitHub that reads it private.
+    def first_pass(argv, inp):
+        M.watch(host=host, gh=StatusGH(), out=io.StringIO())
+        return 0, ""
+    host.runs[("sudo", "-n", "systemctl", "start", "minions-watch.service")] = first_pass
     host.runs.update(extra)
     return host, sha
 
@@ -563,6 +577,22 @@ def fresh_look(host, minutes=5, stopped=False, survey=True):
     s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024,
          "free": 100 * 1024 ** 3} if survey else {}
     M.save_state(host, {"looks": {REPO: {"time": when, "stopped": stopped, "survey": s}}})
+
+
+def no_event():
+    """This process's environment without GitHub's event record: in CI, GitHub's runner sets GITHUB_EVENT_PATH for
+    this repository's own (public) job, and the hook under test rightly refuses on it (seen 2026-11-23)."""
+    env = dict(os.environ)
+    env.pop("GITHUB_EVENT_PATH", None)
+    return env
+
+
+def fresh_seen(folder, value=None):
+    """G5.15: the watch's record that it read the repository private, as a hook test needs it."""
+    path = os.path.join(folder, "seen-private")
+    with open(path, "w") as f:
+        f.write((value if value is not None else str(int(time.time()))) + "\n")
+    return path
 
 
 def run_setup(gh, host, interactive=False):
@@ -1305,9 +1335,10 @@ class G4(unittest.TestCase):
         with open(os.path.join(bindir, "systemd-inhibit"), "w") as f:
             f.write(FAKE_INHIBIT)
         os.chmod(os.path.join(bindir, "systemd-inhibit"), 0o755)
-        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""), MINIONS_TEST_LOG=log,
+        env = dict(no_event(), PATH=bindir + os.pathsep + os.environ.get("PATH", ""), MINIONS_TEST_LOG=log,
                    RUNNER_TRACKING_ID="github_job_1", GITHUB_WORKSPACE=os.path.join(folder, "_work", "r", "r"))
-        for name, text in (("start.sh", M.job_started_script(folder)), ("done.sh", M.job_completed_script(folder))):
+        seen = fresh_seen(folder)
+        for name, text in (("start.sh", M.job_started_script(folder, seen=seen)), ("done.sh", M.job_completed_script(folder))):
             with open(os.path.join(folder, name), "w") as f:
                 f.write(text)
         return env
@@ -1883,10 +1914,12 @@ class G5(unittest.TestCase):
                 f.write("low 0\nhigh 3\nmax 2\noom 1\noom_kill 1\n")
             recs = os.path.join(d, "records")
             os.makedirs(recs)
-            env = dict(os.environ, GITHUB_RUN_ID="555", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="check",
+            env = dict(no_event(), GITHUB_RUN_ID="555", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="check",
                        GITHUB_WORKSPACE=os.path.join(d, "nowhere"), PATH="/usr/bin:/bin")
             with mock.patch.object(M, "MEMORY_EVENTS", events):
-                for name, fn in (("s.sh", M.job_started_script), ("e.sh", M.job_completed_script)):
+                seen = fresh_seen(d)
+                for name, fn in (("s.sh", lambda f, r: M.job_started_script(f, r, seen=seen)),
+                                 ("e.sh", M.job_completed_script)):
                     with open(os.path.join(d, name), "w") as f:
                         f.write(fn(os.path.join(d, "runner"), recs).replace("command -v systemd-inhibit", "false"))
                     r = subprocess.run(["bash", os.path.join(d, name)], env=env, capture_output=True, text=True, timeout=30)
@@ -2219,9 +2252,10 @@ class G8(unittest.TestCase):
         self.assertEqual(tuple(sub.choices), M.COMMANDS)
         self.assertTrue(set(M.COMMANDS) <= set(plan), M.COMMANDS)
         self.assertEqual(list(M.COMMANDS), sorted(M.COMMANDS, key=plan.index))
-        # Five line kinds; the worst decides the code: 0 ok/warn, 2 stop, 3 need you, 4 waiting.
-        self.assertEqual(M.LINE_KINDS, ("ok", "warn", "stop", "need you", "waiting"))
-        cases = [((), 0), (("warn",), 0), (("wait",), 4), (("wait", "need"), 3), (("wait", "need", "stop"), 2)]
+        # Six line kinds; the worst decides the code: 0 ok/warn/tell, 2 stop, 3 need you, 4 waiting.
+        self.assertEqual(M.LINE_KINDS, ("ok", "warn", "stop", "need you", "waiting", "tell the person"))
+        cases = [((), 0), (("warn",), 0), (("tell",), 0), (("wait",), 4), (("wait", "need"), 3),
+                 (("wait", "need", "stop"), 2)]
         for kinds, code in cases:
             rep = M.Report(io.StringIO())
             rep.ok("x")
@@ -2230,6 +2264,13 @@ class G8(unittest.TestCase):
             self.assertEqual(rep.code(), code, kinds)
             for line in rep.lines:
                 self.assertTrue(any(line.startswith(k) for k in M.LINE_KINDS), line)
+        # P1a: every need-you line is exit 3, also one that lets the steps after it run (an agent trusting exit
+        # codes went on past an ask); only a password typed at once, in this same run, is not an open ask.
+        for kw, code in (({"blocks": False}, M.EXIT_NEED), ({"blocks": False, "answered_here": True}, M.EXIT_OK)):
+            rep = M.Report(io.StringIO())
+            rep.need("x", **kw)
+            rep.ok("y")
+            self.assertEqual(rep.code(), code, kw)
         # The whole table: every way a command ends has its own code.
         self.assertEqual((M.EXIT_OK, M.EXIT_FAILED, M.EXIT_STOP, M.EXIT_NEED, M.EXIT_WAIT, M.EXIT_USAGE,
                           M.EXIT_INTERRUPTED), (0, 1, 2, 3, 4, 64, 130))
@@ -2276,13 +2317,275 @@ class G8(unittest.TestCase):
         self.assertEqual(re.findall(r'\[\s*"(?:systemctl|journalctl)"', src), ['["systemctl"', '["journalctl"'])
 
 
+class BlindGH(StatusGH):
+    """GitHub as a watch sees it when `gh` cannot be run: no HTTP answer at all, and why."""
+
+    def __init__(self, why="the GitHub CLI (gh) could not be found with this PATH: /usr/bin:/bin", **kw):
+        super().__init__(**kw)
+        self.blind_why = why
+
+    def api(self, method, path, body=None):
+        self.calls.append((method, path))
+        self.why = self.blind_why
+        return 0, {"message": self.blind_why}
+
+
+def hook_run(folder, seen_value, wait_s=0, event=None):
+    """Runs the job-started hook for real, with a stand-in for its sleep locks; returns (exit, its output).
+    `event`: GitHub's record of the event, as the runner gives it to the job (None: none given)."""
+    seen = fresh_seen(folder, seen_value)
+    recs = os.path.join(folder, "records")
+    os.makedirs(recs, exist_ok=True)
+    text = M.job_started_script(folder, recs, seen=seen, hold_wait_s=wait_s).replace("command -v systemd-inhibit",
+                                                                                     "false")
+    path = os.path.join(folder, "start.sh")
+    with open(path, "w") as f:
+        f.write(text)
+    env = dict(no_event(), PATH="/usr/bin:/bin", GITHUB_RUN_ID="77", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="j")
+    if event is not None:
+        env["GITHUB_EVENT_PATH"] = os.path.join(folder, "event.json")
+        with open(env["GITHUB_EVENT_PATH"], "w") as f:
+            json.dump(event, f)
+    r = subprocess.run(["bash", path], env=env, capture_output=True, text=True, timeout=60)
+    return r.returncode, r.stdout + r.stderr
+
+
+class P1a(unittest.TestCase):
+    """What the two cold starts (P1a, 2026-11-22) found: each fix and its test."""
+
+    def test_G7_10_look_prints_what_to_tell_the_person_before_setup(self):
+        code, lines = look(StandIn(load("look-recent-runs.jsonl")), linux_host())
+        tells = [x[len("tell the person: "):] for x in lines if x.startswith("tell the person: ")]
+        said = " ".join(tells)
+        for words in ("Anyone who can push to example-org/example-repo can run code on this computer",
+                      "This is for a private repository only",
+                      "While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has "
+                      "waited 24 hours.",
+                      "A restart of this computer cancels the job running on it",
+                      "This version serves one repository per computer",
+                      "GitHub's billing page, read "):
+            self.assertIn(words, said)
+        limits = next(x for x in lines if x.startswith("ok jobs here get at most"))
+        self.assertIn(limits[len("ok "):], tells)  # the limits, word for word as look printed them
+        self.assertFalse(any(x.startswith("This computer has a battery") for x in tells))  # no laptop sentence
+        # A laptop: its sentence is said too.
+        host = linux_host(files={"/sys/class/power_supply/BAT0/type": "Battery\n"},
+                          dirs={"/sys/class/power_supply": ["BAT0"]})
+        lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
+        self.assertIn("tell the person: This computer has a battery: " + M.LAPTOP_WORDS + ".", lines)
+        # They come after the reading, all together, so an agent says them before setup.
+        first = min(i for i, x in enumerate(lines) if x.startswith("tell the person: "))
+        self.assertTrue(all(x.startswith("tell the person: ") for x in lines[first:]), lines[first:])
+
+    def test_G6_7_uninstall_says_the_put_back_checks_before_its_pull_request(self):
+        gh, world, host = remove_setup()
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        tell = next(i for i, x in enumerate(lines) if x.startswith("tell the person: The pull request that puts 1 "
+                                                                    "job(s) back starts its own checks"))
+        ask = next(i for i, x in enumerate(lines) if x.startswith("need you: read and merge pull request #12"))
+        self.assertLess(tell, ask)
+        self.assertIn("runs there once for it, before you merge", lines[tell])
+
+    def test_G5_15_a_blind_watch_says_so_and_holds_after_three_passes(self):
+        host, clock = g5_host()
+        seen = M.seen_path(FOLDER)
+        # It reads the repository private: the time goes where the hook reads it.
+        self.assertEqual(run_cmd(M.watch, host=host, gh=StatusGH())[0], M.EXIT_OK)
+        self.assertEqual(host.files[seen].strip(), str(int(clock.t.timestamp())))
+        # Blind (gh not found): each pass ends `stop`, with the count and why, never in silence.
+        for n in (1, 2, 3):
+            clock.sleep(300)
+            code, lines = run_cmd(M.watch, host=host, gh=BlindGH())
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertIn(f"{n} pass(es) in a row", lines[-1])
+            self.assertIn("could not be found with this PATH", lines[-1])
+        self.assertIn("this computer takes no job of it now", lines[-1])
+        self.assertIn("run `setup` again from a terminal where `gh` works", lines[-1])
+        self.assertEqual(host.files[seen].strip(), str(int(clock.t.timestamp()) - 900))  # never refreshed blind
+        # status: a stop line, first; never "ok" for the watch alone.
+        code, lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertTrue(lines[0].startswith(f"stop the watch could not read whether {REPO} is still private, 3 pass"))
+        # A logged-out gh gets its own way out.
+        host2, _ = g5_host()
+        lines = run_cmd(M.watch, host=host2, gh=BlindGH(why="GitHub gave no answer: To get started with GitHub CLI, "
+                                                            "please run:  gh auth login"))[1]
+        self.assertIn("Your way out: log in again with `gh auth login`", lines[-1])
+        # Reading it private again ends the count and refreshes the time.
+        clock.sleep(300)
+        self.assertEqual(run_cmd(M.watch, host=host, gh=StatusGH())[0], M.EXIT_OK)
+        self.assertNotIn("blind", M.load_state(host)["watch"])
+        self.assertEqual(host.files[seen].strip(), str(int(clock.t.timestamp())))
+        # Public: "public" at once, whatever else the watch can do.
+        host3, _ = g5_host()
+        run_cmd(M.watch, host=host3, gh=StatusGH(private=False))
+        self.assertEqual(host3.files[seen].strip(), "public")
+        # A record it cannot write is blind too.
+        host4, _ = g5_host()
+        host4.seen_unwritable = True
+        code, lines = run_cmd(M.watch, host=host4, gh=StatusGH())
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("could not write", lines[-1])
+
+    def test_G5_15_the_job_hook_refuses_a_job_without_a_fresh_private_read(self):
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            folder = os.path.realpath(d)
+            now = int(time.time())
+            self.assertEqual(hook_run(folder, str(now))[0], 0)
+            self.assertEqual(hook_run(folder, str(now - 14 * 60))[0], 0)
+            for value in (str(now - 16 * 60), "public", "", "garbage"):
+                code, out = hook_run(folder, value)
+                self.assertEqual(code, 1, value)
+                self.assertIn("::error::Windstorm Repo Minions refused this job before any of its steps", out)
+            self.assertIn("no longer private", hook_run(folder, "public")[1])
+            self.assertEqual(hook_run(folder, str(now + 3600))[0], 1)  # a time in the future is not fresh
+            # GitHub's own record of the event: "not private" refuses at once, even with a fresh read.
+            private = {"repository": {"full_name": REPO, "private": True, "visibility": "private"}}
+            public = {"repository": {"full_name": REPO, "private": False, "visibility": "public"}}
+            self.assertEqual(hook_run(folder, str(now), event=private)[0], 0)
+            code, out = hook_run(folder, str(now), event=public)
+            self.assertEqual(code, 1)
+            self.assertIn("GitHub's own record of this event says the repository is not private", out)
+            self.assertEqual(hook_run(folder, str(now), event={"schedule": "0 * * * *"})[0], 0)  # no repository named
+            self.assertEqual(hook_run(folder, str(now - 3600), event={"schedule": "0 * * * *"})[0], 1)
+            # Each refusal is written down, so status can name it (both sides, with GitHub's failure).
+            with open(os.path.join(folder, "records", "jobs.log")) as f:
+                kinds = [x.split()[0] for x in f.read().splitlines()]
+            self.assertIn("refused-public", kinds)
+            self.assertIn("refused-stale", kinds)
+            # Stale, then made fresh while the hook waits: the job goes on.
+            seen = fresh_seen(folder, str(now - 3600))
+            text = M.job_started_script(folder, seen=seen, hold_wait_s=20).replace("command -v systemd-inhibit", "false")
+            with open(os.path.join(folder, "s.sh"), "w") as f:
+                f.write(text)
+            p = subprocess.Popen(["bash", os.path.join(folder, "s.sh")], env=dict(no_event(), PATH="/usr/bin:/bin"),
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            time.sleep(2)
+            fresh_seen(folder)
+            out = p.communicate(timeout=60)[0]
+            self.assertEqual(p.returncode, 0, out)
+            self.assertIn("has not read this repository private in the last 15 minutes; waiting up to", out)
+        # It is checked before anything else the hook starts (the sleep locks), so no step of the job runs first.
+        script = M.job_started_script(FOLDER)
+        for check in ("event=\"$(python3", "refused-public", "refused-stale"):
+            self.assertLess(script.index(check), script.index("setsid"), check)
+
+    def test_G5_15_status_names_a_refused_job_as_refused(self):
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        failed = {"conclusion": "failure", "steps": [{"name": "Set up job", "conclusion": "failure"}]}
+        note = ["Windstorm Repo Minions refused this job before any of its steps: the watch on that computer has not "
+                "read the repository private in the last 15 minutes"]
+        for kind, why in (("stale", "the watch not having read the repository private in the last 15 minutes"),
+                          ("public", "GitHub's own record of the event, or the watch, saying the repository is not "
+                                     "private")):
+            host, gh, _ = G5._named(self, f"start {t0} 555 1 0 check\nrefused-{kind} {t0 + 360} 555 1 0 check\n",
+                                    failed, notes=note)
+            lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+            named = [x for x in lines if x.startswith("warn job 'check'")]
+            self.assertEqual(named, [f"warn job 'check' (run 555, started 22:40:00Z) was refused before its first step "
+                                     f"by this computer's guard: {why}. No step of it ran here; GitHub shows it as "
+                                     f"failed, not a failing test of yours. To run it again, once: `status {REPO} "
+                                     "--rerun 9001`."])
+        # Without this computer's record of a refusal, a failed job is the person's own: never named.
+        host, gh, _ = G5._named(self, f"start {t0} 555 1 0 check\nend {t0 + 60} 555 1 0 check\n", failed, notes=note)
+        self.assertFalse(any(x.startswith("warn job") for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
+
+    def test_G5_15_setup_reads_back_one_real_watch_pass(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(("sudo", "-n", "systemctl", "start", "minions-watch.service", "--no-pager"), host.ran)
+        self.assertTrue(any(x.startswith(f"ok the watch's first pass ran now, as the timer runs it, and read {REPO} "
+                                         "private (read back)") for x in lines), lines)
+        # A first pass that cannot read GitHub: setup stops and says why.
+        host, sha = setup_host()
+        fresh_look(host)
+
+        def blind_pass(argv, inp):
+            M.watch(host=host, gh=BlindGH(), out=io.StringIO())
+            return 0, ""
+        host.runs[("sudo", "-n", "systemctl", "start", "minions-watch.service")] = blind_pass
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertTrue(lines[-1].startswith("stop the watch's first pass could not read whether the repository is "
+                                             "private: the GitHub CLI (gh) could not be found"), lines[-1])
+
+    def test_G8_9_every_program_a_service_runs_by_name_is_listed_and_resolved(self):
+        import ast
+        with open(M.__file__, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+
+        def first_word(node):
+            if isinstance(node, ast.BinOp):
+                node = node.left
+            if isinstance(node, ast.List) and node.elts and isinstance(node.elts[0], ast.Constant) \
+                    and isinstance(node.elts[0].value, str) and not node.elts[0].value.startswith("-"):
+                return node.elts[0].value
+            return None
+        names = set()
+        for node in ast.walk(tree):
+            cands = []
+            if isinstance(node, ast.Call):
+                fn = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                if fn in ("run", "run_in", "Popen", "check_output", "check_call") and node.args:
+                    cands.append(node.args[0])
+                if fn in ("sudo", "as_runner") and len(node.args) > 1:
+                    cands.append(node.args[1])
+            if isinstance(node, ast.FunctionDef) and node.name in ("systemctl", "journalctl", "inhibitor_argv"):
+                cands += [r.value for r in ast.walk(node) if isinstance(r, ast.Return) and r.value is not None]
+            if isinstance(node, ast.Assign) and any(isinstance(x, ast.Name) and (x.id in ("argv", "full", "cmd")
+                                                                               or x.id.startswith("INHIBIT"))
+                                                    for x in node.targets):
+                cands.append(node.value)
+            names |= {w for w in map(first_word, cands) if w}
+        self.assertGreater(len(names), 15, names)  # the scan finds them (a scan that finds nothing proves nothing)
+        unlisted = {n for n in names if n not in M.PROGRAMS and n not in M.DARWIN_ONLY}
+        self.assertEqual(unlisted, set(), "a program run by name must be listed in PROGRAMS (resolved at setup)")
+        # The hooks: every command they run is in HOOK_PROGRAMS, and they run with exactly those folders.
+        builtins = {"if", "then", "else", "elif", "fi", "for", "do", "done", "case", "esac", "echo", "exit",
+                    "printf", "return", "export", "seen_ok", "in", "break", "while", "true", "false", "local"}
+        for script in (M.job_started_script(FOLDER, path="/usr/bin:/bin"), M.job_completed_script(FOLDER, path="/usr/bin:/bin")):
+            self.assertIn("\nexport PATH='/usr/bin:/bin'\n", script)
+            words = set()
+            script = script.replace(M.EVENT_PY, "")  # the event reader is Python, run by python3 (listed)
+            for line in script.splitlines():
+                line = line.strip()
+                if not line or line.startswith(("#", "echo ")):
+                    continue
+                line = re.sub(r"'[^']*'", "Q", line.replace("'\\''", ""))  # quoted words are arguments
+                line = re.sub(r"^[A-Za-z_]+=", "", line)  # an assignment: scan what it runs
+                for part in re.split(r"\$\(|;|&&|\|\||\||\bthen\b|\bdo\b|\belse\b", line):
+                    w = part.strip().split(" ")[0].strip("'\"")
+                    if re.fullmatch(r"[a-z][a-z0-9-]*", w) and w not in builtins:
+                        words.add(w)
+            self.assertEqual(words - set(M.HOOK_PROGRAMS), set(), script)
+        # The watch's unit: the folders where your PATH found them, in its order; a gh in your own folder included.
+        host = linux_host()
+        host.which = lambda n: "/home/person/.local/bin/gh" if n == "gh" else f"/usr/bin/{n}"
+        found, missing = M.resolve_programs(host, sorted(M.PROGRAMS))
+        self.assertEqual(missing, [])
+        with mock.patch.dict(os.environ, {"PATH": "/home/person/.local/bin:/usr/bin"}):
+            svc, _ = M.watch_units("person", 300, M.path_for(found))
+        self.assertIn('Environment="PATH=/home/person/.local/bin:/usr/bin"\n', svc)
+        # A hook program found only in your home folder: setup stops (the runner's user cannot enter it).
+        host, sha = setup_host()
+        host.home = lambda: "/home/person"
+        real = host.which
+        host.which = lambda n: "/home/person/bin/awk" if n == "awk" else real(n)
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("awk (/home/person/bin/awk)", lines[-1])
+
+
 class Helpers(unittest.TestCase):
     def test_look_end_to_end_on_recorded_answers_reads_every_call_it_makes(self):
         gh = StandIn(load("look-recent-runs.jsonl"))
         code, lines = look(gh, linux_host())
-        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertEqual(code, M.EXIT_NEED, lines)  # the start test's yes is still the person's (P1a)
         self.assertEqual(gh.misses, [], "every call look makes has a recorded answer")
-        self.assertTrue(all(re.match(r"^(ok|warn|stop|need you:) ", x) for x in lines), lines)
+        self.assertTrue(all(re.match(r"^(ok|warn|stop|need you:|tell the person:) ", x) for x in lines), lines)
 
     def test_github_api_sends_bodies_on_stdin_never_argv(self):
         seen = {}
