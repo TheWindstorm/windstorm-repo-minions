@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A kill by our memory limit ends the job's process only: the runner's service now goes on (`OOMPolicy=continue`),
+  where systemd's default stopped the whole service and the runner went offline (G2.9, row R88).
+- The idle-sleep hold of a job ends when the runner's service stops, or when the next job starts, as well as when the
+  job ends: a service stopped mid-job left it for up to 6 hours (G4.4, row R89).
 - A job held at our memory limit is named. With the default limits a job that outgrows them is not killed: the
   kernel holds it at the high mark and it barely moves, perhaps until GitHub's own time limit. The watch now reads
   the slice's own files each pass, and after two passes `status` names the job first, with the two ways out:

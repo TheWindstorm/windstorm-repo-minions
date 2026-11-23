@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -613,7 +614,7 @@ def runners_answer(status="online", busy=False, labels=("minions", "minions-medi
 
 DROPIN_NAME = "50-minions.conf"
 SHOW = ("Slice=minions.slice\nNice=10\nCPUWeight=50\nRestart=on-failure\n"
-        "Wants=network-online.target\nUnitFileState=enabled\nUser=minions-runner\n")
+        "Wants=network-online.target\nUnitFileState=enabled\nUser=minions-runner\nOOMPolicy=continue\n")
 
 
 def setup_host(**kw):
@@ -1037,7 +1038,7 @@ class G2(unittest.TestCase):
         tees = {a[-1]: i for a, i in host.fed if a[:3] == ("sudo", "-n", "tee")}
         dropin = tees[f"/etc/systemd/system/{UNIT}.d/50-minions.conf"]
         for line in ("Wants=network-online.target", "Slice=minions.slice", "Nice=10", "CPUWeight=50",
-                     "Restart=on-failure", "RestartSec=30"):
+                     "Restart=on-failure", "RestartSec=30", "OOMPolicy=continue"):
             self.assertIn(line + "\n", dropin)
         sl = tees["/etc/systemd/system/minions.slice"]
         self.assertIn("CPUQuota=400%\n", sl)  # half of 8 cores
@@ -1626,6 +1627,45 @@ class G4(unittest.TestCase):
             finally:
                 if pid:
                     os.kill(pid, 15)
+        # R89 (seen on a stock machine): a job whose end hook never ran, because its service stopped mid-job, left the
+        # hold for up to 6 hours. The next job's start hook ends the old hold first, and the service's own stop ends
+        # it too (ExecStopPost in our drop-in).
+        def gone(p):
+            for _ in range(50):
+                try:
+                    os.kill(p, 0)
+                    if open(f"/proc/{p}/stat").read().split()[2] == "Z":
+                        return True
+                except (ProcessLookupError, FileNotFoundError):
+                    return True
+                M.time.sleep(0.1)
+            return False
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            folder = os.path.realpath(d)
+            env = self._hooks_for_real(folder, os.path.join(folder, "inhibit.log"))
+            pidfile = os.path.join(folder, "_minions", "inhibit.pid")
+            pids = []
+            try:
+                for _ in range(2):
+                    r = subprocess.run(["bash", os.path.join(folder, "start.sh")], env=env, capture_output=True,
+                                       text=True, timeout=30)
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    with open(pidfile) as f:
+                        pids.append(int(f.read()))
+                self.assertTrue(gone(pids[0]), "the next job's start ends an earlier hold")
+                post = next(x for x in M.dropin_text(folder).splitlines() if x.startswith("ExecStopPost="))
+                r = subprocess.run(shlex.split(post.split("=", 1)[1].lstrip("-")), capture_output=True, text=True,
+                                   timeout=30)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(gone(pids[1]), "the service's stop ends the hold")
+                self.assertFalse(os.path.exists(pidfile))
+                pids = []
+            finally:
+                for p in pids:
+                    try:
+                        os.kill(p, 15)
+                    except ProcessLookupError:
+                        pass
         # The lock ends by itself after GitHub's longest default job, if a runner dies before its hook runs.
         self.assertEqual(M.inhibitor_argv()[-2:], ["sleep", str(6 * 3600)])
 
