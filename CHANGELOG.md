@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Before setup the person hears that a short sleep only delays a job and a sleep of more than about 10 minutes
+  fails it on GitHub, from `look`'s numbered block and the skill (G7.9, row R49).
 - The recorded GitHub answers used by the tests no longer carry the numbers of the accounts they were recorded
   from (an account's id, node id and avatar link); the scrubber removes them and a test refuses them (G9.4).
 - GitHub's API limit: when GitHub refuses for it, the tool names it with GitHub's reset time, makes no call until

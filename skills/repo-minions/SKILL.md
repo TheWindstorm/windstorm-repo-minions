@@ -102,8 +102,9 @@ they carry; if one is missing, say it in these words:
 
 - **What a job can reach.** Name what look listed: the secrets a job can read (names only) and what already runs
   on this computer. Then say: "Anyone who can push to this repository can run code on this computer."
-- **Restarts and sleep.** "A restart of this computer cancels the job running on it; a sleep delays it or cancels
-  it. A job waits at most 24 hours for a runner before GitHub cancels it."
+- **Restarts and sleep.** "A restart of this computer cancels the job running on it. A short sleep only delays it;
+  a sleep of more than about 10 minutes fails it on GitHub. A job waits at most 24 hours for a runner before GitHub
+  cancels it."
 - **Waiting checks.** "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that
   waited 24 hours."
 - **The limits.** Read look's limits line to the person word for word. It sounds like "at most half of this

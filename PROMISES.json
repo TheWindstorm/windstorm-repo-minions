@@ -689,7 +689,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G7_9_a_long_sleep_fails_the_job_and_is_said_before_setup",
    "proven": "",
    "issue": 83,
    "moved_why": "",
