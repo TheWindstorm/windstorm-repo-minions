@@ -249,6 +249,18 @@ class Hygiene(unittest.TestCase):
                 # The family's rule (2026-11-23): a job names its image; a moved "latest" is a change nobody reviewed.
                 self.assertNotIn("latest", line, f"{name}: {line.strip()}")
 
+    def test_a_commits_checks_run_once(self):
+        # The family's rule 17 (2026-11-23): on pull requests, and on pushes only to main and release branches, so
+        # a pull request's commit is not checked twice.
+        wf = os.path.join(ROOT, ".github", "workflows")
+        for name in sorted(os.listdir(wf)):
+            text = fread(os.path.join(wf, name))
+            on = re.search(r"^on:(.*?)(?=^\S)", text, re.M | re.S).group(1)
+            self.assertNotRegex(on, r"\[\s*push", name)
+            push = re.search(r"^  push:\s*\n\s+branches:\s*\[(.*?)\]", on, re.M)
+            self.assertIsNotNone(push, f"{name}: push names its branches")
+            self.assertEqual({b.strip().strip('"') for b in push.group(1).split(",")}, {"main", "release-*"}, name)
+
 
 @atexit.register
 def _say_what_did_not_run():

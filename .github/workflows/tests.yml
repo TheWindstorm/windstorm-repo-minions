@@ -1,5 +1,9 @@
 name: tests
-on: [push, pull_request]
+# Rule 17: a commit's checks run once: on pull requests, and on pushes only to main and release branches.
+on:
+  pull_request:
+  push:
+    branches: [main, "release-*"]
 permissions:
   contents: read
 # This repository is public: its jobs run on GitHub's standard runners only, never on a self-hosted one
