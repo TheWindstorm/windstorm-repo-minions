@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.12 · 2026-11-22 · The Windstorm**
+**Plan version 1.13 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -278,6 +278,7 @@ nothing.
 | G7.6 | Version 0.1.0 says, in the skill and at `setup`, that it serves one repository per computer and that more come in the next version (G12). | planned: test_G7_6_version_0_1_says_one_repository_and_more_next |
 | G7.7 | Before `setup` the person hears: "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that waited 24 hours." | `test_G7_7_waiting_checks_are_said_before_setup` |
 | G7.8 | Before `setup` the person hears the limits in plain words ("at most half of this computer's processors and 60 % of its memory", with the real numbers) and the one way to change them: `setup --limits <processors>,<memory %>`. | `test_G7_8_the_limits_are_said_in_plain_words_before_setup` |
+| G7.9 | Before `setup` the person hears that a long sleep during a job fails that job on GitHub: the skill's lock only puts a sleep off, and GitHub gave up on a job about 10 minutes after the computer went to sleep (seen on a stock Ubuntu 24.04 virtual machine, 2026-11-23: a job came through about 265 s asleep; one asleep about 865 s was failed by GitHub while the machine still slept). `status` then names it as cut (G5.7). | planned: test_G7_9_a_long_sleep_fails_the_job_and_is_said_before_setup |
 
 ### G8 The skill and its commands
 

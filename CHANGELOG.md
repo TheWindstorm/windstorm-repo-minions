@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Plan 1.13, from G6's run on a stock virtual machine: G7.9 (a long sleep fails the job, said before setup);
+  rows for two systemd 255 changes the code now reads (sleep wording, slice load state); rows R49 to R51.
 - Plan 1.12: the command that takes everything away is `uninstall` (was `remove`), the family's word; `remove`
   stays free for taking one repository's runner off a computer that serves several. Codon numbers stay.
 - G5 Watch and hold, first part (Linux): `status` (both sides of each runner with the time each was read, "idle"
