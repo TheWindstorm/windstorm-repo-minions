@@ -514,7 +514,15 @@ def token_scopes(host: Host) -> set[str] | None:
         return None
     m = re.search(r"Token scopes:\s*(.+)", out)
     if not m:
-        return None
+        # R97: an older gh (2.4.0 on Ubuntu 22.04) prints no scopes; GitHub itself sends them with every answer to a
+        # classic token, in the X-OAuth-Scopes header. Only that header's names are read; a token without it
+        # (fine-grained) stays "could not read".
+        rc, out = host.run(["gh", "api", "-i", "user"])
+        head = out.split("\r\n\r\n", 1)[0].split("\n\n", 1)[0] if rc == 0 else ""
+        h = re.search(r"^X-Oauth-Scopes:[ \t]*(.*?)\r?$", head, re.M | re.I)
+        if not h:
+            return None
+        return {x.strip() for x in h.group(1).split(",") if x.strip()}
     # R79: newer gh quotes each scope ('repo', 'workflow'); older gh (2.23 on Debian 12) prints them bare.
     return set(re.findall(r"'([^']+)'", m.group(1))) or {x.strip() for x in m.group(1).split(",") if x.strip()}
 
