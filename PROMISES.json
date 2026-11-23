@@ -1674,6 +1674,20 @@
    "issue": 291,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R120",
+   "seen": "2026-11-23, the push run of a merge on main failed one test on Python 3.10 only: setup's first watch pass fell in the same second as the pass before and read as \"wrote nothing\"; the same can happen on a real computer when the timer's own pass falls in that second.",
+   "promise": "Each pass of the watch is counted, and setup tells its own first pass from the one before by that count, never by the time to the second, so a pass in the same second is still seen.",
+   "codon": "G5.19",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_19_a_watch_pass_in_the_same_second_as_the_last_is_still_seen",
+   "proven": "",
+   "issue": 296,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
