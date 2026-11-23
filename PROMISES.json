@@ -368,7 +368,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_12_other_peoples_things_are_counted_never_named",
-   "proven": "",
+   "proven": "2026-11-23, a stock Debian 12 (bookworm) virtual machine and the private proof repository, seen once: before anything of ours, another user's runner service (a system unit running as that user) and a container on the shared container service (the person in its group) were made as root. look said `1 container(s) running on this computer's shared container service (not named \u2026)` and `1 other runner service(s) here that do not run as you (not named)`; the census at `uninstall` counted 1 runner service not ours, named none, and named our own; no name of the other user's things appeared anywhere in the output.",
    "issue": 35,
    "moved_why": "",
    "moved_by_person": ""
@@ -1110,7 +1110,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_3_look_names_missing_token_rights",
-   "proven": "",
+   "proven": "2026-11-23, a stock Debian 12 (bookworm) virtual machine and the private proof repository, seen once: Debian's gh 2.23.0 printed the login's scopes without quotes (`gist, read:org, repo, workflow`), and look said `ok your login has the `workflow` scope`, naming none missing.",
    "issue": 158,
    "moved_why": "",
    "moved_by_person": ""
@@ -1124,7 +1124,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_7_look_names_what_already_lives_on_the_computer",
-   "proven": "",
+   "proven": "2026-11-23, a stock Debian 12 (bookworm) virtual machine and the private proof repository, seen once: with port 5355 open on the stock image (local name resolution), look said `ok 2 ports open to the network for this computer's own upkeep: 22 (remote login), 5355 (local name resolution); \u2026 not counted as something live`.",
    "issue": 158,
    "moved_why": "",
    "moved_by_person": ""
@@ -1138,7 +1138,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_2_the_skill_names_the_order_and_the_persons_steps",
-   "proven": "",
+   "proven": "2026-11-23, a stock Debian 12 (bookworm) virtual machine and the private proof repository, seen once: the image has no git (`git: command not found` at the clone); the command the skill names, `sudo apt update && sudo apt install git`, run as the person's own step with the admin password asked once, installed git 2.39.5 (apt exit 0), and the clone then worked. The skill's words were not read by an agent in that run.",
    "issue": 158,
    "moved_why": "",
    "moved_by_person": ""
