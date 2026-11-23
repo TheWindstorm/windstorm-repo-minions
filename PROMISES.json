@@ -1464,6 +1464,20 @@
    "issue": 233,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R105",
+   "seen": "2026-11-23, one new private repository and a runner of ours on a stock Ubuntu 24.04.5 virtual machine, connected and waiting: a workflow scheduled every 10 minutes did not fire once in an hour (seen once). `status` said the runner was online and that no job waited for it, but not when GitHub last handed it a job, so a person could not tell GitHub's side from this computer's.",
+   "promise": "`status` says when GitHub last handed this runner a job, or that it has not yet and that a job GitHub does not hand over is GitHub's side; the README says where to look when nothing runs.",
+   "codon": "G5.17",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_17_status_says_when_github_last_handed_this_runner_a_job",
+   "proven": "",
+   "issue": 241,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

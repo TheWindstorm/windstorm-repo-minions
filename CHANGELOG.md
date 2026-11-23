@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `status` says when GitHub last handed this runner a job, or that it has not yet, and that a job GitHub does not
+  hand over (a schedule there can be late, or not come) is on GitHub's side (G5.17, row R105).
 - The skill has evals, in the skill-creator layout (`skills/repo-minions/evals/evals.json`): the cold-start runs
   written as cases, each with the sentence the agent is given, what the person must be told and what must not
   happen (G9.9, row R103).
