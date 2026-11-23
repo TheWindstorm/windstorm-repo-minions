@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The job-completed hook also deletes the actions a job fetched: GitHub's runner downloads them before any hook
+  runs, so even a refused job left them on disk (G4.3).
 - Plan 2.0: INV1, INV4 and G5.4 corrected to the guard a real machine has (the job-start hook refuses every
   later job; labels off, and the runner taken off the repository on GitHub's side once idle, with the person's
   own rights; the watch stops no service; G5.12 reads the service the runner stopped itself); G9.7; rows R60

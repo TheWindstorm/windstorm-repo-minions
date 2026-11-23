@@ -1316,17 +1316,22 @@ class G4(unittest.TestCase):
             outside = os.path.join(folder, "keep.txt")
             with open(outside, "w") as f:
                 f.write("mine")
+            acts = os.path.join(folder, "_work", "_actions")
             script = os.path.join(folder, "done.sh")
             for floor, low in ((0, False), (1 << 62, True)):
                 with mock.patch.object(M, "DISK_FLOOR", floor):
                     with open(script, "w") as f:
                         f.write(M.job_completed_script(folder))
+                os.makedirs(os.path.join(acts, "someone", "an-action", "v1"), exist_ok=True)
+                open(os.path.join(acts, "someone", "an-action", "v1.completed"), "w").close()
                 env = dict(os.environ, GITHUB_WORKSPACE=ws)
                 r = subprocess.run(["bash", script], env=env, capture_output=True, text=True, timeout=30)
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertEqual(os.listdir(ws), [])
                 self.assertTrue(os.path.exists(outside))
                 self.assertEqual(os.path.exists(os.path.join(folder, "_minions", "disk-low")), low)
+                self.assertEqual(os.listdir(acts), [], "the actions a job fetched are deleted (G4.3)")
+                self.assertIn("minions: the actions this job fetched were deleted", r.stdout)
             # A workspace outside the runner's work folder, or one that climbs out of it, is never touched.
             for bad in (folder, os.path.join(folder, "_work", "..")):
                 r = subprocess.run(["bash", script], env=dict(os.environ, GITHUB_WORKSPACE=bad), capture_output=True,
