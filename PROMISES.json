@@ -988,6 +988,20 @@
    "issue": 124,
    "moved_why": "Split from R7 by the owner's word, 2026-11-23: G3.5 is due in 0.2.0. Meanwhile 0.1.0's status warns first when a job waits for a runner that is offline or held (G5.1, R67), and look names each job that asks for a runner that is not ours.",
    "moved_by_person": ""
+  },
+  {
+   "id": "R71",
+   "seen": "2026-11-23, on a stock Ubuntu 24.04 virtual machine with sudo's ticket set short: setup was cut at the runner's configuration; setup again stopped on the half-made folder and sent to uninstall, and uninstall said there was nothing to uninstall. Its census, run without admin rights, printed every read sudo refused as none.",
+   "promise": "A setup cut part-way is found again: uninstall takes the half-made runner away, and setup run again takes it away first, read back, then sets up fresh. A read as root that sudo refused counts as still there in a removal, and the census says not read, never none.",
+   "codon": "G2.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G2_12_a_setup_cut_part_way_is_found_again",
+   "proven": "",
+   "issue": 133,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A setup cut part-way (for example when sudo's permission ran out) is found again: `uninstall` takes the
+  half-made runner away, and `setup` run again takes it away first, read back, then sets up fresh. A read as
+  root that sudo refused is said as not read in the census, never as none (G2.12, row R71).
 - When sudo's permission runs out part-way, or the command runs in another terminal, the stop now says to run
   it again from the terminal where the password was typed, and that nothing is done twice (G2.12, row R32).
 - On battery a laptop's runner is held by the watch, by default, and the hold lifts on mains power; the laptop

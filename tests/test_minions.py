@@ -2650,6 +2650,62 @@ class G6(unittest.TestCase):
         self.assertIn(code, (M.EXIT_OK, M.EXIT_NEED), lines)
 
 
+    def test_G2_12_a_setup_cut_part_way_is_found_again(self):
+        # Seen on a stock VM (2026-11-23): sudo's permission ran out during the runner's configuration; `setup` again
+        # stopped on the half-made folder and sent to `uninstall`, which said there was nothing to uninstall.
+        host, sha = setup_host()
+        fresh_look(host)
+        config = ("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT)
+        good = host.runs[config]
+        host.runs[config] = (1, "sudo: a password is required\n")
+        listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
+        none = (200, {"total_count": 0, "runners": []})
+        gh = setup_gh(sha, {listing: none})
+        code, lines = run_setup(gh, host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn("run the same command again from the terminal where you typed the password", lines[-1])
+        self.assertEqual(M.load_state(host)["setting_up"][REPO]["folder"], FOLDER)
+        # `uninstall` finds it, never "nothing to uninstall", and takes it away, read back.
+        out = io.StringIO()
+        M.uninstall(REPO, host=host, gh=gh, out=out, interactive=False)
+        lines = out.getvalue().splitlines()
+        self.assertFalse([x for x in lines if "nothing to uninstall" in x], lines)
+        self.assertIn(f"ok uninstalled: {REPO} has no runner on this computer now", lines)
+        state = M.load_state(host)
+        self.assertNotIn("setting_up", state)
+        self.assertNotIn(REPO, state.get("runners") or {})
+        # Cut again; then the same command again, as the stop says: setup takes the half-made runner away first,
+        # read back, and ends set up.
+        self.assertEqual(run_setup(setup_gh(sha, {listing: none}), host)[0], M.EXIT_STOP)
+        host.runs[config] = good
+        token = ("POST", f"repos/{REPO}/actions/runners/registration-token")
+        gh = setup_gh(sha)
+        gh.overrides[listing] = lambda body: runners_answer() if token in gh.calls else none
+        code, lines = run_setup(gh, host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        cut = [i for i, x in enumerate(lines) if x.startswith(f"ok a setup or removal of {REPO} here was cut part-way")]
+        gone = lines.index(f"ok uninstalled: {REPO} has no runner on this computer now")
+        self.assertTrue(cut and cut[0] < gone, lines)
+        state = M.load_state(host)
+        self.assertNotIn("setting_up", state)
+        self.assertEqual(state["runners"][REPO]["folder"], FOLDER)
+        # A setup of a runner that is set up and whole is not taken away: it stops on the folder, as before.
+        host.runs[("sudo", "-n", "test", "-e", FOLDER)] = (0, "")
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertFalse([x for x in lines if "cut part-way" in x or "uninstalled" in x], lines)
+        self.assertIn(REPO, M.load_state(host)["runners"])
+        # A read as root that sudo refused is said as not read, never taken for none.
+        refuse_sudo(host)
+        rep = M.Report(io.StringIO())
+        M.census(gh, host, [REPO], False, rep)
+        self.assertFalse([x for x in rep.lines if x.startswith("ok census: folders: none")], rep.lines)
+        self.assertTrue([x for x in rep.lines if x.startswith("warn census: folders: not read, because admin rights "
+                                                             "are not open in this terminal: ") and M.HOOKS_ROOT in x],
+                        rep.lines)
+        self.assertTrue(M.exists_as_root(host, FOLDER))  # a refused read never reads as gone
+
+
 class G8(unittest.TestCase):
     def test_G8_3_commands_and_line_kinds_are_exactly_these(self):
         # The commands built so far are the plan's own, in its order (a subsequence of it); more come with genes.
