@@ -2980,6 +2980,8 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
         if not kept:
             data.setdefault("named", {})[str(g["id"])] = {"kind": verdict[0], "why": verdict[1], "run": j["start"]["run"],
                                                          "time": stamp(host.now())}
+            if verdict[0] == "killed":  # R93: the limit it was killed under, kept; a later change never rewrites it
+                data["named"][str(g["id"])]["limit"] = (mine.get("limits") or {}).get("MemoryMax")
             save_state(host, data)
             journal(host, "named", f"{repo} job {g['id']}: {verdict[0]} by {verdict[1]}")
         named[int(g["id"])] = g
@@ -2992,7 +2994,7 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
                                   f"its first step by this computer's guard: {verdict[1]}. No step of it ran here; "
                                   f"GitHub shows it as failed, not a failing test of yours.{again}"))
         elif verdict[0] == "killed":
-            lim = (mine.get("limits") or {}).get("MemoryMax")
+            lim = ((data.get("named") or {}).get(str(g["id"])) or {}).get("limit")  # R93: as named, or no number
             lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was stopped by "
                                   f"this computer's memory limit{' (' + gb(int(lim)) + ')' if lim else ''}, not by your "
                                   "code failing; GitHub shows it as failed. The one way to change the limit: "

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A job killed by our memory limit is said with the limit it was killed under. After a limit change, `status` said
+  the new limit for a job killed under the old one (G5.14, row R93).
 - `setup <owner/repo> --limits` changes the limits of a runner already set up here, in place: the slice is
   rewritten, read back from systemd and recorded, and nothing else is touched. It stopped with "exists already",
   though the line naming a job killed by the memory limit called it the one way to change the limit; that line now

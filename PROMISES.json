@@ -1296,6 +1296,20 @@
    "issue": 200,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R93",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: after `setup --limits 2,30` made the memory limit 2.3 GB, `status` said a job killed ten minutes earlier under the 4.7 GB limit \"was stopped by this computer's memory limit (2.3 GB)\": the limit read now, not the one it was killed under.",
+   "promise": "A job killed by our memory limit is said with the limit it was killed under, kept when it is first named; a later change never rewrites it, and where none was kept no number is said.",
+   "codon": "G5.14",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_14_a_job_killed_by_our_limit_is_named_as_such",
+   "proven": "",
+   "issue": 202,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
