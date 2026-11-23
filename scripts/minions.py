@@ -2348,8 +2348,9 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
 
 def gone_words(repo: str, mine: dict) -> str:
     return (f"GitHub no longer lists our runner {mine['name']} for {repo}. GitHub removes a runner it has not seen "
-            "connect for more than 14 days (a computer away or switched off that long). Its service is held so it does "
-            f"not restart in a loop. Run `setup {repo}` again: it registers the runner again with your login, keeping "
+            "connect for more than 14 days (a computer away or switched off that long), and the watch takes it off a "
+            "repository that is no longer private. GitHub's runner program then stops its own service. Run "
+            f"`setup {repo}` again: it registers the runner again with your login, keeping "
             "its folders and labels")
 
 
@@ -2603,7 +2604,7 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
     if s == 200 and d is not None and (d.get("private") is False or d.get("visibility") == "public"):
         write_seen(host, mine, "public")  # G5.15: the hook refuses at once, whatever the steps below manage
         public_guard(gh, host, repo, data, rep)
-        return f"{repo}: no longer private: held, drained, stopped", ""
+        return f"{repo}: no longer private: every job of it refused here", ""
     why = ""
     if s == 200 and d is not None and d.get("private") is True:
         why = write_seen(host, mine, str(int(host.now().timestamp())))
@@ -2667,12 +2668,13 @@ def public_words(repo: str, ps: dict) -> str:
 
 
 def gone_on_github(host: Host, repo: str, data: dict, rep: Report) -> None:
-    """G5.12: GitHub removed the runner; its service would restart in a loop. Held stopped, named plainly."""
+    """G5.12: GitHub removed the runner. GitHub's runner program then stops its own service ("terminated error, stop
+    the service, no retry needed", seen), so the watch, which has no admin rights (G9.7), only reads it and names it."""
     mine = data["runners"][repo]
     if runner_pids(host, mine["folder"], "Runner.Worker"):
-        return  # a job process still runs here: nothing is stopped under it
-    journal(host, "gone on GitHub", f"{repo} {mine['name']}")
-    stop_runner(host, mine["unit"], mine["folder"], rep, drained=True)  # GitHub can give it no job: nothing to cut
+        return  # a job process still runs here: named once it ends
+    rc, active = host.run(systemctl("is-active", mine["unit"]))
+    journal(host, "gone on GitHub", f"{repo} {mine['name']}: its service is {active.strip() or 'not read'}")
     mine["gone_on_github"] = stamp(host.now())
     save_state(host, data)
     rep.warn(gone_words(repo, mine))

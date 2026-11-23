@@ -1827,10 +1827,13 @@ class G5(unittest.TestCase):
 
     def test_G5_12_a_runner_github_removed_is_named_and_registered_again(self):
         host, clock = g5_host()
+        refuse_sudo(host)  # G9.7: the watch is a system timer run as the person, with no sudo ticket
         gh = StatusGH(listed=False)
         code, lines = run_cmd(M.watch, host=host, gh=gh)
-        unit = "actions.runner.example-org-example-repo.minions-box-1.service"
-        self.assertIn(("sudo", "-n", "systemctl", "stop", unit, "--no-pager"), host.ran)  # no restart loop
+        # GitHub's runner program stops its own service once its registration is gone (seen): the watch only reads.
+        self.assertFalse([a for a in host.ran if a[:1] == ("sudo",)], "the watch asks for no admin rights")
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            self.assertIn("gone on GitHub example-org/example-repo minions-box-1: its service is active", f.read())
         self.assertTrue(M.load_state(host)["runners"][REPO]["gone_on_github"])
         lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
         self.assertTrue(lines[0].startswith("warn GitHub no longer lists our runner minions-box-1"), lines)
