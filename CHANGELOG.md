@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Every wait says its deadline once it really waits: `setup`'s wait for the runner online, the start test and
+  `resume` now say it too; every `waiting` line names the command to run next (G8.6, G8.7, rows R39, R40).
 - The watch reads GitHub's cost rule again once a week; when its words on self-hosted runners change, the next
   `status` says so first, with both versions and dates (G5.10, for row R16).
 - Before setup the person hears that a short sleep only delays a job and a sleep of more than about 10 minutes
