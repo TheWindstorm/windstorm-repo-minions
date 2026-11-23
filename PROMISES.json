@@ -228,7 +228,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_1_cost_words_are_read_and_dated_never_promised",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once each, steered. Steer 1: the saved read's dates set back 8 days by hand; the weekly pass read GitHub's billing page again and recorded no change. Steer 2: the saved earlier text altered by hand (\"Self-hosted runners (until further notice).\") with its dates set back 8 days; the weekly pass journaled `cost rule changed GitHub's list changed since 2026-11-15T12:25:12Z`, the next `status` began with `warn GitHub's billing page changed what it says about self-hosted runners: read 2026-11-15T12:25:12Z, it said \"\u2026\"; read 2026-11-23T12:25:17Z, it says \"\u2026\". Read it yourself before relying on it: \u2026`, and the status after it did not say it again. Not seen: GitHub's page really changing.",
    "issue": 22,
    "moved_why": "",
    "moved_by_person": ""
@@ -1236,7 +1236,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_9_the_runner_is_a_boot_service_started_after_its_limits",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, steered: the slice's high mark lifted by hand so the kernel would kill at the maximum. Before the fix, a real job asking for 6 GB was killed and systemd stopped the whole runner service (the job shown \"Canceled\", the runner offline, a restart 30 s later). On the fix (`OOMPolicy=continue`), the same job was killed at the maximum, the runner's service stayed active with no restart (`NRestarts 0`), and status said `warn job 'j' (run 45179805328, \u2026) was stopped by this computer's memory limit (4.7 GB), not by your code failing \u2026`.",
    "issue": 187,
    "moved_why": "",
    "moved_by_person": ""
@@ -1278,7 +1278,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_8_uninstall_all_ends_our_leftover_sleep_holds_and_names_anything_else",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen once, the uninstall itself not steered. The state it met was real but came from a steered run: three sleep-hold processes of ours (two `systemd-inhibit` and their `sleep`) left about an hour earlier when the runner's service was stopped by the kernel's kill in row R88's steered sighting, before row R89's fix. Before the fix, `uninstall --all` as the person said `stop processes of minions-runner still run (13988, 13992, 13995): the user is not deleted`, exit 2. On the fix, the same command on the same state said `ok a job's sleep hold left behind by a stopped service (13988, 13992, 13995) is ended`, `ok the user minions-runner and its home are deleted, read back`, every census line `none`, exit 0; read after: no such user, no hold of ours listed. Not seen: another process of the runner user named and left alone (tested only).",
    "issue": 196,
    "moved_why": "",
    "moved_by_person": ""
