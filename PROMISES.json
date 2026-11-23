@@ -1250,7 +1250,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_4_no_sleep_during_a_job",
-   "proven": "",
+   "proven": "2026-11-23, stock Ubuntu 24.04.5 virtual machines and the private proof repository, by the owner's word, each half seen once and steered. The stop: during a real job the runner's service was stopped by hand; the job's hold ended with it (our hold locks 4 during the job, 2 after: the 2 left were an earlier run's, from before the fix). The next job's start: a hold left by hand as the runner user, as a start hook makes it (PIDs 6044, 6047, 6049, its pid in the hook's file); a real job then ran, and during it only its own hold was held (2 locks, PIDs 6154 and 6160), the old one gone; after the job, 0. Not seen: a hold really left behind by a fault.",
    "issue": 188,
    "moved_why": "",
    "moved_by_person": ""
@@ -1292,7 +1292,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_11_setup_limits_changes_an_installed_runner_in_place",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen once, nothing steered: on the runner set up there, during a real job, `setup <owner/repo> --limits 2,30` as the person said `ok the limits of <owner/repo>'s runner are changed, read back from systemd: jobs here get at most 2 of this computer's 4 processors and 30 % of its memory (2.3 GB). Nothing else was touched; a job running now goes on, held to these limits from now on`; systemd read `MemoryMax=2498080358`; the job went on and passed. A 3 GB job was then killed and named, its line giving `setup TheWindstorm/zz-proof-repo-minions-1 --limits <processors>,<memory %>`; `--limits 2,60` put the limits back, `doctor` said `ok every promise of the install read back as kept`, and the same 3 GB job passed.",
    "issue": 200,
    "moved_why": "",
    "moved_by_person": ""
@@ -1306,7 +1306,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_14_a_job_killed_by_our_limit_is_named_as_such",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen once, nothing steered: a job killed under a 2.3 GB limit was said `stopped by this computer's memory limit (2.3 GB)`, and still so after `setup --limits` put the limit back to 4.7 GB; the two jobs named before the fix were said with no number.",
    "issue": 202,
    "moved_why": "",
    "moved_by_person": ""
