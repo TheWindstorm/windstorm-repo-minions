@@ -3843,7 +3843,8 @@ class P1a(unittest.TestCase):
                                    "jobs (4.0 GB) since 23:00:00Z, 2 watch passes in a row: it needs more memory "
                                    "than jobs here may use, so it barely moves; its tasks all stood still 62 % of "
                                    "the last minute, and it may go on like this until GitHub's own time limit. Your "
-                                   "two ways out: cancel it (`gh run cancel 45100 -R example-org/example-repo`), or "
+                                   "two ways out: cancel it (on GitHub, from the run's page: "
+                                   "https://github.com/example-org/example-repo/actions/runs/45100), or "
                                    "give jobs more memory: `setup example-org/example-repo --limits <processors>,"
                                    "<memory %>`")
         # The held count stops rising (the job got its memory, or ended): no longer held, not named.
