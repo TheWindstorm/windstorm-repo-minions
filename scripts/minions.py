@@ -1531,10 +1531,20 @@ def parse_limits(raw: str) -> tuple[int, int]:
     return int(m.group(1)), int(m.group(2))
 
 
-def dropin_text() -> str:
+def dropin_text(folder: str = "") -> str:
+    """G2.9; R88: when the kernel kills a job's process at our memory max, systemd's default (OOMPolicy=stop) stops
+    the whole runner service (seen: the runner offline 30 s, the job marked cancelled). The job's process is the one
+    that ends; the runner goes on. R89: a stop of the service mid-job skips the job-completed hook, so the stop
+    itself ends the idle-sleep hold the job-started hook took (seen: left running, it would hold for 6 hours)."""
+    stop_post = ""
+    if folder:
+        pidf = f"{folder}/_minions/inhibit.pid"
+        stop_post = ("ExecStopPost=-/bin/sh -c 'p=\"$(cat " + pidf + " 2>/dev/null)\"; case \"$p\" in \"\"|*[!0-9]*) ;; "
+                     "*) kill -TERM -- \"-$p\" 2>/dev/null || kill -TERM \"$p\" 2>/dev/null ;; esac; rm -f " + pidf + "'\n")
     return ("# Windstorm Repo Minions (G2.9): the runner's own unit has Restart=no and does not ask for the network.\n"
             "[Unit]\nWants=network-online.target\n\n"
-            f"[Service]\nSlice={SLICE}\nNice=10\nCPUWeight=50\nRestart=on-failure\nRestartSec=30\n")
+            f"[Service]\nSlice={SLICE}\nNice=10\nCPUWeight=50\nRestart=on-failure\nRestartSec=30\nOOMPolicy=continue\n"
+            + stop_post)
 
 
 def slice_text(limits: dict) -> str:
@@ -1819,7 +1829,7 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits:
     limits = limits or slice_limits(survey_)
     journal(host, "write", f"/etc/systemd/system/{SLICE} and {unit}.d/{DROPIN}")
     for path, text in ((f"/etc/systemd/system/{SLICE}", slice_text(limits)),
-                       (f"/etc/systemd/system/{unit}.d/{DROPIN}", dropin_text())):
+                       (f"/etc/systemd/system/{unit}.d/{DROPIN}", dropin_text(folder))):
         sudo(host, ["install", "-d", "-m", "0755", os.path.dirname(path)])
         rc, out = sudo(host, ["tee", path], input=text)
         if rc != 0:
@@ -1832,10 +1842,10 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits:
             rep.stop(f"`{' '.join(argv)}` failed: {tail(out)}")
             return None
     rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
-                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User"))
+                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User", "-p", "OOMPolicy"))
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
-            "User": RUNNER_USER}
+            "User": RUNNER_USER, "OOMPolicy": "continue"}
     bad = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
     if "network-online.target" not in got.get("Wants", ""):
         bad.append("Wants has no network-online.target")
@@ -2118,6 +2128,12 @@ fi
 if ! seen_ok; then
 {record_line("refused-stale", recs)}  echo "::error::Windstorm Repo Minions refused this job before any of its steps: the watch on that computer has not read the repository private in the last {fresh_s // 60} minutes, so it may not be private now. On that computer, \\`status\\` says why and what to do."
   exit 1
+fi
+# R89: a hold left by an earlier job whose end hook never ran (its service stopped mid-job) ends here first.
+if [ -f "$STATE/inhibit.pid" ]; then
+  old="$(cat "$STATE/inhibit.pid")"
+  case "$old" in ''|*[!0-9]*) ;; *) kill -TERM -- "-$old" 2>/dev/null || kill -TERM "$old" 2>/dev/null ;; esac
+  rm -f "$STATE/inhibit.pid"
 fi
 if command -v systemd-inhibit >/dev/null 2>&1; then
   env -u RUNNER_TRACKING_ID setsid {sh_quote(inhibitor_argv())} </dev/null >/dev/null 2>&1 &
@@ -4044,10 +4060,10 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
         rep.ok(f"{repo}: the credential files are 600, owned by {RUNNER_USER}")
     # G2.9, G4.2: the boot service as written, in our slice, and the slice's limits.
     rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
-                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User"))
+                                  "-p", "Wants", "-p", "UnitFileState", "-p", "User", "-p", "OOMPolicy"))
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
-            "User": RUNNER_USER}
+            "User": RUNNER_USER, "OOMPolicy": "continue"}
     off = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
     if "network-online.target" not in got.get("Wants", ""):
         off.append("Wants has no network-online.target")
