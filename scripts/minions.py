@@ -2122,14 +2122,15 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
         return rep.code()
     if mine.get("public_stop"):
         if not private_again:
-            rep.stop(f"{repo} was not private at {mine['public_stop']['time']}, so its runner was stopped and kept "
-                     f"stopped. Once you have made it private again: `resume {repo} --private-again`")
+            rep.stop(f"{repo} was not private at {mine['public_stop']['time']}, so this computer refuses its jobs. "
+                     f"Once you have made it private again: `resume {repo} --private-again`")
             return rep.code()
         s, d = gh.api("GET", f"repos/{repo}")
         if s != 200 or not (d or {}).get("private"):
-            rep.stop(f"GitHub does not say {repo} is private (HTTP {s}): the runner stays stopped")
+            rep.stop(f"GitHub does not say {repo} is private (HTTP {s}): this computer keeps refusing its jobs")
             return rep.code()
         rep.ok(f"GitHub says {repo} is private again, and you said so")
+        write_seen(host, mine, str(int(host.now().timestamp())))  # G5.15: just read private
         journal(host, "enable", mine["unit"])
         sudo(host, systemctl("enable", mine["unit"]))
     if mine.get("gone_on_github"):
@@ -2180,7 +2181,6 @@ def lift_hold(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, tries:
 WATCH_EVERY_S = 300  # G5.3: the watch's default interval
 WATCH_UNIT = "minions-watch"
 TOOL_COPY = f"{HOOKS_ROOT}/minions.py"  # the copy the watch runs: root's, so neither the runner nor a job can change it
-PUBLIC_DRAIN_S = 120  # G5.4: the short drain before a runner of a repository no longer private is stopped
 WAIT_WARN_S = 1800  # G5.13: a job waiting longer than this behind our hold is a `warn`, first
 GITHUB_GIVES_UP_H = 24  # GitHub cancels a job that waited this long for a runner
 
@@ -2284,10 +2284,11 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         mine = runners[rp]
         ps = mine.get("public_stop")
         if ps:
-            first.append(("stop", f"{rp} was not private at {ps['time']}: its runner was held, drained for at most "
-                                  f"{PUBLIC_DRAIN_S // 60} minutes and stopped, and stays stopped, because anyone's "
-                                  f"fork can ask a public repository's runner for a job. Once it is private again: "
-                                  f"`resume {rp} --private-again`"))
+            first.append(("stop", f"{rp} was not private at {ps['time']}: this computer refuses every job of it before "
+                                  "its first step" + ("" if ps.get("labels_off", True) else
+                                                      ", and our labels could not be taken off its runner yet")
+                                  + ", because anyone's fork can ask a public repository's runner for a job. Once it "
+                                  f"is private again: `resume {rp} --private-again`"))
         r = listed_runner(gh, rp, mine["name"])
         gh_at = host.now()
         active, worker, at = computer_side(host, mine)
@@ -2584,7 +2585,12 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
     """One repository's pass: what to journal, and why the watch could not read it private ("" when it did)."""
     mine = data["runners"][repo]
     if mine.get("public_stop"):
-        return f"{repo}: stopped, not private at {mine['public_stop']['time']}", ""
+        write_seen(host, mine, "public")  # G5.15: kept so until the person says it is private again
+        if not mine["public_stop"].get("labels_off", True):
+            if hold_runner(gh, host, repo, data, rep, "the repository being no longer private") is not None:
+                mine["public_stop"]["labels_off"] = True
+                save_state(host, data)
+        return f"{repo}: refusing its jobs, not private at {mine['public_stop']['time']}", ""
     s, d = gh.api("GET", f"repos/{repo}")
     if s == 200 and d is not None and (d.get("private") is False or d.get("visibility") == "public"):
         write_seen(host, mine, "public")  # G5.15: the hook refuses at once, whatever the steps below manage
@@ -2608,17 +2614,17 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
 
 
 def public_guard(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None:
-    """G5.4 (INV1): a repository no longer private: our labels off at once, a short drain, then stopped and kept so."""
+    """G5.4 (INV1): a repository no longer private. The hook already refuses every job of it (the record says
+    `public`, G5.15); here our labels come off when GitHub can be reached. The watch stops no service and kills no
+    job: it runs as the person, with no admin rights (plan 2.0; a system timer has no sudo ticket)."""
     mine = data["runners"][repo]
     journal(host, "public", f"{repo} is no longer private")
-    hold_runner(gh, host, repo, data, rep, "the repository being no longer private")
-    state = wait_idle(gh, host, repo, mine, PUBLIC_DRAIN_S, 10, rep, f"status {repo}")
-    journal(host, "public stop", f"{repo} after a drain that ended {state}")
-    stop_runner(host, mine["unit"], mine["folder"], rep, drained=True)  # the short drain was the drain (G5.4)
-    sudo(host, systemctl("disable", mine["unit"]))
-    mine["public_stop"] = {"time": stamp(host.now()), "drain": state}
+    labels_off = hold_runner(gh, host, repo, data, rep, "the repository being no longer private") is not None
+    mine["public_stop"] = {"time": stamp(host.now()), "labels_off": labels_off}
     save_state(host, data)
-    rep.stop(f"{repo} is no longer private: its runner is stopped and kept stopped (`status {repo}` says why)")
+    rep.stop(f"{repo} is no longer private: this computer refuses every job of it before its first step"
+             + ("" if labels_off else "; our labels could not be taken off yet, and the next pass tries again")
+             + f"; a job already running finishes. Once it is private again: `resume {repo} --private-again`")
 
 
 def gone_on_github(host: Host, repo: str, data: dict, rep: Report) -> None:

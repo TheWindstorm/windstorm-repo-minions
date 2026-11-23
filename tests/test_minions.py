@@ -592,6 +592,18 @@ def no_event():
     return env
 
 
+def refuse_sudo(host):
+    """G9.7: what a system timer run as the person meets: `sudo -n` is refused (no ticket), whatever else is set."""
+    answer = host._answer
+    host.answer_with_sudo = answer  # for the steps a person runs in a terminal, where sudo can ask
+
+    def no_sudo(argv, input=None):
+        if argv[:1] in (["sudo"], ("sudo",)):
+            return 1, "sudo: a password is required\n"
+        return answer(argv, input)
+    host._answer = no_sudo
+
+
 def fresh_seen(folder, value=None):
     """G5.15: the watch's record that it read the repository private, as a hook test needs it."""
     path = os.path.join(folder, "seen-private")
@@ -1679,22 +1691,31 @@ class G5(unittest.TestCase):
                       "5 min)", lines)
 
     def test_G5_4_a_repository_no_longer_private_is_stopped_after_a_short_drain(self):
-        # A job still runs: labels off at once, a drain of at most 2 minutes, then stopped and kept stopped.
+        # Plan 2.0: the watch has no admin rights (G9.7), so it stops nothing. A job still runs: it finishes; the
+        # record says `public` at once (the hook refuses every later job, G5.15) and our labels come off.
         host, clock = g5_host(worker=True)
+        refuse_sudo(host)
         gh = StatusGH(private=False, busy=True)
         code, lines = run_cmd(M.watch, host=host, gh=gh)
         self.assertEqual(gh.puts, [(REPO, ["minions-held"])])
-        self.assertTrue(any("until 23:02Z at the latest" in x for x in lines), lines)
-        stop = ("sudo", "-n", "systemctl", "stop", f"actions.runner.example-org-example-repo.minions-box-1.service",
-                "--no-pager")
-        disable = ("sudo", "-n", "systemctl", "disable", "actions.runner.example-org-example-repo.minions-box-1.service",
-                   "--no-pager")
-        self.assertIn(stop, host.ran)
-        self.assertIn(disable, host.ran)
-        self.assertLess(host.ran.index(stop), host.ran.index(disable))
-        self.assertLessEqual(clock.t, M.parse_stamp("2026-11-22T23:03:00Z"))  # within the short drain
+        self.assertEqual(host.files[M.seen_path(FOLDER)].strip(), "public")
+        self.assertFalse([a for a in host.ran if a[:1] == ("sudo",)], "the watch asks for no admin rights")
         self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("this computer refuses every job of it before its first step; a job already running finishes",
+                      lines[-1])
+        self.assertNotIn("stopped", lines[-1])
+        # GitHub not reachable for the labels: said, and the next pass tries again; the record stays `public`.
+        host4, _ = g5_host()
+        refuse_sudo(host4)
+        run_cmd(M.watch, host=host4, gh=StatusGH(private=False, listed=False))
+        self.assertFalse(M.load_state(host4)["runners"][REPO]["public_stop"]["labels_off"])
+        gh4 = StatusGH(private=False)
+        run_cmd(M.watch, host=host4, gh=gh4)
+        self.assertEqual(gh4.puts, [(REPO, ["minions-held"])])
+        self.assertTrue(M.load_state(host4)["runners"][REPO]["public_stop"]["labels_off"])
+        self.assertEqual(host4.files[M.seen_path(FOLDER)].strip(), "public")
         # status says why, first.
+        host._answer = host.answer_with_sudo  # status and resume run in the person's terminal
         host2 = host
         lines = run_cmd(M.status, REPO, host=host2, gh=StatusGH(private=False))[1]
         self.assertTrue(lines[0].startswith(f"stop {REPO} was not private at"), lines)
@@ -1705,7 +1726,7 @@ class G5(unittest.TestCase):
         self.assertIn("--private-again", lines[-1])
         code, lines = run_cmd(M.resume, REPO, host=host, gh=StatusGH(private=False), private_again=True)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertIn("the runner stays stopped", lines[-1])
+        self.assertIn("this computer keeps refusing its jobs", lines[-1])
         self.assertTrue(M.load_state(host)["runners"][REPO].get("public_stop"))
         host3 = host
         host3.runs[("systemctl", "is-active")] = (3, "inactive\n")
@@ -1718,6 +1739,7 @@ class G5(unittest.TestCase):
                        "--no-pager"), host3.ran)
         self.assertEqual(gh.puts[-1], (REPO, ["minions", "minions-medium"]))
         self.assertNotIn("public_stop", M.load_state(host3)["runners"][REPO])
+        self.assertTrue(host3.files[M.seen_path(FOLDER)].strip().isdigit())  # resume read it private: a fresh time
 
     def test_G5_6_drain_ends_with_online_and_idle_read(self):
         host, clock = g5_host()
@@ -2582,6 +2604,21 @@ class P1a(unittest.TestCase):
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP)
         self.assertIn("awk (/home/person/bin/awk)", lines[-1])
+
+
+class G9(unittest.TestCase):
+    def test_G9_7_a_stand_in_grants_nothing_a_real_machine_refuses(self):
+        # The watch's passes, on a stand-in that refuses `sudo -n` as a system timer does: private, blind, public,
+        # and kept public. None asks for admin rights, and each still does its work (the record, the labels).
+        host, clock = g5_host(worker=True)
+        refuse_sudo(host)
+        for gh in (StatusGH(), BlindGH(), StatusGH(private=False), StatusGH(private=False)):
+            clock.sleep(300)
+            run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual([a for a in host.ran if a[:1] == ("sudo",)], [])
+        self.assertEqual(host.files[M.seen_path(FOLDER)].strip(), "public")
+        # The stand-in itself: refusing is what it does when asked.
+        self.assertEqual(host.run(["sudo", "-n", "true"])[0], 1)
 
 
 class Helpers(unittest.TestCase):
