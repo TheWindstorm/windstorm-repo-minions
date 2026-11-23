@@ -2977,6 +2977,21 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
     return lines
 
 
+def our_leftover_holds(host: Host, pids: list[str]) -> list[str]:
+    """R91: which of the runner user's processes are a job's sleep hold of ours: `systemd-inhibit` with our name, or
+    the `sleep` it runs. Read from /proc (argv and parent), never by a pattern over every process."""
+    def argv(pid: str) -> list[str]:
+        return [x for x in (host.read(f"/proc/{pid}/cmdline") or "").split("\0") if x]
+    def ppid(pid: str) -> str:
+        st = host.read(f"/proc/{pid}/stat") or ""
+        rest = st.rsplit(")", 1)[-1].split()
+        return rest[1] if len(rest) > 1 else ""
+    inhibitors = {p for p in pids if (a := argv(p)) and os.path.basename(a[0]) == "systemd-inhibit"
+                  and "--who=Windstorm Repo Minions" in a}
+    sleeps = {p for p in pids if argv(p)[:1] == ["sleep"] and ppid(p) in inhibitors}
+    return sorted(inhibitors | sleeps, key=int)
+
+
 def rerun_once(gh: GitHub, host: Host, repo: str, job_id: int, named: dict, data: dict) -> tuple[str, str]:
     if job_id not in named:
         return ("stop", f"job {job_id} is not one this computer cut or its limit stopped: nothing was run again")
@@ -4254,8 +4269,20 @@ def remove_shared(host: Host, rep: Report) -> bool:
         rep.ok(f"the tool's copy, the job hooks and the jobs' records are deleted ({HOOKS_ROOT}, {RECORDS_ROOT})")
     if host.run(["id", RUNNER_USER])[0] == 0:
         left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+        ours = our_leftover_holds(host, left)
+        if ours:  # R91: a job's sleep hold left behind (a service stopped mid-job): ours, so ended here, by exact PID
+            journal(host, "end", f"leftover sleep holds of ours: {', '.join(ours)}")
+            sudo(host, ["kill", "-TERM", *ours])
+            for _ in range(25):
+                left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+                if not set(ours) & set(left):
+                    break
+                host.sleep(0.2)
+            rep.ok(f"a job's sleep hold left behind by a stopped service ({', '.join(ours)}) is ended")
         if left:
-            rep.stop(f"processes of {RUNNER_USER} still run ({', '.join(left)}): the user is not deleted")
+            what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
+            rep.stop(f"processes of {RUNNER_USER} still run, not made by this tool's sleep holds: {what}. The user is "
+                     f"not deleted. End them (`sudo kill <pid>`), then run the same command again: it finishes from here")
             return False
         journal(host, "userdel", RUNNER_USER)
         sudo(host, ["userdel", "-r", RUNNER_USER])

@@ -3239,6 +3239,48 @@ class P1a(unittest.TestCase):
         first = min(i for i, x in enumerate(lines) if TELL.match(x))
         self.assertTrue(all(TELL.match(x) for x in lines[first:]), lines[first:])
 
+    def test_G6_8_uninstall_all_ends_our_leftover_sleep_holds_and_names_anything_else(self):
+        # Seen on a stock VM (2026-11-23): a job's sleep hold outlived a service stopped mid-job; `uninstall --all`
+        # then stopped on "processes of minions-runner still run" with no way out, though the processes were ours.
+        def holds(world_pids, other=()):
+            gh, world, host = remove_setup()
+            alive = set(world_pids) | set(other)
+            def answer(argv, input=None):
+                if list(argv) == ["pgrep", "-u", "minions-runner"]:
+                    return (0, "".join(f"{p}\n" for p in sorted(alive, key=int))) if alive else (1, "")
+                if list(argv[:4]) == ["sudo", "-n", "kill", "-TERM"]:
+                    alive.difference_update(argv[4:])
+                    return 0, ""
+                return world.answer(argv, input)
+            host._answer = answer
+            who = "--who=Windstorm Repo Minions"
+            for pid, (argv, parent) in {"100": (["/usr/bin/systemd-inhibit", "--what=idle", who, "sleep", "21600"], "1"),
+                                        "101": (["sleep", "21600"], "100"),
+                                        "200": (["/usr/bin/systemd-inhibit", "--what=idle", "--who=someone else",
+                                                 "sleep", "9"], "1"),
+                                        "201": (["sleep", "9"], "200"), "300": (["python3", "x.py"], "1")}.items():
+                host.files[f"/proc/{pid}/cmdline"] = "\0".join(argv) + "\0"
+                host.files[f"/proc/{pid}/stat"] = f"{pid} ({os.path.basename(argv[0])[:15]}) S {parent} 1 1"
+                host.files[f"/proc/{pid}/comm"] = os.path.basename(argv[0])[:15] + "\n"
+            return gh, world, host, alive
+        gh, world, host, alive = holds(["100", "101"])
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        self.assertIn(("sudo", "-n", "kill", "-TERM", "100", "101"), host.ran)  # by exact PID, never by a pattern
+        self.assertFalse(any(a[:2] in (("pkill",), ("killall",)) or a[:1] in (("pkill",), ("killall",)) for a in host.ran))
+        self.assertTrue(any("sleep hold left behind" in x and "100, 101" in x for x in lines), lines)
+        self.assertFalse(world.user)
+        # Anything not made by our holds is never ended: it is named with its name, and the way out is said.
+        gh, world, host, alive = holds(["100", "101"], other=["200", "201", "300"])
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(("sudo", "-n", "kill", "-TERM", "100", "101"), host.ran)
+        self.assertEqual(alive, {"200", "201", "300"})
+        stop = next(x for x in lines if "still run" in x)
+        self.assertIn("200 (systemd-inhibit), 201 (sleep), 300 (python3)", stop)
+        self.assertIn("run the same command again", stop)
+        self.assertTrue(world.user)
+
     def test_G6_7_uninstall_says_the_put_back_checks_before_its_pull_request(self):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host, repo=None, everything=True)
