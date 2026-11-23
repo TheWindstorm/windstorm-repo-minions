@@ -506,7 +506,8 @@ def token_scopes(host: Host) -> set[str] | None:
     m = re.search(r"Token scopes:\s*(.+)", out)
     if not m:
         return None
-    return set(re.findall(r"'([^']+)'", m.group(1)))
+    # R79: newer gh quotes each scope ('repo', 'workflow'); older gh (2.23 on Debian 12) prints them bare.
+    return set(re.findall(r"'([^']+)'", m.group(1))) or {x.strip() for x in m.group(1).split(",") if x.strip()}
 
 
 # ------------------------------------------------------------------------------------------------------------ G1.4
@@ -918,7 +919,7 @@ def sleep_setting(host: Host) -> str | None:
 # ------------------------------------------------------------------------------------------------------------ G1.7
 
 UPKEEP_PORTS = {22: "remote login", 53: "name service", 67: "address service", 68: "address service",
-                123: "time service", 5353: "local name discovery"}
+                123: "time service", 5353: "local name discovery", 5355: "local name resolution"}
 
 
 def listening_ports(tcp_text: str) -> set[int]:

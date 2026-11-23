@@ -245,6 +245,13 @@ class G1(unittest.TestCase):
         host = linux_host(runs={("gh", "auth", "status"): (0, "  ✓ Logged in to github.com account x\n")})
         _, lines = look(StandIn(self.recent), host)
         self.assertTrue(any("could not read the token's scopes" in x for x in lines), lines)
+        # R79: an older gh (2.23, Debian 12's) prints the scopes without quotes; read the same way
+        bare = "  ✓ Logged in to github.com as example-person (/home/x/.config/gh/hosts.yml)\n" \
+               "  ✓ Token scopes: gist, read:org, repo, workflow\n"
+        self.assertEqual(M.token_scopes(linux_host(runs={("gh", "auth", "status"): (0, bare)})),
+                         {"gist", "read:org", "repo", "workflow"})
+        _, lines = look(StandIn(self.recent), linux_host(runs={("gh", "auth", "status"): (0, bare)}))
+        self.assertIn("ok your login has the `workflow` scope (needed to change workflow files)", lines)
 
     def test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure(self):
         # 1. The recorded real start test: jobs start; the run and the branch are deleted and read back gone.
@@ -384,6 +391,12 @@ class G1(unittest.TestCase):
         self.assertIn("ok 1 port open to the network for this computer's own upkeep: 22 (remote login); normal on most "
                       "computers, not counted as something live", lines)
         self.assertFalse(any("open to the network here" in x for x in lines), lines)
+        # R80: Debian 12's own name resolution (LLMNR, 5355) is upkeep too
+        host = linux_host(files={"/proc/net/tcp": "  sl\n 0: 00000000:14EB 00000000:0000 0A\n"})
+        _, lines = look(StandIn(self.recent), host)
+        self.assertIn("ok 1 port open to the network for this computer's own upkeep: 5355 (local name resolution); "
+                      "normal on most computers, not counted as something live", lines)
+        self.assertFalse(any("serves something live" in x for x in lines), lines)
         self.assertFalse(any("serves something live" in x for x in lines), lines)
         self.assertFalse(M.load_state(host)["looks"][REPO]["survey"]["serves"])
         host = linux_host(files={"/proc/net/tcp": "  sl\n 0: 00000000:1F98 00000000:0000 0A\n"})

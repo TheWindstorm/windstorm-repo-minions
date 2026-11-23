@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- On a stock Debian 12: `look` reads the login's scopes also from an older GitHub CLI that prints them without
+  quotes (before, it said `workflow` was missing; row R79); the computer's own local name resolution port, 5355,
+  counts as upkeep, not as something live (row R80); and the skill says that installing `git` on a computer
+  without it is the person's step, with its command (row R81).
 - Tests: a new recorded fixture, `tests/fixtures/path-word-author.jsonl`, holds GitHub's real answer for a commit
   whose author was named like a path word ("workflows"), scrubbed: the name is replaced and the path keeps its word
   (G9.5, row R43).
