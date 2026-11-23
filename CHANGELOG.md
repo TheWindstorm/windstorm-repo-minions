@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The skill says what keeps running after Claude Code's own `plugin uninstall` (the runner, the watch, the
+  limits: they do your jobs) and the one command that takes them off, run from the copy setup installed. A test
+  runs `uninstall --all` from that copy alone, to the end (G6.11, row R100).
 - `doctor` and `status` say when the watch runs a different version of the tool than the one you run, which is
   older, and the one step that puts this version's copy in place. After an update of the skill, the watch went on
   running the old copy with nothing said (G4.10, row R101).

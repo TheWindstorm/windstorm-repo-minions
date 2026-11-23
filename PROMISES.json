@@ -1403,7 +1403,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G6_11_the_tools_own_copy_alone_runs_uninstall_all_to_the_end",
    "proven": "",
    "issue": 229,
    "moved_why": "",
