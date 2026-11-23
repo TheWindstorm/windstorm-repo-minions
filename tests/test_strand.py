@@ -260,6 +260,9 @@ class Hygiene(unittest.TestCase):
             push = re.search(r"^  push:\s*\n\s+branches:\s*\[(.*)\]\s*$", on, re.M)
             self.assertIsNotNone(push, f"{name}: push names its branches")
             self.assertEqual({b.strip().strip('"') for b in push.group(1).split(",")}, {"main", "release-[0-9]*"}, name)
+            # Rule 17 again (11-23): a pull request's newer push cancels its older runs, never on main or a release.
+            self.assertIn("group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}", text)
+            self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", text)
 
 
 @atexit.register

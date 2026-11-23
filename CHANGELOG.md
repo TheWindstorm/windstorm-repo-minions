@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Every system command the tool prints for you is one that was run exactly as printed on that kind of system; the
+  tool lists them. Off Debian and Ubuntu, the GitHub CLI's install line names no command, only where to read. Lines
+  name this computer's values instead of placeholders (G8.16, row R108).
+- CI: a newer push to a pull request cancels its older runs.
+- After Claude Code's own `plugin uninstall`, `status` says the skill's folder is gone (or marked removed), that the
+  runner and its watch go on taking your jobs, and the one command that takes them off; the watch writes it into
+  its journal once (G6.12, row R107).
 - `look` counts your own containers and other runner services and names them only on `look <owner/repo>
   --show-names`; `uninstall`'s census counts your own runner services. Their names may be your projects, and an
   agent keeps what it reads (G1.16, row R106).
