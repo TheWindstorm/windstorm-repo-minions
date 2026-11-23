@@ -1969,6 +1969,22 @@ def run_cmd(fn, *a, **kw):
     return code, out.getvalue().splitlines()
 
 
+class G9Version(unittest.TestCase):
+    def test_G9_8_one_version_is_named_everywhere(self):
+        # The tool, the manifest (where it exists: on a release branch) and the changelog's top entry (once it is a
+        # version) name one version; a half-bumped branch fails here, before a tag.
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        self.assertRegex(M.VERSION, r"^\d+\.\d+\.\d+$")
+        manifest = os.path.join(root, ".claude-plugin", "plugin.json")
+        if os.path.exists(manifest):
+            with open(manifest, encoding="utf-8") as f:
+                self.assertEqual(json.load(f).get("version"), M.VERSION, "the manifest and the tool")
+        with open(os.path.join(root, "CHANGELOG.md"), encoding="utf-8") as f:
+            top = next(x for x in f if x.startswith("## "))[3:].strip()
+        if top != "Unreleased":
+            self.assertEqual(top.split()[0], M.VERSION, "the changelog's top entry and the tool")
+
+
 class G5(unittest.TestCase):
     def test_G5_1_status_reads_both_sides_and_the_queue(self):
         host, clock = g5_host()
@@ -3191,6 +3207,54 @@ class P1a(unittest.TestCase):
         ask = next(i for i, x in enumerate(lines) if x.startswith("need you: read and merge pull request #12"))
         self.assertLess(tell, ask)
         self.assertIn("runs there once for it, before you merge", lines[tell])
+
+    def test_G5_16_a_job_held_at_our_memory_limit_is_named(self):
+        # R87 (seen on a stock machine): with the default marks a job that outgrows the limit is not killed; the
+        # kernel holds it at the high mark and it barely moves. The watch finds it so pass by pass, from the slice's
+        # own files; status names it first, with the job and the person's two ways out, after HELD_PASSES passes.
+        host, clock = g5_host(worker=True)
+        d = M.load_state(host)
+        d["runners"][REPO]["limits"] = {"MemoryHigh": str(4 * 1024 ** 3), "MemoryMax": str(5 * 1024 ** 3)}
+        M.save_state(host, d)
+        host.files[M.records_dir_of(d["runners"][REPO]["folder"]) + "/jobs.log"] = "start 1795400000 45100 1 0 build\n"
+        stalled = "some avg10=80.00 avg60=75.00 avg300=30.00 total=1\nfull avg10=70.00 avg60=62.00 avg300=25.00 total=1\n"
+        host.files[M.MEMORY_PRESSURE] = stalled
+        for n, high in ((1, 900), (2, 1900)):
+            host.files[M.MEMORY_EVENTS] = f"low 0\nhigh {high}\nmax 0\noom 0\noom_kill 0\n"
+            run_cmd(M.watch, host=host, gh=StatusGH(busy=True))
+            self.assertEqual(M.load_state(host)["runners"][REPO]["memory_held"]["passes"], n)
+            lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(busy=True))[1]
+            named = [x for x in lines if "held at this computer's memory limit" in x]
+            self.assertEqual(bool(named), n >= M.HELD_PASSES, lines)
+            clock.sleep(300)
+        self.assertEqual(lines[0], "warn job 'build' (run 45100) has been held at this computer's memory limit for "
+                                   "jobs (4.0 GB) since 23:00:00Z, 2 watch passes in a row: it needs more memory "
+                                   "than jobs here may use, so it barely moves; its tasks all stood still 62 % of "
+                                   "the last minute, and it may go on like this until GitHub's own time limit. Your "
+                                   "two ways out: cancel it (`gh run cancel 45100 -R example-org/example-repo`), or "
+                                   "give jobs more memory: `setup example-org/example-repo --limits <processors>,"
+                                   "<memory %>`")
+        # The held count stops rising (the job got its memory, or ended): no longer held, not named.
+        run_cmd(M.watch, host=host, gh=StatusGH(busy=True))
+        self.assertNotIn("memory_held", M.load_state(host)["runners"][REPO])
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(busy=True))[1]
+        self.assertFalse([x for x in lines if "memory limit for jobs" in x], lines)
+        # Little stall: a job brushing the high mark but moving is not named.
+        host.files[M.MEMORY_EVENTS] = "high 2500\n"
+        host.files[M.MEMORY_PRESSURE] = "some avg10=5.00 avg60=4.00 avg300=1.00 total=1\nfull avg10=2.00 avg60=1.50 avg300=0.50 total=1\n"
+        run_cmd(M.watch, host=host, gh=StatusGH(busy=True))
+        self.assertNotIn("memory_held", M.load_state(host)["runners"][REPO])
+        # No pressure file (a kernel without it): the job's memory sitting at the high mark counts instead.
+        del host.files[M.MEMORY_PRESSURE]
+        host.files[M.MEMORY_EVENTS] = "high 3000\n"
+        host.files[M.MEMORY_CURRENT], host.files[M.MEMORY_HIGH] = str(4 * 1024 ** 3 - 1000), str(4 * 1024 ** 3)
+        run_cmd(M.watch, host=host, gh=StatusGH(busy=True))
+        self.assertEqual(M.load_state(host)["runners"][REPO]["memory_held"]["passes"], 1)
+        # No job process: never held.
+        host, clock = g5_host(worker=False)
+        host.files[M.MEMORY_EVENTS], host.files[M.MEMORY_PRESSURE] = "high 900\n", stalled
+        run_cmd(M.watch, host=host, gh=StatusGH())
+        self.assertNotIn("memory_held", M.load_state(host)["runners"][REPO])
 
     def test_G5_15_a_blind_watch_says_so_and_holds_after_three_passes(self):
         host, clock = g5_host()

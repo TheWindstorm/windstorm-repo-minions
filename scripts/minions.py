@@ -2020,6 +2020,11 @@ DARWIN_ONLY = {"launchctl", "pmset", "diskutil", "sw_vers", "sysctl", "netstat"}
 HOOK_PROGRAMS = ("awk", "date", "cat", "dirname", "mkdir", "chmod", "env", "setsid", "systemd-inhibit", "sleep",
                  "pgrep", "seq", "kill", "rm", "realpath", "find", "df", "tail", "tr", "python3")
 MEMORY_EVENTS = f"/sys/fs/cgroup/{SLICE}/memory.events"  # its oom_kill count: a kill by OUR memory limit
+MEMORY_PRESSURE = f"/sys/fs/cgroup/{SLICE}/memory.pressure"  # R87: how much of the last minute jobs stalled on memory
+MEMORY_CURRENT = f"/sys/fs/cgroup/{SLICE}/memory.current"
+MEMORY_HIGH = f"/sys/fs/cgroup/{SLICE}/memory.high"
+HELD_FULL_PCT = 10.0  # R87: every job task stalled on memory for at least this share of the last minute
+HELD_PASSES = 2  # R87: named once this many watch passes in a row found the job held
 DRAIN_WAIT_S = 1800
 # G4.4 and G4.9: exactly two locks while a job runs, both nested in one process group the hooks start and end.
 # `idle` in block mode stops only the computer's own idle sleep; `sleep` in DELAY mode only delays a sleep that was
@@ -2701,6 +2706,9 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                                   "lands on it. A runner usually comes back by itself within a few minutes of a wake "
                                   f"or of the network returning; this one has not. `drain {rp} --stop`, then "
                                   f"`resume {rp}`, starts it fresh (each asks for the admin password once)"))
+        # R87: a job held at our memory limit, found so by the watch HELD_PASSES passes in a row, while it still runs.
+        if (mine.get("memory_held") or {}).get("passes", 0) >= HELD_PASSES and worker:
+            first.append(("warn", memory_held_words(rp, mine, read_records(host, mine["folder"]))))
         # The queue (G5.1) and the jobs waiting behind our hold (G5.13).
         q = [j for j in queued_jobs(gh, rp) if set(j["labels"]) & set(mine.get("labels") or ["minions"])]
         blocked_by = ("our hold (" + (mine.get("held_for") or "a hold") + ")" if held else
@@ -3038,8 +3046,53 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
     if r is None:
         return f"{repo}: GitHub not read (HTTP {s}){': ' + why if why else ''}", why
     offline_while_running(host, mine, r, data)
+    memory_held_pass(host, mine, data)
     return (f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}"
             + disk_pass(gh, host, repo, data, rep) + battery_pass(gh, host, repo, data, rep)), why
+
+
+def memory_held_pass(host: Host, mine: dict, data: dict) -> None:
+    """R87: a job held at our memory limit is not killed: the kernel slows it, and it can crawl until GitHub's own
+    time limit while this computer is under memory pressure. The watch reads the slice's own files (no admin rights
+    needed): the count of times it was held at its high mark rose since the last pass, and the job's tasks all
+    stalled on memory for a real share of the last minute (or, without that file, its memory sits at the high mark).
+    Written down pass by pass; `status` names it first once HELD_PASSES passes in a row found it."""
+    worker = runner_pids(host, mine.get("folder") or "", "Runner.Worker")
+    ev = re.search(r"^high (\d+)$", host.read(MEMORY_EVENTS) or "", re.M)
+    high = int(ev.group(1)) if ev else None
+    before, mine["mem_high_count"] = mine.get("mem_high_count"), high
+    full = re.search(r"^full avg10=[\d.]+ avg60=([\d.]+)", host.read(MEMORY_PRESSURE) or "", re.M)
+    held = False
+    if worker and high is not None and high > (before if isinstance(before, int) else 0):
+        if full:
+            held = float(full.group(1)) >= HELD_FULL_PCT
+        else:
+            cur, top = (host.read(MEMORY_CURRENT) or "").strip(), (host.read(MEMORY_HIGH) or "").strip()
+            held = cur.isdigit() and top.isdigit() and int(cur) >= 0.95 * int(top)
+    if held:
+        h = mine.get("memory_held") or {"since": stamp(host.now()), "passes": 0}
+        h["passes"] += 1
+        h["full_pct"] = float(full.group(1)) if full else None
+        mine["memory_held"] = h
+    else:
+        mine.pop("memory_held", None)
+    save_state(host, data)
+
+
+def memory_held_words(repo: str, mine: dict, recs: list[dict]) -> str:
+    """R87: the job held at our memory limit, by name and run where this computer's record has it, and the two ways
+    out that are the person's."""
+    h = mine["memory_held"]
+    run = next((j["start"] for j in reversed(recs) if j["end"] is None), None)
+    what = f"job '{run['job']}' (run {run['run']})" if run else "the job running here"
+    high = ((mine.get("limits") or {}).get("MemoryHigh") or "")
+    limit = f" ({gb(int(high))})" if str(high).isdigit() else ""
+    stall = f"; its tasks all stood still {h['full_pct']:.0f} % of the last minute" if h.get("full_pct") is not None else ""
+    cancel = f"`gh run cancel {run['run']} -R {repo}`" if run else "on GitHub, from the run's page"
+    return (f"{what} has been held at this computer's memory limit for jobs{limit} since {h['since'][11:19]}Z, "
+            f"{h['passes']} watch passes in a row: it needs more memory than jobs here may use, so it barely moves"
+            f"{stall}, and it may go on like this until GitHub's own time limit. Your two ways out: cancel it "
+            f"({cancel}), or give jobs more memory: `setup {repo} --limits <processors>,<memory %>`")
 
 
 def offline_while_running(host: Host, mine: dict, r: dict, data: dict) -> None:
