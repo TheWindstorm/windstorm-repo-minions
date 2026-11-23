@@ -1868,6 +1868,11 @@ def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: 
             seen = f"{r.get('status')}, {'busy' if r.get('busy') else 'idle'}"
             if r.get("status") == "online" and not r.get("busy") and active == "active":
                 rep.ok(f"both sides: GitHub lists {name} online and idle with only our labels; the service is active")
+                data = load_state(host)  # R85: an offline record from before it came online is over
+                rec = (data.get("runners") or {}).get(repo) or {}
+                if rec.pop("offline_since", None) is not None:
+                    rec.pop("offline_slept_s", None)
+                    save_state(host, data)
                 return True
         if left <= 0:
             break
@@ -2679,12 +2684,20 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rest.append(("ok" if word in ("idle", "busy") and not held else "warn",
                      f"{mine['name']} for {rp}: {word}. {sides}; {survey_words(data, rp)}{hold_words}"))
         # G11.4 (R74): GitHub has shown it offline for more than two watch intervals while its service runs here.
+        # R86: the watch reads GitHub once a pass, so the line says what was read (each pass, and now), not that
+        # GitHub showed it offline the whole span: between passes it may have been online.
         since = parse_stamp(mine.get("offline_since"))
         every = int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S)
+        # R85: counted in waking time, as the watch's own timer is: a computer that slept was not offline meanwhile
+        slept_then, slept_now = mine.get("offline_slept_s"), host.slept_s()
+        asleep = (max(0.0, slept_now - slept_then)
+                  if isinstance(slept_now, (int, float)) and isinstance(slept_then, (int, float)) else 0.0)
+        awake = (now - since).total_seconds() - asleep if since else 0.0
         if (since and r is not None and r.get("status") != "online" and active == "active" and not worker
-                and (now - since).total_seconds() > 2 * every):
-            first.append(("warn", f"{mine['name']} for {rp}: GitHub has shown it offline since {hms(since)} "
-                                  f"({minutes((now - since).total_seconds())}) while its service runs here, so no job "
+                and awake > 2 * every):
+            span = minutes((now - since).total_seconds()) + (f", {minutes(awake)} of it awake" if asleep else "")
+            first.append(("warn", f"{mine['name']} for {rp}: GitHub has shown it offline at every watch pass "
+                                  f"since {hms(since)} ({span}), and now, while its service runs here, so no job "
                                   "lands on it. A runner usually comes back by itself within a few minutes of a wake "
                                   f"or of the network returning; this one has not. `drain {rp} --stop`, then "
                                   f"`resume {rp}`, starts it fresh (each asks for the admin password once)"))
@@ -3037,9 +3050,11 @@ def offline_while_running(host: Host, mine: dict, r: dict, data: dict) -> None:
              and not runner_pids(host, mine.get("folder") or "", "Runner.Worker"))
     if stuck and not mine.get("offline_since"):
         mine["offline_since"] = stamp(host.now())
+        mine["offline_slept_s"] = host.slept_s()  # R85: time asleep is not counted against it
         save_state(host, data)
     elif not stuck and mine.get("offline_since"):
         mine.pop("offline_since")
+        mine.pop("offline_slept_s", None)
         save_state(host, data)
 
 
