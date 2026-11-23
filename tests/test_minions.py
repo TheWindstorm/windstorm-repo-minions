@@ -3524,10 +3524,18 @@ class G6(unittest.TestCase):
         state = M.load_state(host)
         self.assertNotIn("setting_up", state)
         self.assertEqual(state["runners"][REPO]["folder"], FOLDER)
-        # A setup of a runner that is set up and whole is not taken away: it stops on the folder, as before.
+        # A setup of a runner that is set up and whole is not taken away: it renews the watch's copy and touches
+        # nothing else (G4.10). The watch's last time is moved back first, so its first pass is seen to write a newer
+        # one whatever second this test runs in (the time is to the second: a pass in the same second as the last
+        # one read as "wrote nothing", and the result hung on the clock).
         host.runs[("sudo", "-n", "test", "-e", FOLDER)] = (0, "")
+        st = M.load_state(host)
+        st["watch"]["time"] = "2026-01-01T00:00:00Z"
+        M.save_state(host, st)
         code, lines = run_setup(setup_gh(sha), host)
-        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue(lines[-1].endswith("the runner, its service, its limits and a running job were not touched"),
+                        lines)
         self.assertFalse([x for x in lines if "cut part-way" in x or "uninstalled" in x], lines)
         self.assertIn(REPO, M.load_state(host)["runners"])
         # A read as root that sudo refused is said as not read, never taken for none.
