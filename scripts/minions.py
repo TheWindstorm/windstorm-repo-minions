@@ -1783,7 +1783,8 @@ mkdir -p "$STATE" && chmod 700 "$STATE"
   [ "$v" -le $(( now + 60 )) ] && [ $(( now - v )) -le {fresh_s} ]  # a time in the future is not fresh
 }}
 # GitHub's own record of the event that started this job names the repository and whether it is private (push,
-# pull_request and workflow_dispatch seen; a schedule's record has no repository, and then the watch's time decides).
+# pull_request and workflow_dispatch seen; a schedule's record has no repository). When the record cannot be read or
+# names no repository, the watch's record alone decides: that is neither a refusal nor a pass by itself.
 event="$(python3 -I -c '{EVENT_PY}' 2>/dev/null)"
 if [ "$event" = public ]; then
 {record_line("refused-public", recs)}  echo "::error::Windstorm Repo Minions refused this job before any of its steps: GitHub's own record of this event says the repository is not private, and this computer takes no job of a repository that is not private. On that computer, \\`status\\` says what to do."
@@ -2359,7 +2360,7 @@ def read_records(host: Host, folder: str) -> list[dict]:
             jobs.append({"start": rec, "end": None})
         else:
             if kind.startswith("refused-"):
-                rec["refused"] = kind[len("refused-"):]  # G5.15: the hook refused it; its end hook never ran
+                rec["refused"] = kind[len("refused-"):]  # G5.15: the hook refused it (the end hook still runs after)
             for j in reversed(jobs):
                 if j["end"] is None and (j["start"]["run"], j["start"]["attempt"]) == (run, attempt):
                     j["end"] = rec
