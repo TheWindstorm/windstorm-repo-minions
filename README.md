@@ -32,7 +32,10 @@ The tool the skill runs is `scripts/minions.py`. It uses only Python's standard 
 **Your steps.** Only these are yours, and your agent stops and asks for each one:
 - installing `gh`, `git` or Python if your computer lacks them (your agent names the one command);
 - logging in to GitHub with `gh auth login`, if you are not, as an account that is an admin of the repository;
-- your computer's admin password, typed by you, once;
+- your computer's admin password, typed by you, once (again later for `resume`, `drain --stop`, `doctor` and
+  `uninstall`, each in your own terminal);
+- a yes in words if your computer already serves something live (a website, a database, a container), or another
+  computer;
 - a yes before the tool sends one test job that runs on no machine and is deleted at once;
 - merging the pull request that moves your jobs (the tool never merges);
 - a yes for each job that publishes or deploys, if you want it moved too.
@@ -41,15 +44,15 @@ Or do it by hand: clone the repository into your home folder and run
 `python3 -I windstorm-repo-minions/scripts/minions.py look OWNER/NAME`, then `setup`, then `move`, as `SKILL.md` describes.
 
 **Why private only.** On a public repository, a stranger's pull request could run code on your computer, as GitHub's
-own documentation warns. The tool refuses a public repository. If one is made public later, it holds and stops the
-runner within one check.
+own documentation warns. The tool refuses a public repository. If one is made public later, your computer refuses its
+jobs before their first step, and the check takes the runner off that repository on GitHub's side.
 
 **What it puts on your computer**
 - **GitHub's own runner program.** It is downloaded from GitHub, and its checksum is checked against the two places
   GitHub publishes it. It lives in its own folder in the home of a new user, `minions-runner`.
 - **That user.** It has no admin rights, and it cannot open your home folder.
 - **A boot service** that runs the runner as that user. It is capped by default at half your processors and 60 % of
-  your memory. `setup` tells you the real numbers before it installs, and `setup OWNER/NAME --limits PROCESSORS,MEMORY%` changes
+  your memory; on a computer with one processor that is all of it, and `look` says so plainly. `setup` tells you the real numbers before it installs, and `setup OWNER/NAME --limits PROCESSORS,MEMORY%` changes
   them.
 - **Two small scripts the runner calls around each job.** They empty the job's folder afterwards and keep the
   computer from falling asleep on its own during the job. A sleep you ask for, or closing the lid, still happens.
