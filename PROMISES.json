@@ -1044,6 +1044,34 @@
    "issue": 143,
    "moved_why": "Made smaller by ruling, 2026-11-23, with the reason: the codon promised a restart, but the watch runs with no admin rights and cannot restart anything, a root unit that restarts after a wake would be a privileged moving part added for a case nobody has seen, and the runner was seen coming back by itself three times with no restart.",
    "moved_by_person": ""
+  },
+  {
+   "id": "R75",
+   "seen": "2026-11-23, a cold-start agent run (the smallest model) on a stock Ubuntu 24.04 virtual machine: look's line `warn 1 port(s) open to the network here: 22` made the agent ask the person whether setup should go on at all, for the computer's own remote-login port.",
+   "promise": "The computer's own upkeep ports (remote login, name, address and time services, local name discovery) are said in an ok line that names what each one is and that it is not counted as something live; only other ports open to the network are a warn.",
+   "codon": "G1.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_7_look_names_what_already_lives_on_the_computer",
+   "proven": "",
+   "issue": 146,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R76",
+   "seen": "2026-11-23, read in the code before an agent run built to reach it: at move --verify's deadline, a run still queued because GitHub shows our runner offline ended on \"Next: move --verify again after the next push or pull request\", without saying the runner is offline.",
+   "promise": "When move --verify reaches its deadline while GitHub shows our runner not online, its waiting line says so and names `resume OWNER/NAME` first, then `move OWNER/NAME --verify` again; nothing is called moved before one job ran here.",
+   "codon": "G3.6",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G3_6_moved_is_said_only_after_a_real_job_ran",
+   "proven": "",
+   "issue": 148,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
