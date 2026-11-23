@@ -365,7 +365,7 @@ class G1(unittest.TestCase):
         host = linux_host(which=("gh", "sudo", "systemctl", "podman"),
                           runs={("podman", "ps"): (0, "my-db\n")})
         _, lines = look(StandIn(self.recent), host)
-        self.assertIn("warn 1 port(s) open to the network here: 443", lines)
+        self.assertIn("warn 1 port open to the network here: 443", lines)
         self.assertIn("warn 1 container(s) of yours running: my-db (podman, yours)", lines)
         self.assertTrue(any("serves something live" in x for x in lines), lines)
         self.assertEqual(M.listening_ports(TCP), {443}, "loopback and non-listening sockets are not counted")
@@ -381,7 +381,9 @@ class G1(unittest.TestCase):
         host = linux_host(files={"/proc/net/tcp": "  sl\n 0: 00000000:0016 00000000:0000 0A\n"
                                                   " 1: 3500007F:0035 00000000:0000 0A\n"})
         _, lines = look(StandIn(self.recent), host)
-        self.assertIn("warn 1 port(s) open to the network here: 22", lines)
+        self.assertIn("ok 1 port open to the network for this computer's own upkeep: 22 (remote login); normal on most "
+                      "computers, not counted as something live", lines)
+        self.assertFalse(any("open to the network here" in x for x in lines), lines)
         self.assertFalse(any("serves something live" in x for x in lines), lines)
         self.assertFalse(M.load_state(host)["looks"][REPO]["survey"]["serves"])
         host = linux_host(files={"/proc/net/tcp": "  sl\n 0: 00000000:1F98 00000000:0000 0A\n"})

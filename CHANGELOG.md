@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `look` now gives the computer's own upkeep ports (remote login, name, address and time services, local name
+  discovery) an `ok` line that names what each one is and says it is not counted as something live. Before, a
+  remote-login port alone was a `warn`, and an agent asked the person whether to go on at all. Any other port
+  open to the network is still a `warn` (G1.7, row R75).
 - G11.4, by ruling, with the reason: a runner whose service runs while GitHub has shown it offline for more than
   two watch intervals is named first in `status`, as a `warn` with its way on (`drain --stop`, then `resume`).
   The codon promised a restart; it is made smaller because the watch has no admin rights and cannot restart

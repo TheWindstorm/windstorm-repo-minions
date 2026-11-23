@@ -912,7 +912,8 @@ def sleep_setting(host: Host) -> str | None:
 
 # ------------------------------------------------------------------------------------------------------------ G1.7
 
-UPKEEP_PORTS = {22, 53, 67, 68, 123, 5353}
+UPKEEP_PORTS = {22: "remote login", 53: "name service", 67: "address service", 68: "address service",
+                123: "time service", 5353: "local name discovery"}
 
 
 def listening_ports(tcp_text: str) -> set[int]:
@@ -978,10 +979,18 @@ def what_lives_here(host: Host, rep: Report) -> dict:
         if rc == 0:
             out["runners"] = [x.split()[-1] for x in text.splitlines() if "actions.runner." in x]
     ports = sorted(out["ports"])
-    if ports:
-        rep.warn(f"{len(ports)} port(s) open to the network here: {', '.join(map(str, ports[:20]))}"
-                 f"{' ...' if len(ports) > 20 else ''}")
-    else:
+    # R75: the computer's own upkeep (remote login and the like) is normal on every Linux machine: an ok line that
+    # says what it is, so an agent does not turn it into a question for the person; any other port stays a warn.
+    upkeep = [p for p in ports if p in UPKEEP_PORTS]
+    other = [p for p in ports if p not in UPKEEP_PORTS]
+    if upkeep:
+        rep.ok(f"{plural(len(upkeep), 'port')} open to the network for this computer's own upkeep: "
+               + ", ".join(f"{p} ({UPKEEP_PORTS[p]})" for p in upkeep)
+               + "; normal on most computers, not counted as something live")
+    if other:
+        rep.warn(f"{plural(len(other), 'port')} open to the network here: {', '.join(map(str, other[:20]))}"
+                 f"{' ...' if len(other) > 20 else ''}")
+    if not ports:
         rep.ok("no port open to the network")
     if out["containers"]:
         rep.warn(f"{len(out['containers'])} container(s) of yours running: {', '.join(out['containers'][:20])}")
