@@ -1656,7 +1656,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_18_a_stopped_job_is_named_by_its_workflow_file",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: a 6 GB job stopped at the 4.7 GB cap, and status named it \"job 'j' of .github/workflows/mem-big.yml (run 45282321894, started 22:43:15Z) was stopped by this computer's memory limit (4.7 GB)\" (the second computer's runner held for a minute so the job landed on this one).",
    "issue": 284,
    "moved_why": "",
    "moved_by_person": ""
