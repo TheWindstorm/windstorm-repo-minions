@@ -857,7 +857,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G9_7_a_stand_in_grants_nothing_a_real_machine_refuses",
    "proven": "",
    "issue": 98,
    "moved_why": "",
