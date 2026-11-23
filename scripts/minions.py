@@ -514,8 +514,14 @@ PRINTED_COMMANDS = {
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner's unit blanked in the state and its "
         "service file moved aside by hand): uninstall's line with the one PID, run as printed; no process of it left",
     # G7.15 (R112): the command the person runs in their own terminal, which shows their lines and waits for Enter.
-    "python3 -I {} setup {}{}": "",
-    "python3 -I {} uninstall {}{}": "",
+    "python3 -I {} setup {}{}":
+        "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: printed by setup in the agent's shell, passed on by the agent "
+        "and run as printed by the person in their own terminal; its 11 lines shown, Enter pressed, the password typed at "
+        "sudo's prompt, and setup went to the end",
+    "python3 -I {} uninstall {}{}":
+        "2026-11-23, the same machine: printed by uninstall in the agent's shell (as uninstall --all), run as printed in "
+        "the person's own terminal; its 3 lines shown, Enter pressed, the password typed at sudo's prompt, and uninstall "
+        "went to the end",
     "python3 -I {} uninstall --all":
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: status, run from the tool's copy with the skill's folder "
         "deleted, printed it; run as printed, uninstall went to the end",
