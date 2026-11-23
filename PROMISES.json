@@ -1320,7 +1320,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_2_the_runner_runs_low_and_capped",
-   "proven": "",
+   "proven": "2026-11-23, one stock Ubuntu 24.04.5 virtual machine with a swap file and the private proof repository, seen once, nothing steered, on this change's code before its swap read-back was added: `setup` wrote the slice and systemd read `MemoryHigh=infinity`, `MemoryMax=4996160716`, `MemorySwapMax=0`. A job holding 6 GB of random bytes was killed when it reached the cap (the run started 13:48:51Z and was read failed at 13:49:28Z, UTC), and `status` said `warn job 'j' (run 45187630529, ...) was stopped by this computer's memory limit (4.7 GB), not by your code failing ...`; a 3 GB job passed. GitHub, read through its API (the job's steps and annotations, not the page in a browser), showed the job's run step as failed with the annotation `Process completed with exit code 137.` and nothing naming memory. Not seen: `setup`'s read-back of the swap cap from the running slice (tested only), and a computer that does not hold the cap.",
    "issue": 207,
    "moved_why": "",
    "moved_by_person": ""
