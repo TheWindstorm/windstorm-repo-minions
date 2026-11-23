@@ -1698,8 +1698,22 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_14_the_places_used_in_the_persons_home_are_named_and_listed_alike",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine with Claude Code 2.1.331 installed by its own installer: the whole home, the system's and the user's unit files, timers, crontab and processes listed just before and just after a bare `claude plugin marketplace add` and `claude plugin install` of the release branch's commit; 42 home differences, every one inside Claude Code's own plugin places (none outside the family's shared list), no ~/.minions, no unit file, timer or crontab line added, no process of the person's left running, and the installed copy carried no hooks, no server file and no plugin manifest.",
    "issue": 301,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R122",
+   "seen": "2026-11-23, family rule 24 (installed is not running), after a sister skill's service kept running older code after an update. Here: doctor reads GitHub's runner version from the file on disk (`bin/Runner.Listener --version`); GitHub's runner updates itself, so a listener not yet restarted can run older code than the one installed. The watch is a timer that starts a fresh process of the installed copy on each pass, so for it installed is running.",
+   "promise": "doctor and status name the version of the runner that is running, read by a read-only probe of the running listener (its executable's path, /proc/<pid>/exe, names the bin.<version> folder it started from), beside the installed one, and say so when the two differ; when the running one cannot be read, they say that, never the installed one in its place.",
+   "codon": "G4.11",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "proven": "",
+   "issue": 305,
    "moved_why": "",
    "moved_by_person": ""
   }
