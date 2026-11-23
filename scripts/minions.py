@@ -2596,7 +2596,9 @@ def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: li
     if r is not None and r.get("status") == "online" and not r.get("busy") and not worker and active == "active":
         word = "idle"
     elif r is not None and (r.get("busy") or worker) and active == "active":
-        word = "busy" if (r.get("busy") and worker) else "the two sides disagree"
+        # R84: GitHub showing the runner offline while a job runs here is a disagreement, never plain "busy"
+        word = ("busy" if (r.get("busy") and worker and r.get("status") == "online")
+                else "the two sides disagree")
     else:
         word = "not ready"
     return word, f"{gh_side}; {here}"
