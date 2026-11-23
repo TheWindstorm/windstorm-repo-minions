@@ -38,7 +38,7 @@ VERSION = "0.0.0"
 
 # G8.3: every way a command can end. The worst line decides among 0, 2, 3 and 4.
 EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 64, 130
-LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting")
+LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting", "tell the person")
 COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain", "uninstall")  # built so far, in G8.3's order
 RUNNER_USER = "minions-runner"
 SLICE = "minions.slice"
@@ -77,6 +77,7 @@ class Report:
         self.stopped = False
         self.blocked = False
         self.waiting = False
+        self.asked = False
 
     def _put(self, kind: str, text: str) -> None:
         line = f"{kind} {text}"
@@ -93,10 +94,19 @@ class Report:
         self.stopped = True
         self._put("stop", text)
 
-    def need(self, text: str, blocks: bool = True) -> None:
+    def need(self, text: str, blocks: bool = True, answered_here: bool = False) -> None:
+        """A step that is the person's. `blocks`: nothing after it may run. Every need-you line sets exit 3 (P1a: an
+        agent that trusts exit codes would go on past an ask), except one answered in this same run
+        (`answered_here`: the password sudo asks for at once, in this terminal)."""
         if blocks:
             self.blocked = True
+        if not answered_here:
+            self.asked = True
         self._put("need you:", text)
+
+    def tell(self, text: str) -> None:
+        """G7.10: words the agent passes on to the person exactly as printed, before the next step."""
+        self._put("tell the person:", text)
 
     def wait(self, text: str) -> None:
         self.waiting = True
@@ -105,7 +115,7 @@ class Report:
     def code(self) -> int:
         if self.stopped:
             return EXIT_STOP
-        if self.blocked:
+        if self.blocked or self.asked:
             return EXIT_NEED
         return EXIT_WAIT if self.waiting else EXIT_OK
 
@@ -139,6 +149,14 @@ class Host:
                 return f.read()
         except OSError:
             return None
+
+    def write_text(self, path: str, text: str) -> None:
+        """A small file written whole (a reader never sees half of it), readable by every user."""
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
 
     def listdir(self, path: str) -> list[str]:
         try:
@@ -246,6 +264,7 @@ class GitHub:
 
     def __init__(self, host: Host):
         self.host = host
+        self.why = ""  # G5.15: why the last call got no HTTP answer, in words
 
     def api(self, method: str, path: str, body: dict | None = None) -> tuple[int, object]:
         argv = ["gh", "api", "-i", "-X", method, path, "-H", "Accept: application/vnd.github+json"]
@@ -256,9 +275,15 @@ class GitHub:
         try:
             p = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=60)
             raw = p.stdout
+        except FileNotFoundError:
+            self.why = ("the GitHub CLI (gh) could not be found with this PATH: "
+                        + (os.environ.get("PATH") or "(none)"))
+            return 0, {"message": self.why}
         except (OSError, subprocess.SubprocessError) as e:
-            return 0, {"message": str(e)}
+            self.why = f"the GitHub CLI could not be run: {e}"
+            return 0, {"message": self.why}
         status, data = parse_include(raw)
+        self.why = "" if status else ("GitHub gave no answer: " + (tail(p.stderr or "", 2) or "no words"))
         rec = os.environ.get("MINIONS_RECORD")
         if rec:
             kept = data
@@ -297,9 +322,9 @@ def parse_include(raw: str) -> tuple[int, object]:
 
 INSTALL_GH = {
     "Darwin": "brew install gh",
-    "debian": "sudo apt install gh",
+    "debian": "sudo apt update && sudo apt install gh",  # P1a: a fresh cloud image has no package lists yet
     "fedora": "sudo dnf install gh",
-    "arch": "sudo pacman -S github-cli",
+    "arch": "sudo pacman -Syu github-cli",  # Arch never installs on stale lists (-S alone); not seen here
 }
 
 
@@ -653,8 +678,7 @@ def survey(host: Host, rep: Report) -> dict:
     if s["battery"] is None:
         rep.warn("battery: not read")
     elif s["battery"]:
-        rep.warn("this computer has a battery: a laptop takes jobs only while it is awake, on the network and "
-                 "(by default) on mains power")
+        rep.warn("this computer has a battery: " + LAPTOP_WORDS)
     else:
         rep.ok("no battery: not a laptop")
     s["wifi_only"] = wifi_only(host)
@@ -1108,8 +1132,9 @@ def check_cost_rule(host: Host, rep: Report) -> None:
         items = None
     if not items or not any(x.startswith("Self-hosted runners") for x in items):
         rep.warn(f"I could not read GitHub's rule today ({when}): see {COST_URL}")
+        rep.tell("I could not read GitHub's page about charges today.")
         return
-    rep.ok(f"GitHub's billing page, read {when}, lists \"Self-hosted runners\" among the uses that do not reduce "
+    rep.tell(f"GitHub's billing page, read {when}, lists \"Self-hosted runners\" among the uses that do not reduce "
            "the included usage (its words: \"" + COST_LIST_HEAD + " " + " ".join(items) + "\"). In December 2025 "
            "GitHub announced a charge for self-hosted runner use and postponed it. Artifact and cache storage "
            f"count the same whichever computer ran the job. Source: {COST_URL}")
@@ -1332,7 +1357,7 @@ def ask_admin_once(host: Host, rep: Report, interactive: bool, cmd: str = "setup
         return True
     if interactive:
         rep.need("type this computer's admin password once, where sudo asks for it below (this step is yours)",
-                 blocks=False)
+                 blocks=False, answered_here=True)
         if host.sudo_validate() == 0 and host.run(["sudo", "-n", "true"])[0] == 0:
             rep.ok("admin rights ready (asked once)")
             return True
@@ -1646,7 +1671,7 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
                                                                            "MemoryMax")},
                                             "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
     save_state(host, data)
-    if not install_watch(host, rep):
+    if not install_watch(host, rep, repo=repo):
         return rep.code()
     both_sides(gh, host, repo, runner_name, unit, labels, rep)
     return rep.code()
@@ -1659,6 +1684,29 @@ DISK_FLOOR = 5 * 1024 ** 3  # G4.3: under this much free space for the work fold
 JOB_HOURS_MOST = 6  # GitHub's default job time limit; a lock left by a runner that died ends by itself after this
 HELD_LABEL = "minions-held"
 RECORDS_ROOT = "/var/lib/windstorm-repo-minions"  # G5.7, G5.14: each job's start and end, as this computer saw them
+# G5.15 (P1a): the watch writes, as you, the time it last READ the repository private; the job-start hook, as the
+# runner user, refuses a job when that is older than SEEN_FRESH_S (after waiting HOLD_WAIT_S for a fresh one) or says
+# "public". So a blind watch (no GitHub CLI, no login, no network, or not running) holds the runner on this computer,
+# with no GitHub call and no admin rights.
+SEEN_ROOT = f"{RECORDS_ROOT}/seen"
+SEEN_PASSES = 3  # as for a silent watch (G5.3): one or two missed reads are a blip; three are 15 minutes blind
+HOLD_WAIT_S = 360  # longer than one watch interval: after a boot or a wake the next pass comes within it
+# G8.9 (P1a run B): every program the tool runs by name, and why. setup resolves each to a full path with your PATH,
+# and its services run with exactly those folders (a system service has the system's PATH, not yours: a `gh` in
+# your own folder was not found, in silence). A test fails when the tool runs a program by name not listed here.
+PROGRAMS = {
+    "gh": "every GitHub call", "systemctl": "services and timers", "sudo": "admin steps, after one password",
+    "systemd-detect-virt": "the disk kind", "pgrep": "runner processes", "kill": "a stop by exact PID",
+    "useradd": "the runner's user", "userdel": "removing it", "install": "folders and the tool's copy",
+    "tee": "writing root's files from standard input", "cat": "reading root's files", "chown": "ownership",
+    "chmod": "modes", "stat": "reading modes back", "id": "your group", "rm": "removing files", "test": "a path exists",
+    "bash": "the runner's own scripts", "systemd-inhibit": "the two locks during a job",
+    "journalctl": "the runner's own log lines", "sha256sum": "the runner's checksum", "tar": "unpacking the runner",
+}
+DARWIN_ONLY = {"launchctl", "pmset", "diskutil", "sw_vers", "sysctl", "netstat"}  # macOS; resolved there, later
+# The programs the two job hooks run (as the runner user, which cannot enter your home folder).
+HOOK_PROGRAMS = ("awk", "date", "cat", "dirname", "mkdir", "chmod", "env", "setsid", "systemd-inhibit", "sleep",
+                 "pgrep", "seq", "kill", "rm", "realpath", "find", "df", "tail", "tr")
 MEMORY_EVENTS = f"/sys/fs/cgroup/{SLICE}/memory.events"  # its oom_kill count: a kill by OUR memory limit
 DRAIN_WAIT_S = 1800
 # G4.4 and G4.9: exactly two locks while a job runs, both nested in one process group the hooks start and end.
@@ -1698,15 +1746,45 @@ def record_line(kind: str, records: str) -> str:
             '"${GITHUB_RUN_ID:-?}" "${GITHUB_RUN_ATTEMPT:-?}" "${oom:-?}" "${GITHUB_JOB:-?}" >> "$REC"\n')
 
 
-def job_started_script(folder: str, records: str | None = None) -> str:
-    """G4.4: written by setup, owned by root, read-only to the runner user; runs as the runner user at each job's start."""
+def seen_path(folder: str) -> str:
+    return f"{SEEN_ROOT}/{os.path.basename(folder.rstrip('/'))}"
+
+
+def path_line(path: str | None) -> str:
+    return f"export PATH={sh_quote([path])}\n" if path else ""
+
+
+def job_started_script(folder: str, records: str | None = None, path: str | None = None, seen: str | None = None,
+                       every_s: int = 300, hold_wait_s: int = HOLD_WAIT_S) -> str:
+    """G4.4, G5.15: written by setup, owned by root, read-only to the runner user; runs as the runner user at each
+    job's start, before any step of the job."""
+    fresh_s = SEEN_PASSES * every_s
     return f"""#!/bin/bash
-# Windstorm Repo Minions, job started (G4.4, G4.9, G5.7). Written by setup; owned by root.
-# It holds the computer's own idle sleep off and delays (never refuses) a sleep you ask for, while this job runs.
-FOLDER={sh_quote([folder])}
+# Windstorm Repo Minions, job started (G4.4, G4.9, G5.7, G5.15). Written by setup; owned by root.
+# It refuses the job unless the watch read this repository private in the last {fresh_s // 60} minutes. Then it holds
+# the computer's own idle sleep off and delays (never refuses) a sleep you ask for, while this job runs.
+{path_line(path)}FOLDER={sh_quote([folder])}
 STATE="$FOLDER/_minions"
+SEEN={sh_quote([seen or seen_path(folder)])}
 mkdir -p "$STATE" && chmod 700 "$STATE"
-{record_line("start", records or records_dir_of(folder))}if command -v systemd-inhibit >/dev/null 2>&1; then
+{record_line("start", records or records_dir_of(folder))}seen_ok() {{
+  v="$(cat "$SEEN" 2>/dev/null)"
+  case "$v" in ''|*[!0-9]*) return 1 ;; esac
+  [ $(( $(date +%s) - v )) -le {fresh_s} ]
+}}
+if [ "$(cat "$SEEN" 2>/dev/null)" != public ] && ! seen_ok; then
+  echo "minions: the watch has not read this repository private in the last {fresh_s // 60} minutes; waiting up to {hold_wait_s // 60} minutes for it to"
+  for _ in $(seq {hold_wait_s // 10}); do sleep 10; seen_ok && break; [ "$(cat "$SEEN" 2>/dev/null)" = public ] && break; done
+fi
+if [ "$(cat "$SEEN" 2>/dev/null)" = public ]; then
+  echo "::error::Windstorm Repo Minions refused this job before any of its steps: the repository is no longer private, and this computer takes no job of a repository that is not private. On that computer, \\`status\\` says what to do."
+  exit 1
+fi
+if ! seen_ok; then
+  echo "::error::Windstorm Repo Minions refused this job before any of its steps: the watch on that computer has not read the repository private in the last {fresh_s // 60} minutes, so it may not be private now. On that computer, \\`status\\` says why and what to do."
+  exit 1
+fi
+if command -v systemd-inhibit >/dev/null 2>&1; then
   env -u RUNNER_TRACKING_ID setsid {sh_quote(inhibitor_argv())} </dev/null >/dev/null 2>&1 &
   pid="$!"
   echo "$pid" > "$STATE/inhibit.pid"
@@ -1725,11 +1803,11 @@ exit 0
 """
 
 
-def job_completed_script(folder: str, records: str | None = None) -> str:
+def job_completed_script(folder: str, records: str | None = None, path: str | None = None) -> str:
     """G4.3 and G4.4: ends the locks, empties this job's work folder, and marks a disk under the floor."""
     return f"""#!/bin/bash
 # Windstorm Repo Minions, job completed (G4.3, G4.4, G5.7). Written by setup; owned by root.
-FOLDER={sh_quote([folder])}
+{path_line(path)}FOLDER={sh_quote([folder])}
 STATE="$FOLDER/_minions"
 mkdir -p "$STATE" && chmod 700 "$STATE"
 {record_line("end", records or records_dir_of(folder))}if [ -f "$STATE/inhibit.pid" ]; then
@@ -1753,9 +1831,39 @@ exit 0
 """
 
 
+def resolve_programs(host: Host, names) -> tuple[dict, list]:
+    """G8.9: each program's full path, found with your PATH; and the ones not found."""
+    found, missing = {}, []
+    for n in names:
+        p = host.which(n)
+        if p:
+            found[n] = os.path.abspath(p)
+        else:
+            missing.append(n)
+    return found, missing
+
+
+def path_for(found: dict) -> str:
+    """G8.9: the folders of the resolved programs, in your PATH's order, so each name finds the same program again."""
+    order = [os.path.abspath(x) for x in os.environ.get("PATH", "").split(os.pathsep) if x]
+    dirs = sorted({os.path.dirname(p) for p in found.values()},
+                  key=lambda d: (order.index(d) if d in order else len(order), d))
+    return ":".join(dirs)
+
+
 def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
-    """G4.3, G4.4: the two job hooks, root-owned and read-only to the runner; named in the runner's .env."""
+    """G4.3, G4.4: the two job hooks, root-owned and read-only to the runner; named in the runner's .env.
+    G8.9: every program they run is resolved here, outside your home folder (the runner user cannot enter it)."""
     d = hook_dir(repo)
+    found, missing = resolve_programs(host, HOOK_PROGRAMS)
+    home = host.home().rstrip("/") + "/"
+    inside = sorted(f"{n} ({p})" for n, p in found.items() if p.startswith(home))
+    if inside or [m for m in missing if m != "systemd-inhibit"]:
+        rep.stop("the job hooks need these programs where the runner's user can run them, outside your home folder: "
+                 + ", ".join(inside + [f"{m} (not found)" for m in missing if m != "systemd-inhibit"])
+                 + ". Install them for the whole computer, then run setup again")
+        return False
+    hook_path = path_for(found)
     journal(host, "write", f"{d}/job-started.sh, {d}/job-completed.sh and their lines in {folder}/.env")
     sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", HOOKS_ROOT, d])
     # G5.7, G5.14: the jobs' records, written by the runner, read by you (nothing secret in them).
@@ -1763,7 +1871,11 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
     group = grp_.strip() if rc == 0 and grp_.strip() else host.user()
     sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", RECORDS_ROOT])
     sudo(host, ["install", "-d", "-o", RUNNER_USER, "-g", group, "-m", "2750", records_dir_of(folder)])
-    for name, text in (("job-started.sh", job_started_script(folder)), ("job-completed.sh", job_completed_script(folder))):
+    # G5.15: where the watch, as you, writes when it last read the repository private; the runner reads it.
+    sudo(host, ["install", "-d", "-o", host.user(), "-g", group, "-m", "0755", SEEN_ROOT])
+    every_s = int((load_state(host).get("watch") or {}).get("every_s") or WATCH_EVERY_S)
+    for name, text in (("job-started.sh", job_started_script(folder, path=hook_path, every_s=every_s)),
+                       ("job-completed.sh", job_completed_script(folder, path=hook_path))):
         rc, out = sudo(host, ["tee", f"{d}/{name}"], input=text)
         if rc != 0:
             rep.stop(f"could not write {d}/{name}: {tail(out)}")
@@ -2185,6 +2297,16 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now)
     rest.append(("ok" if ok_ else "warn", words))
+    w = data.get("watch") or {}
+    every = int(w.get("every_s") or WATCH_EVERY_S)
+    for rp in repos:  # G5.15: a blind watch is a stop line, first, never "ok"
+        b = (w.get("blind") or {}).get(rp)
+        if b:
+            first.insert(0, ("stop", blind_words(rp, b, every)))
+    if not ok_:
+        first.insert(0, ("stop", "the watch is not running, so this computer takes no job now: each job is refused before its first step until "
+                                 "the watch reads the repository private again. Your way out: `sudo systemctl start "
+                                 f"{WATCH_UNIT}.timer`, or `setup` again"))
     rh = data.get("restart_hold")
     if rh:
         rest.append(("ok", f"held for a restart since {rh['time']}: the hold lifts by itself once this computer has "
@@ -2375,35 +2497,78 @@ def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
     rep = Report(out)
     data = load_state(host)
     runners = data.get("runners") or {}
-    said = []
+    said, blind = [], {}
     for rp in sorted(runners):
-        said.append(watch_one(gh, host, rp, data, rep))
+        gh.why = ""
+        words, why_blind = watch_one(gh, host, rp, data, rep)
+        said.append(words)
+        if why_blind:
+            blind[rp] = why_blind
     lift_after_restart(gh, host, data, rep)
     data = load_state(host)
-    data["watch"] = {"time": stamp(host.now()), "every_s": int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S)}
+    old = (data.get("watch") or {}).get("blind") or {}
+    w = {"time": stamp(host.now()), "every_s": int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S)}
+    if blind:  # G5.15: counted, kept with its reason, and said: a blind pass ends `failed`, never in silence
+        w["blind"] = {rp: {"why": why, "passes": (old.get(rp) or {}).get("passes", 0) + 1,
+                           "since": (old.get(rp) or {}).get("since") or stamp(host.now())} for rp, why in blind.items()}
+    data["watch"] = w
     save_state(host, data)
     journal(host, "watch", "; ".join(said) or "no runner of ours here")
+    for rp, b in (w.get("blind") or {}).items():
+        rep.stop(blind_words(rp, b, w["every_s"]))
     return rep.code()
 
 
-def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> str:
+def write_seen(host: Host, mine: dict, value: str) -> str:
+    """G5.15: as you, into the folder setup made yours; the runner's hook reads it. Returns why it failed, or ""."""
+    path = seen_path(mine["folder"])
+    try:
+        host.write_text(path, value + "\n")
+    except OSError as e:
+        return f"could not write {path}: {e}"
+    return ""
+
+
+def blind_words(repo: str, b: dict, every_s: int) -> str:
+    held = b["passes"] >= SEEN_PASSES
+    way = ("log in again with `gh auth login`" if "auth login" in b["why"] or "401" in b["why"] else
+           "make `gh` reachable, then run `setup` again from a terminal where `gh` works (it finds gh's folder again)"
+           if "could not be found" in b["why"] or "could not be run" in b["why"] else
+           "check this computer's network; the next pass reads again by itself")
+    return (f"the watch could not read whether {repo} is still private, {b['passes']} pass(es) in a row since "
+            f"{b['since']}: {b['why']}. "
+            + (f"So this computer takes no job of it now: each job is refused before its first step, until the watch "
+               "reads the repository private again. " if held else
+               f"After {SEEN_PASSES} such passes ({SEEN_PASSES * every_s // 60} minutes) this computer refuses its "
+               "jobs until the watch reads it private again. ")
+            + f"Your way out: {way}")
+
+
+def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tuple[str, str]:
+    """One repository's pass: what to journal, and why the watch could not read it private ("" when it did)."""
     mine = data["runners"][repo]
     if mine.get("public_stop"):
-        return f"{repo}: stopped, not private at {mine['public_stop']['time']}"
+        return f"{repo}: stopped, not private at {mine['public_stop']['time']}", ""
     s, d = gh.api("GET", f"repos/{repo}")
     if s == 200 and d is not None and (d.get("private") is False or d.get("visibility") == "public"):
+        write_seen(host, mine, "public")  # G5.15: the hook refuses at once, whatever the steps below manage
         public_guard(gh, host, repo, data, rep)
-        return f"{repo}: no longer private: held, drained, stopped"
+        return f"{repo}: no longer private: held, drained, stopped", ""
+    why = ""
+    if s == 200 and d is not None and d.get("private") is True:
+        why = write_seen(host, mine, str(int(host.now().timestamp())))
+    else:
+        why = gh.why or f"GitHub answered HTTP {s} for the repository"
     r = listed_runner(gh, repo, mine["name"])
     if r is not None and not r.get("busy"):
         name_cut_jobs(gh, host, repo, mine, data, None)  # named and kept now, while this computer has its record
     if r is None and s == 200:
         if not mine.get("gone_on_github"):
             gone_on_github(host, repo, data, rep)
-        return f"{repo}: GitHub no longer lists {mine['name']}"
+        return f"{repo}: GitHub no longer lists {mine['name']}", why
     if r is None:
-        return f"{repo}: GitHub not read (HTTP {s})"
-    return f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}"
+        return f"{repo}: GitHub not read (HTTP {s}){': ' + why if why else ''}", why
+    return f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}", why
 
 
 def public_guard(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None:
@@ -2454,14 +2619,16 @@ def lift_after_restart(gh: GitHub, host: Host, data: dict, rep: Report) -> None:
     save_state(host, data)
 
 
-def watch_units(user: str, every_s: int) -> tuple[str, str]:
+def watch_units(user: str, every_s: int, path: str = "") -> tuple[str, str]:
     """G5.3: a system timer whose service runs as the person (User=), not a user timer: a user timer runs only while
     the person is logged in, unless lingering is turned on for their whole account, which changes more of their
     computer than this skill needs. Runs the tool's root-owned copy."""
     svc = ("# Windstorm Repo Minions: the watch (G5.3), run by minions-watch.timer as you.\n"
            "[Unit]\nDescription=Windstorm Repo Minions watch\nWants=network-online.target\n"
            "After=network-online.target\n\n"
-           f"[Service]\nType=oneshot\nUser={user}\nExecStart=/usr/bin/python3 {TOOL_COPY} watch\nNice=10\n")
+           f"[Service]\nType=oneshot\nUser={user}\n"
+           + (f'Environment="PATH={path}"\n' if path else "")
+           + f"ExecStart=/usr/bin/python3 {TOOL_COPY} watch\nNice=10\n")
     tmr = ("# Windstorm Repo Minions: the watch's schedule (G5.3).\n"
            f"[Unit]\nDescription=Windstorm Repo Minions watch, every {every_s // 60} minutes\n\n"
            f"[Timer]\nOnBootSec=2min\nOnUnitActiveSec={every_s}s\nAccuracySec=30s\n\n"
@@ -2469,16 +2636,24 @@ def watch_units(user: str, every_s: int) -> tuple[str, str]:
     return svc, tmr
 
 
-def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: str | None = None) -> bool:
-    """G5.3: the watch's units and the tool's copy it runs, read back."""
+def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: str | None = None,
+                  repo: str | None = None) -> bool:
+    """G5.3: the watch's units and the tool's copy it runs, read back. G8.9: the programs it runs, resolved now with
+    your PATH and given to its unit; then one real pass, read back (G5.15), before setup says ok."""
     src = src or os.path.abspath(__file__)
+    names = sorted(PROGRAMS) if host.system() == "Linux" else sorted(set(PROGRAMS) | DARWIN_ONLY)
+    found, missing = resolve_programs(host, names)
+    if [m for m in ("gh", "systemctl", "sudo") if m in missing]:
+        rep.stop("the watch needs " + ", ".join(m for m in ("gh", "systemctl", "sudo") if m in missing)
+                 + ", and this terminal's PATH does not find it: nothing of the watch was written")
+        return False
     journal(host, "write", f"{TOOL_COPY}, /etc/systemd/system/{WATCH_UNIT}.service and .timer")
     sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", HOOKS_ROOT])
     rc, out = sudo(host, ["install", "-o", "root", "-g", "root", "-m", "0755", src, TOOL_COPY])
     if rc != 0:
         rep.stop(f"could not copy the tool for the watch: {tail(out)}")
         return False
-    svc, tmr = watch_units(host.user(), every_s)
+    svc, tmr = watch_units(host.user(), every_s, path_for(found))
     for path, text in ((f"/etc/systemd/system/{WATCH_UNIT}.service", svc),
                        (f"/etc/systemd/system/{WATCH_UNIT}.timer", tmr)):
         rc, out = sudo(host, ["tee", path], input=text)
@@ -2494,9 +2669,29 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
         return False
     data = load_state(host)
     data["watch"] = dict(data.get("watch") or {}, every_s=every_s)
+    data["programs"] = found
     save_state(host, data)
     rep.ok(f"the watch runs every {every_s // 60} minutes as you (a system timer, read back); `status` says when it "
-           "last ran")
+           f"last ran. The programs it runs by name are found where this terminal finds them (gh: {found['gh']})")
+    if repo is None:
+        return True
+    # G5.15: one real pass now, as the timer runs it, and what it read, read back.
+    before = (load_state(host).get("watch") or {}).get("time")
+    journal(host, "the watch's first pass")
+    sudo(host, systemctl("start", f"{WATCH_UNIT}.service"))
+    w = load_state(host).get("watch") or {}
+    b = (w.get("blind") or {}).get(repo)
+    seen = (host.read(seen_path(load_state(host)["runners"][repo]["folder"])) or "").strip()
+    if w.get("time") in (None, before):
+        rep.stop(f"the watch's first pass wrote nothing: read `journalctl -u {WATCH_UNIT}.service`")
+        return False
+    if b or not seen.isdigit():
+        rep.stop("the watch's first pass could not read whether the repository is private: "
+                 + (b["why"] if b else "its record was not written") + ". This computer takes no job of it until "
+                 "the watch can")
+        return False
+    rep.ok(f"the watch's first pass ran now, as the timer runs it, and read {repo} private (read back); a job here "
+           f"runs only while the watch has read that in the last {SEEN_PASSES * every_s // 60} minutes")
     return True
 
 
@@ -3090,6 +3285,10 @@ def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None
             "because its runner on your computer was removed. Nothing else changes. The tool that opened it never "
             "merges it: you do. Until you merge it, those jobs wait for a runner.\n\n## Put back\n" +
             "\n".join(back) + "\n")
+    # G6.7 (P1a): said before the person meets it: opening a pull request starts its own checks where they now ask.
+    rep.tell(f"The pull request that puts {len(back)} job(s) back starts its own checks as soon as it is opened, as "
+             "any pull request does: a job put back on GitHub's machines whose workflow starts on pull requests runs "
+             "there once for it, before you merge.")
     journal(host, "put-back pull request", repo)
     pr = open_move_pr(gh, host, repo, base, changed, body, rep, PUT_BACK_PR)
     if pr is None:
@@ -3276,8 +3475,31 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
     (rep.warn if floor else rep.ok)(floor or limits_in_words(lim))
     what_lives_here(host, rep)
     check_workflows(gh, repo, s, rep)
+    before_setup_words(repo, s, lim, floor, rep)
     check_cost_rule(host, rep)
     return rep.code()
+
+
+LAPTOP_WORDS = "a laptop takes jobs only while it is awake, on the network and (by default) on mains power"
+
+
+def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
+    """G7.10 (P1a run B): what the person must hear before setup, printed by the tool for the agent to pass on word
+    for word. A list in the skill file was skipped by a small model; a line the tool prints is not."""
+    rep.tell(f"Anyone who can push to {repo} can run code on this computer, as its own user {RUNNER_USER}, which "
+             "has no admin rights.")
+    rep.tell("This is for a private repository only: on a public one, a stranger's pull request could run code on "
+             f"this computer. The tool refuses a public repository, and if {repo} is made public later, its runner "
+             "stops taking jobs.")
+    rep.tell("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has waited "
+             f"{GITHUB_GIVES_UP_H} hours.")
+    rep.tell("A restart of this computer cancels the job running on it; a sleep delays it or cancels it. While a job "
+             "runs, this computer does not fall asleep by itself; a sleep you ask for, the lid, or a low battery still "
+             "puts it to sleep, a little later. `status` names a job cut that way as cut, not as your test failing.")
+    rep.tell(floor or limits_in_words(lim))
+    if s.get("battery"):
+        rep.tell("This computer has a battery: " + LAPTOP_WORDS + ".")
+    rep.tell("This version serves one repository per computer; more come in the next version.")
 
 
 class Parser(argparse.ArgumentParser):
