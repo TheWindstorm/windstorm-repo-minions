@@ -27,7 +27,9 @@ Run the steps in this order. Do not skip one, and do not start the next while th
 1. **look**: `minions.py look <owner/repo>`, then, with the person's yes, `minions.py look <owner/repo> --start-test`.
 2. **tell**: paste look's `tell the person` lines to the person as one block, all of them, as printed (see
    "Before setup" below).
-3. **setup**: `minions.py setup <owner/repo>`.
+3. **setup**: the person's own step, in their own terminal. Run `minions.py setup <owner/repo>`: from your shell it
+   changes nothing and prints the one command for the person; pass that command on exactly as printed. In their own
+   terminal it shows them what they must read before anything changes, and goes on only when they press Enter.
 4. **move**: `minions.py move <owner/repo>`.
 5. **verify**: after the person merged, `minions.py move <owner/repo> --verify`.
 6. **status**: `minions.py status <owner/repo>`, whenever the person asks how it is doing.
@@ -37,7 +39,7 @@ To pause it: `minions.py drain <owner/repo>` holds the runner and waits until no
 
 ## What the tool prints
 
-Every line starts with one of six kinds. Read the line, then say it to the person in plain words; quote
+Every line starts with one of six kinds, or is the head or foot line of a block (`-----`). Read the line, then say it to the person in plain words; quote
 the tool's own numbers and names, never your own. When you give the tool's words as its words, give them exactly
 as printed: add nothing inside them (no other time zone, no conversion, no comment). Your own explanation is
 never presented as the tool's.
@@ -50,6 +52,7 @@ never presented as the tool's.
 | `need you` | a step that is the person's | ask the person to do it; wait for them |
 | `waiting` | not done yet: the tool is waiting for something, with a deadline | see "Waiting" below |
 | `tell the person N of M` | words the person must hear | paste the whole block, 1 of M to M of M, as printed, before the next step |
+| `-----` | the head and the foot of a `tell the person` block | paste every line between them whole and word for word, numbers included; your own words come only after the foot |
 
 The exit code is the worst line's:
 
@@ -101,7 +104,7 @@ folder).
 
 ## Before setup
 
-look's last lines are `tell the person` lines, numbered `tell the person 1 of N:` to `N of N:` (5 on most
+look's last lines are `tell the person` lines between a head and a foot line that begin with `-----`, numbered `tell the person 1 of N:` to `N of N:` (5 on most
 computers, 6 on a laptop). Paste them to the person as they are, as one block, all of them, numbers included: never
 shortened, merged, reworded or left out. Add your own words only after the block, never inside it. Then wait for
 their go before setup. These are what they carry; if one is missing, say it in these words:
@@ -158,6 +161,8 @@ amount, a promise that something costs nothing, or that the person spends less: 
   person asks to see them.
 - **The person's keys and logins.** Do not look into the person's keys, their `~/.ssh` folder, git's saved
   logins or any other saved login. Reach GitHub only as the tool does: through the GitHub CLI and its own login.
+- **What uninstall kept.** Never delete, and never offer to delete, what an uninstall kept (the person's record of
+  what this tool did), unless the person asks for it in their own words in this conversation.
 - **Merge rules.** Never tell the person that required checks or branch protection hold their merges unless look
   printed that it read them.
 - **Nothing is cut.** Every stop, restart and removal drains before it acts. If the person wants the computer back now,
@@ -172,4 +177,4 @@ amount, a promise that something costs nothing, or that the person spends less: 
 | "I need my computer now" | `drain`, wait for its `ok` |
 | "Something is wrong with it", or a command was cut part-way | `doctor <owner/repo>`, in the person's own terminal: it reads back every promise of the install, names each one not kept with its next step, and finishes or undoes a step that was cut |
 | "I removed it with Claude Code's own `plugin uninstall`" | That takes the skill out of Claude Code only. The runner, its service, the watch, the limits and the runner user stay and go on taking the repository's jobs: they do the person's jobs, not Claude Code's; `status` then says the skill's folder is gone. The one command that takes them off runs from the copy setup installed: `python3 -I /usr/local/lib/windstorm-repo-minions/minions.py uninstall --all`, in the person's own terminal |
-| "Take it off" | `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this tool installed or running, keeps the person's record of what it did in one folder they own (the census names it last; say where), and opens a pull request that puts moved jobs back (theirs to merge). Deleting that record is the person's own choice, typed at their terminal (`uninstall --all --delete-record`): never yours; pass on its `tell the person` line about that pull request's own checks |
+| "Take it off" | `uninstall` is the person's own step in their own terminal, like setup: from your shell it prints the one command for them; pass it on exactly. `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this tool installed or running, keeps the person's record of what it did in one folder they own (the census names it last; say where), and opens a pull request that puts moved jobs back (theirs to merge). Deleting that record is the person's own choice, typed at their terminal (`uninstall --all --delete-record`): never yours; pass on its `tell the person` line about that pull request's own checks |

@@ -83,6 +83,7 @@ class Report:
         self.asked = False
         self.out_closed = False
         self._tells: list[str] = []
+        self.here = False  # G7.15: the block is read by the person on their own screen, not relayed by an agent
 
     def _put(self, kind: str, text: str) -> None:
         self._flush_tells()
@@ -93,8 +94,20 @@ class Report:
         so a line dropped or merged in a relay shows to the agent and to the person (run B again: a small model
         shortened the block, dropped two lines and reworded two, under the word "verbatim")."""
         tells, self._tells = self._tells, []
+        if not tells:
+            return
+        n = len(tells)
+        span = f"1 of {n} to {n} of {n}" if n > 1 else "1 of 1"
+        if self.here:  # G7.15: the person's own terminal, before anything changes
+            self._print(f"----- read these {n} line{'s' if n > 1 else ''} before anything changes -----")
+        else:  # G7.16 (R113): the instruction travels in the tool's own output, at the head and the foot
+            self._print(f"----- the {n} numbered line{'s' if n > 1 else ''} below go to the person whole and word "
+                        "for word, numbers included: paste them as they are -----")
         for i, text in enumerate(tells, 1):
-            self._print(f"tell the person {i} of {len(tells)}: {text}")
+            self._print(f"tell the person {i} of {n}: {text}")
+        if not self.here:
+            self._print(f"----- end of the lines for the person: paste {span} whole and unchanged; your own words "
+                        "come only after this line -----")
 
     def _print(self, line: str) -> None:
         self.lines.append(line)
@@ -324,6 +337,13 @@ class Host:
     def isatty(self) -> bool:
         return sys.stdin.isatty()
 
+    def read_enter(self) -> bool:
+        """G7.15: the person presses Enter in their own terminal; False when nothing can be read (no key, closed)."""
+        try:
+            return sys.stdin.readline() != ""
+        except (OSError, ValueError):
+            return False
+
     def sudo_validate(self) -> int:
         """`sudo -v` attached to the person's terminal: sudo itself asks for the password (the person's step)."""
         try:
@@ -493,6 +513,9 @@ PRINTED_COMMANDS = {
     "sudo kill {}":
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner's unit blanked in the state and its "
         "service file moved aside by hand): uninstall's line with the one PID, run as printed; no process of it left",
+    # G7.15 (R112): the command the person runs in their own terminal, which shows their lines and waits for Enter.
+    "python3 -I {} setup {}{}": "",
+    "python3 -I {} uninstall {}{}": "",
     "python3 -I {} uninstall --all":
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: status, run from the tool's copy with the skill's folder "
         "deleted, printed it; run as printed, uninstall went to the end",
@@ -2115,6 +2138,10 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
         return rep.code()
     if interactive is None:
         interactive = host.isatty()
+    flags = (f" --limits {limits[0]},{limits[1]}" if limits else "") + (" --beside-live-too" if beside_live else "")
+    if not persons_own_eyes(host, rep, setup_lines(repo, survey_, lim), interactive,
+                            f"`python3 -I {tool_path()} setup {repo}{flags}`"):
+        return rep.code()
     if not ask_admin_once(host, rep, interactive):
         return rep.code()
     known = load_state(host)
@@ -4065,6 +4092,8 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
     rep.ok(f"pull request #{mv['pr']} was merged at {merged_at}")
     files = dict(read_workflow_files(gh, repo, mv.get("base"), rep) or [])
     all_ok = True
+    elsewhere: set[str] = set()  # G3.7: other computers of ours that ran a moved job
+    listed: dict | None = None
     for path, wanted_jobs in sorted(mv["files"].items()):
         text = files.get(path, "")
         jobs_now = read_workflow(text)
@@ -4084,15 +4113,29 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
             for j in got:
                 labels = [x.lower() for x in j.get("labels") or []]
                 where = j.get("runner_name") or "no runner"
-                if where != mine["name"] or "minions" not in labels:
-                    rep.stop(f"{path} job {w['id']} ran on {where} (labels {', '.join(labels) or 'none'}), not on our "
-                             f"runner {mine['name']}: it did not move. Check that job's `runs-on`, then run the same command again")
+                whose = "this computer"
+                if where != mine["name"] and "minions" in labels and j.get("runner_group_name") != "GitHub Actions":
+                    if listed is None:
+                        listed = runners_by_name(gh, repo)
+                    kind = runner_of_ours(listed, where)
+                    if kind is None:  # G3.7: the third answer, said as such
+                        rep.stop(f"{path} job {w['id']} ran on {where}, a runner GitHub does not list for {repo} now, "
+                                 "so this tool cannot tell whether it is one of yours: it is not called moved. Run the "
+                                 "same command again after the next run of that workflow")
+                        all_ok = False
+                        continue
+                    if kind:
+                        whose = "another computer of yours with this tool's runner"
+                        elsewhere.add(where)
+                if whose == "this computer" and (where != mine["name"] or "minions" not in labels):
+                    rep.stop(f"{path} job {w['id']} ran on {where} (labels {', '.join(labels) or 'none'}), not on a "
+                             f"runner of ours: it did not move. Check that job's `runs-on`, then run the same command again")
                     all_ok = False
                 elif j.get("conclusion") == "success":
-                    rep.ok(f"moved: {path} job {w['id']} ran on {where} and succeeded (run {run['id']})")
+                    rep.ok(f"moved: {path} job {w['id']} ran on {where} ({whose}) and succeeded (run {run['id']})")
                 else:
-                    rep.warn(f"moved: {path} job {w['id']} ran on {where} and ended {j.get('conclusion')}: that is "
-                             f"the job's own result; its log is at {j.get('html_url')}")
+                    rep.warn(f"moved: {path} job {w['id']} ran on {where} ({whose}) and ended {j.get('conclusion')}: "
+                             f"that is the job's own result; its log is at {j.get('html_url')}")
     if rep.waiting and not rep.stopped:
         # R76: a run that waits on our runner while GitHub shows it offline is said as that, with the one command
         # that starts it; "after the next push" would send the person to make a push the run does not need.
@@ -4110,7 +4153,29 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
         data = load_state(host)
         data["moves"][repo].update(merged=merged_at, verified=host.now().strftime("%Y-%m-%dT%H:%M:%SZ"))
         save_state(host, data)
-        rep.ok(f"moved: every moved job of {repo} ran on this computer")
+        if elsewhere:
+            rep.ok(f"moved: every moved job of {repo} ran on a computer of yours with this tool's runner (here, or "
+                   f"{', '.join(sorted(elsewhere))})")
+        else:
+            rep.ok(f"moved: every moved job of {repo} ran on this computer")
+
+
+def runners_by_name(gh: GitHub, repo: str) -> dict | None:
+    """The repository's self-hosted runners by name, with their label names; None when GitHub's list cannot be read."""
+    s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+    if s != 200:
+        return None
+    return {r.get("name"): {x.get("name", "").lower() for x in r.get("labels") or []} for r in (d or {}).get("runners", [])}
+
+
+def runner_of_ours(listed: dict | None, name: str) -> bool | None:
+    """G3.7 (R114): True for a runner this tool registered (listed for the repository with only our labels: `minions`
+    and `minions-<size>`, none of GitHub's defaults, as setup registers it); False for a runner that is not ours;
+    None when it cannot be told (the list unread, or the runner no longer listed)."""
+    if listed is None or name not in listed:
+        return None
+    labels = listed[name]
+    return "minions" in labels and all(x == "minions" or x.startswith("minions-") for x in labels)
 
 
 def find_or_start_run(gh: GitHub, host: Host, repo: str, path: str, base: str, merged_at: str, triggers: dict,
@@ -4790,6 +4855,11 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
         return rep.code()
     if interactive is None:
         interactive = host.isatty()
+    target = "--all" if everything else (repo or "")
+    rec = " --delete-record" if delete_record else ""
+    if not persons_own_eyes(host, rep, uninstall_lines(host, repo, everything, data), interactive,
+                            f"`python3 -I {tool_path()} uninstall {target}{rec}`"):
+        return rep.code()
     if not ask_admin_once(host, rep, interactive, "uninstall"):
         return rep.code()
     repos = [repo] if repo and not everything else sorted(runners)
@@ -4911,6 +4981,82 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
         rep.tell("This computer has a lid: " + LAPTOP_WORDS + ".")
     rep.tell("This version serves one repository per computer.")  # G7.12: no promise about a later version
 
+
+
+class _Lines(list):
+    """The lines of a block, collected by the same functions that tell them (one wording, G7.15)."""
+
+    def tell(self, text: str) -> None:
+        self.append(text)
+
+
+ADMIN_MAKES = (f"With your admin password, setup makes on this computer: the user {RUNNER_USER}, GitHub's runner as a "
+               "service that starts at boot, a slice that holds the limits, job hooks, and the watch, a timer that runs "
+               "this tool's own copy every 5 minutes. Each step is written down first, and that journal is kept for you "
+               "as your record.")
+MEMORY_BEFORE_SETUP = ("A job that needs more memory than this computer's limit for jobs is stopped when it reaches it, "
+                       "and `status` names it; where this computer cannot keep jobs out of its swap, such a job may run "
+                       "slowly instead, and setup says so.")  # true either way: whether swap is held is read only later
+LEAVING_KEEPS = ("`uninstall --all` takes all of it off this computer again and keeps your record of what it did; "
+                 "deleting that record is only ever your own choice, typed by you.")
+
+
+def setup_lines(repo: str, s: dict, lim: dict) -> list[str]:
+    """G7.15 (R112): what the person must hear before setup changes anything, read on their own screen: look's block,
+    the memory cap's trade-off, move's block, what admin rights make, what leaving takes and keeps, the cost pointer."""
+    first, then = _Lines(), _Lines()
+    before_setup_words(repo, s, lim, None, first)
+    before_move_words(s, then)
+    one = first.pop()  # "This version serves one repository per computer."
+    return [*first[:3], MEMORY_BEFORE_SETUP, *first[3:], *then, one, ADMIN_MAKES, LEAVING_KEEPS, COST_POINTER]
+
+
+def uninstall_lines(host: Host, repo: str | None, everything: bool, data: dict) -> list[str]:
+    """G7.15 (R112): what the person must hear before uninstall changes anything: what it takes off, that their record
+    is kept, and the pull request that puts moved jobs back (theirs to merge; its own checks start when it opens)."""
+    record = os.path.join(host.home(), RECORD_NAME)
+    moves = data.get("moves") or {}
+    if everything:
+        lines = ["This takes off this computer every runner of this tool, the watch, the slice, the user "
+                 f"{RUNNER_USER} and this tool's copy. New jobs are held first, so none starts here while it works."]
+    else:
+        lines = [f"This takes the runner for {repo} off this computer. New jobs are held first, so none starts here "
+                 "while it works. The watch, the slice and the user stay until `uninstall --all`."]
+    lines.append(f"Your record of what this tool did is kept in {record}; deleting it is only ever your own choice.")
+    if everything and moves:
+        lines.append("Then it opens a pull request that puts each moved job back where it ran before: you merge it, "
+                     "and until then those jobs wait for a runner. Opening it starts its own checks, as any pull "
+                     "request does.")
+    elif not everything and repo in moves:
+        lines.append(f"The jobs of {repo} moved here still ask for this tool's runner, so they wait for one until a "
+                     "pull request puts them back; `uninstall --all` opens it.")
+    return lines
+
+
+def persons_own_eyes(host: Host, rep: Report, lines: list[str], interactive: bool, command: str) -> bool:
+    """G7.15 (R112, rule 7): the person's own terminal shows what they must hear before anything changes, and the
+    command goes on only when they press Enter there. Where nobody can press a key (an agent's shell), nothing is
+    changed and the command for the person is printed. `command` is the backticked line, as printed."""
+    if not interactive:
+        rep.need(f"this step is yours, in your own terminal: run {command} there. Before it changes anything it shows "
+                 "you what you must read, and it goes on only when you press Enter")
+        return False
+    rep.here = True
+    for text in lines:
+        rep.tell(text)
+    rep.need("read the lines above, then press Enter here to go on; Ctrl-C stops it, and nothing has been changed yet",
+             blocks=False, answered_here=True)
+    rep.here = False
+    if not host.read_enter():
+        rep.stop("no Enter was read: nothing was changed. Run the same command again in your own terminal")
+        return False
+    rep.ok("you read the lines and pressed Enter")
+    return True
+
+
+def tool_path() -> str:
+    """The path of this running copy of the tool, for a command the person types (G7.15)."""
+    return os.path.realpath(__file__)
 
 class Parser(argparse.ArgumentParser):
     """G8.3: a command typed wrong exits 64, never 2 (2 is `stop`)."""
