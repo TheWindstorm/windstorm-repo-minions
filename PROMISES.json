@@ -1534,6 +1534,34 @@
    "issue": 260,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R110",
+   "seen": "2026-11-23, a stock Ubuntu 24.04 virtual machine, a cold start with the smallest model on the release text: before running the tool, the agent looked into the person's ~/.ssh folder and git's saved-login settings.",
+   "promise": "The skill says the agent does not look into the person's keys, ssh folder or saved logins and reaches GitHub only as the tool does; cold-start write-ups count each such look as a deviation.",
+   "codon": "G8.17",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_17_the_agent_never_looks_into_the_persons_keys_or_saved_logins",
+   "proven": "",
+   "issue": 263,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R111",
+   "seen": "2026-11-23, three small-model cold starts on stock virtual machines: look's nine-line block before setup was pasted whole once, reworded once and summarized once, and the summary invented a sentence about cost.",
+   "promise": "Each line for the person is said at the stop where it matters: before setup six lines at most; waiting checks, restarts and sleep and a job's tools in move's own block before the merge; the memory cap's trade-off where status names a job the cap stopped.",
+   "codon": "G7.14",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_14_each_line_for_the_person_is_said_at_the_stop_where_it_matters",
+   "proven": "",
+   "issue": 264,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

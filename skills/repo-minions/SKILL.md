@@ -101,37 +101,42 @@ folder).
 
 ## Before setup
 
-look's last lines are `tell the person` lines, numbered `tell the person 1 of N:` to `N of N:` (9 on most
-computers). Paste them to the person as they are, as one block, all of them, numbers included: never shortened,
-merged, reworded or left out. Add your own words only after the block, never inside it. Then wait for their go
-before setup. These are what they carry; if one is missing, say it in these words:
+look's last lines are `tell the person` lines, numbered `tell the person 1 of N:` to `N of N:` (5 on most
+computers, 6 on a laptop). Paste them to the person as they are, as one block, all of them, numbers included: never
+shortened, merged, reworded or left out. Add your own words only after the block, never inside it. Then wait for
+their go before setup. These are what they carry; if one is missing, say it in these words:
 
 - **What a job can reach.** Name what look listed: the secrets a job can read (names only) and what already runs
   on this computer. Then say: "Anyone who can push to this repository can run code on this computer."
-- **Restarts and sleep.** "A restart of this computer cancels the job running on it. A short sleep only delays it;
-  a sleep of more than about 10 minutes fails it on GitHub. A job waits at most 24 hours for a runner before GitHub
-  cancels it."
-- **Waiting checks.** "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that
-  waited 24 hours."
 - **The limits.** Read look's limits line to the person word for word. It sounds like "at most half of this
   computer's processors and 60 % of its memory", with the real numbers. The one way to change them is
   `setup <owner/repo> --limits <processors>,<memory %>`. If look says the memory share is too small for a job,
   give the person its way out and what that costs their own work, as the line says. On a computer with one
   processor the line says "1 of 1" and that everything else there will be slow while a job runs: read that too,
   and let the person decide.
-- **A job too big for the cap.** "A job that needs more memory than that fails when it reaches the cap, and
-  `status` names it, instead of running slowly."
-- **A job's tools.** "A job here has only the tools installed on this computer: a job that stops with "command not
-  found" needs that tool installed here."
-
-- **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
-  low battery still puts it to sleep, about N seconds later." Give the delay look's numbered block names for this
-  computer, not a number of your own. "A job cut that way is named as cut, not as your test failing." The tool takes two locks during a job: one that holds only the computer's own idle sleep, and one
-  that puts off a requested sleep by the short delay the system allows. It never holds the lid switch, the power
-  or sleep keys, a shutdown, or a sleep someone asks for.
 - **One repository.** "This version serves one repository per computer."
 - **Storage.** "Artifact and cache storage count the same whichever computer ran the job."
 
+## Before the jobs move
+
+`move` ends with its own numbered `tell the person` block, just before it asks the person to merge. Paste it the
+same way, whole, before you ask for the merge. Each line is said where it matters, not all at the start. It carries:
+
+- **Restarts and sleep.** "A restart of this computer cancels the job running on it. A short sleep only delays it;
+  a sleep of more than about 10 minutes fails it on GitHub. A job waits at most 24 hours for a runner before GitHub
+  cancels it."
+- **Waiting checks.** "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that
+  waited 24 hours."
+- **A job's tools.** "A job here has only the tools installed on this computer: a job that stops with "command not
+  found" needs that tool installed here."
+- **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
+  low battery still puts it to sleep, about N seconds later." Give the delay move's numbered block names for this
+  computer, not a number of your own. "A job cut that way is named as cut, not as your test failing." The tool takes
+  two locks during a job: one that holds only the computer's own idle sleep, and one that puts off a requested sleep
+  by the short delay the system allows. It never holds the lid switch, the power or sleep keys, a shutdown, or a
+  sleep someone asks for.
+
+When `status` names a job this computer's memory limit stopped, it ends with one `tell the person` line: paste it.
 ## Cost
 
 Say the block's cost line word for word: what GitHub charges is GitHub's to say, with the page's address. If look
@@ -151,6 +156,8 @@ amount, a promise that something costs nothing, or that the person spends less: 
 - **The person's own other things.** look counts the person's own containers and other runner services and does
   not name them (their names may be the person's projects). Run `look <owner/repo> --show-names` only when the
   person asks to see them.
+- **The person's keys and logins.** Do not look into the person's keys, their `~/.ssh` folder, git's saved
+  logins or any other saved login. Reach GitHub only as the tool does: through the GitHub CLI and its own login.
 - **Merge rules.** Never tell the person that required checks or branch protection hold their merges unless look
   printed that it read them.
 - **Nothing is cut.** Every stop, restart and removal drains before it acts. If the person wants the computer back now,
