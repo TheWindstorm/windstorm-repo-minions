@@ -1142,6 +1142,20 @@
    "issue": 158,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R82",
+   "seen": "2026-11-23, a stock Ubuntu 22.04 virtual machine: the start test warned that its run was left and should be removed by hand; read right after, the run answered 404 and the branch was gone; GitHub answered 504 once on a read moments later.",
+   "promise": "The start test's read-back asks GitHub up to three times; it says a run or branch is left only when GitHub still answers with it, and says GitHub gave no clear answer when it never did, never \"left\".",
+   "codon": "G1.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure",
+   "proven": "",
+   "issue": 160,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
