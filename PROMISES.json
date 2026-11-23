@@ -1688,6 +1688,20 @@
    "issue": 296,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R121",
+   "seen": "2026-11-23, family rule 23's plugin road: every lane is to carry the family's plugins, so a bare install must be seen to make and start nothing of the skill's. First look the same evening on Claude Code 2.1.331 in an empty scratch home: 46 differences, every one Claude Code's own, and no hooks, servers or plugin manifest in the installed copy.",
+   "promise": "Installing the plugin is Claude Code's own act and writes only Claude Code's plugin places; the skill makes nothing (notes, runner, unit, timer, process) until the person asks for runners to be set up. Proved by the one listing pair that brackets the bare install, diffed against the family's shared list of Claude Code's plugin places; those places are excused in no other pair.",
+   "codon": "G6.14",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_14_the_places_used_in_the_persons_home_are_named_and_listed_alike",
+   "proven": "",
+   "issue": 301,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
