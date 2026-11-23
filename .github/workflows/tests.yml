@@ -6,7 +6,7 @@ permissions:
 # (tests/test_strand.py checks every runs-on line).
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -19,7 +19,7 @@ jobs:
       - run: |
           for t in tests/test_*.py; do python "$t" -v || exit 1; done
   release-place:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,7 +41,7 @@ jobs:
               echo "ok README on $BRANCH has no install lines" ;;
           esac
   skill-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -246,6 +246,8 @@ class Hygiene(unittest.TestCase):
             for line in re.findall(r"runs-on:.*", text):
                 self.assertNotIn("self-hosted", line, f"{name}: {line.strip()}")
                 self.assertRegex(line, r"runs-on:\s*(ubuntu|macos|windows)-", f"{name}: {line.strip()}")
+                # The family's rule (2026-11-23): a job names its image; a moved "latest" is a change nobody reviewed.
+                self.assertNotIn("latest", line, f"{name}: {line.strip()}")
 
 
 @atexit.register

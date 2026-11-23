@@ -1362,7 +1362,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_3_look_names_missing_token_rights",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine with its own gh (2.4.0) and the private proof repository, seen once, nothing steered, on the fix's commit: `look` said `ok your login has the `workflow` scope (needed to change workflow files)` where before it said it could not read the scopes. Not seen: a login with no scopes to read (tested only).",
    "issue": 219,
    "moved_why": "",
    "moved_by_person": ""
@@ -1376,7 +1376,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_10_look_prints_what_to_tell_the_person_before_setup",
-   "proven": "",
+   "proven": "2026-11-23, cold starts on stock Ubuntu 24.04.5 virtual machines with the smallest model following the skill against the release branch's head, nothing steered. Run G, end to end: all 9 lines of the tool's block reached the person word for word, the two new ones included (`A job that needs more memory than that fails when it reaches the cap ...`, `A job here has only the tools installed on this computer ...`); setup was the person's, the move pull request was the person's to merge, and verify saw the moved job pass here. Run F, stopped at the block: all 9 lines reached the person in meaning, but 7 were shortened or reworded, against the skill's word (it dropped \"GitHub's own computers come with many tools already installed\" from the tools line). Two runs; one word for word.",
    "issue": 222,
    "moved_why": "",
    "moved_by_person": ""
