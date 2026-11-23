@@ -460,7 +460,7 @@
   {
    "id": "R33",
    "seen": "2026-11-22, the same machine: after minions.slice's file was deleted and systemd reloaded, the slice was still listed active until it was stopped.",
-   "promise": "remove stops the slice before deleting it and reads back that it is gone.",
+   "promise": "uninstall stops the slice before deleting it and reads back that it is gone.",
    "codon": "G6.5",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
@@ -642,7 +642,7 @@
   {
    "id": "R46",
    "seen": "2026-11-22, a stock virtual machine: a cleanup entered the runner user's closed home as the person, was refused, so the runner's own removal never ran, and the user was deleted with the runner still registered.",
-   "promise": "remove runs the runner's removal as root or the runner user, GitHub's side first, with an API delete as the fallback.",
+   "promise": "uninstall runs the runner's removal as root or the runner user, GitHub's side first, with an API delete as the fallback.",
    "codon": "G6.6",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",

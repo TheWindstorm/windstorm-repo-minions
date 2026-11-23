@@ -1,6 +1,6 @@
 # Windstorm Repo Minions · DNA Strand Master Plan
 
-**Plan version 1.11 · 2026-11-22 · The Windstorm**
+**Plan version 1.12 · 2026-11-22 · The Windstorm**
 
 > A minion, in infrastructure software, is a worker machine that takes orders from a master. Here the master is
 > GitHub, the orders are your repository's chores (tests, builds, checks), and the minions are computers you own.
@@ -23,7 +23,7 @@ plainly until the test exists, and in `code` form once it does (Part 0, rule 2).
 - Part 3. Invariants that are never broken
 - Part 4. Architecture
 - Part 5. The genes: G1 Look first · G2 Install · G3 Move the chores · G4 Keep it ready · G5 Watch and hold ·
-  G6 Remove · G7 Words to the person · G8 The skill and its commands · G9 Tests, CI and the promise gate ·
+  G6 Uninstall · G7 Words to the person · G8 The skill and its commands · G9 Tests, CI and the promise gate ·
   G10 Self-update · G11 Laptops · G12 Many repositories on one computer
 - Part 6. Repository layout
 - Part 7. Platform contracts to check before coding
@@ -96,7 +96,7 @@ what GitHub's own page says on the day it is read, and tells the person when tha
 4. **Keep it ready** (G4): limits on CPU, memory and disk, no sleep in the middle of a job, cleanup after jobs.
 5. **Watch and hold** (G5): one status line that tells the truth from both sides, and holds (no new jobs, nothing
    killed) when the repository turns public, the disk runs low or the machine is busy.
-6. **Remove** (G6): one command takes it all away, on GitHub and on the computer, and shows that nothing is left.
+6. **Uninstall** (G6): one command takes it all away, on GitHub and on the computer, and shows that nothing is left.
 
 ### What it is not
 
@@ -112,7 +112,7 @@ what GitHub's own page says on the day it is read, and tells the person when tha
   Repo Minions"   explains, asks  ◄── plain lines                                               │
  logs in,         setup ─────────────────────────► runner user + checked runner + service ───► registered runner
  approves,        move ──────────────────────────► branch + pull request with runs-on ───────► PR (person merges)
- merges           status / hold / remove ────────► both sides read, holds by label ─────────► jobs, queue
+ merges           status / hold / uninstall ─────► both sides read, holds by label ─────────► jobs, queue
 ```
 
 ---
@@ -143,9 +143,9 @@ what GitHub's own page says on the day it is read, and tells the person when tha
 | INV1 | Never a runner on a public repository, ours or the person's. `setup` refuses a repository that is not private; `watch` stops every runner of a repository within its interval when that repository is no longer private, and says so (G5.4). The guard lives in the tool, never only in a workflow file, because a fork's pull request runs its own copy of the workflow. | planned: test_INV1_never_a_runner_on_a_public_repository |
 | INV2 | No secret on a command line, in a log, on the screen or in a file another user can read. Registration and removal tokens are read from standard input or a 0600 file, used, and dropped. | planned: test_INV2_no_secret_on_argv_or_in_output |
 | INV3 | Nothing that costs money: the tool never changes a plan, a spending limit, a payment method or a billed setting, and never adds a GitHub-hosted job without the person choosing it by name (G5.9). | planned: test_INV3_nothing_that_costs_money |
-| INV4 | Never kill a running job. Every stop, restart, update and removal drains first and waits (G5.6). Two exceptions, each said before it happens: the person's own explicit `remove --now`, and a repository that is no longer private (G5.4), where the service is stopped after a short drain even if a job still runs. | planned: test_INV4_never_kill_a_running_job |
+| INV4 | Never kill a running job. Every stop, restart, update and removal drains first and waits (G5.6). Two exceptions, each said before it happens: the person's own explicit `uninstall --now`, and a repository that is no longer private (G5.4), where the service is stopped after a short drain even if a job still runs. | planned: test_INV4_never_kill_a_running_job |
 | INV5 | Say only what was seen. Every status line names the side it came from and the time it was read. "Online" is never written as "working"; a cost sentence always carries the date its source was read. | planned: test_INV5_say_only_what_was_seen |
-| INV6 | Removal leaves nothing: after `remove`, a census of runners on GitHub, services, folders, the runner user, labels in workflows and scheduled checks shows none of ours (G6). | planned: test_INV6_remove_leaves_nothing |
+| INV6 | Removal leaves nothing: after `uninstall`, a census of runners on GitHub, services, folders, the runner user, labels in workflows and scheduled checks shows none of ours (G6). | planned: test_INV6_remove_leaves_nothing |
 | INV7 | The person's steps stay theirs: logging in to GitHub, typing their computer's admin password once, approving access, merging the pull request. The agent never presses Agree or Accept on a terms or consent screen. | planned: test_INV7_the_persons_steps_stay_theirs |
 | INV8 | A step that is interrupted leaves the machine as it was or as it would be after the step: every step writes what it is about to do first, and `doctor` finishes or undoes a half-done step. | planned: test_INV8_an_interrupted_step_is_finished_or_undone |
 
@@ -255,16 +255,16 @@ nothing.
 | G5.13 | A hold nobody notices looks like a broken project. When a job of the repository has waited longer than a threshold (default 30 minutes) while our runners are held, offline or asleep, `status` prints `warn` first: which job, how long, which hold, and that GitHub cancels it after 24 hours. | `test_G5_13_a_job_waiting_behind_our_hold_is_warned` |
 | G5.14 | A job killed by our own memory limit (the kernel stopping a process inside `minions.slice`) shows on GitHub as a failed test. `status` names it as "stopped by this computer's memory limit", with the job and the time, never as the person's code failing, and says the one way to change the limit (G7.8). | `test_G5_14_a_job_killed_by_our_limit_is_named_as_such` |
 
-### G6 Remove
+### G6 Uninstall
 
 | Codon | Claim | Test |
 |---|---|---|
-| G6.1 | `remove <owner/repo>` drains, unregisters the runner on GitHub's side (removal token through standard input), stops and deletes the service, deletes the runner's folders, and records each step in the journal first. | planned: test_G6_1_remove_takes_a_runner_away_on_both_sides |
-| G6.2 | `remove --all` also deletes the runner user, the watch, and `~/.minions/`, and opens a pull request that puts each moved `runs-on` back as it was before `move`. | planned: test_G6_2_remove_all_leaves_nothing_and_offers_the_workflows_back |
-| G6.3 | `remove` ends with a census (INV6): runners on GitHub for the repository, services, folders, user, scheduled checks; each "none" or named. | planned: test_G6_3_remove_ends_with_a_census |
-| G6.4 | A removal interrupted part-way is finished by running `remove` again; it never fails on a step already done. | planned: test_G6_4_remove_again_finishes_an_interrupted_removal |
-| G6.5 | `remove` stops `minions.slice` before deleting its file and reads back that it is gone: a slice whose file is deleted stays loaded and active after a reload until it is stopped. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G6_5_remove_stops_the_slice_before_deleting_it |
-| G6.6 | `remove` runs the runner's own removal as root or as the runner user, never by entering the runner user's home as the person (that home is closed to the person, G2.2), and removes the GitHub side before it deletes the runner user. If the runner's own removal cannot run, it deletes the runner through the API and reads back that it is gone. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (G4's run). | planned: test_G6_6_remove_runs_as_the_runner_and_github_goes_first |
+| G6.1 | `uninstall <owner/repo>` drains, unregisters the runner on GitHub's side (removal token through standard input), stops and deletes the service, deletes the runner's folders, and records each step in the journal first. | planned: test_G6_1_uninstall_takes_a_runner_away_on_both_sides |
+| G6.2 | `uninstall --all` also deletes the runner user, the watch, and `~/.minions/`, and opens a pull request that puts each moved `runs-on` back as it was before `move`. | planned: test_G6_2_uninstall_all_leaves_nothing_and_offers_the_workflows_back |
+| G6.3 | `uninstall` ends with a census (INV6): runners on GitHub for the repository, services, folders, user, scheduled checks; each "none" or named. | planned: test_G6_3_uninstall_ends_with_a_census |
+| G6.4 | A removal interrupted part-way is finished by running `uninstall` again; it never fails on a step already done. | planned: test_G6_4_uninstall_again_finishes_an_interrupted_removal |
+| G6.5 | `uninstall` stops `minions.slice` before deleting its file and reads back that it is gone: a slice whose file is deleted stays loaded and active after a reload until it is stopped. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G6_5_uninstall_stops_the_slice_before_deleting_it |
+| G6.6 | `uninstall` runs the runner's own removal as root or as the runner user, never by entering the runner user's home as the person (that home is closed to the person, G2.2), and removes the GitHub side before it deletes the runner user. If the runner's own removal cannot run, it deletes the runner through the API and reads back that it is gone. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (G4's run). | planned: test_G6_6_uninstall_runs_as_the_runner_and_github_goes_first |
 
 ### G7 Words to the person
 
@@ -285,7 +285,7 @@ nothing.
 |---|---|---|
 | G8.1 | `skills/repo-minions/SKILL.md` follows the Agent Skills format and passes `gh skill publish --dry-run`. | `test_G8_1_the_skill_file_passes_the_validator` |
 | G8.2 | The skill's order is fixed: look, tell, setup, move, verify, status. It names each step that is the person's (INV7) and what to say there. | `test_G8_2_the_skill_names_the_order_and_the_persons_steps` |
-| G8.3 | The tool's commands are exactly: `look`, `setup`, `move`, `lint`, `status`, `watch`, `hold`, `resume`, `drain`, `doctor`, `remove`, `self-update`. Each prints lines of five kinds only: `ok`, `warn`, `stop`, `need you`, `waiting`. The exit code is the worst line's, in this order, and these are every way a command can end: **0** every line `ok` or `warn`; **2** a `stop` line; **3** a `need you` line and no `stop`; **4** a `waiting` line and neither of those (G8.7); **1** the tool itself failed (an error it did not expect: it prints a `stop` line naming the error and the journal's last step); **64** the command was typed wrong (unknown command or option: never 2, which is `stop`); **130** the person interrupted it (the journal says which step it was on). | `test_G8_3_commands_and_line_kinds_are_exactly_these` |
+| G8.3 | The tool's commands are exactly: `look`, `setup`, `move`, `lint`, `status`, `watch`, `hold`, `resume`, `drain`, `doctor`, `uninstall`, `self-update` (`remove` is kept free for a later command that takes one repository's runner off a computer serving several; `uninstall` takes everything the skill made). Each prints lines of five kinds only: `ok`, `warn`, `stop`, `need you`, `waiting`. The exit code is the worst line's, in this order, and these are every way a command can end: **0** every line `ok` or `warn`; **2** a `stop` line; **3** a `need you` line and no `stop`; **4** a `waiting` line and neither of those (G8.7); **1** the tool itself failed (an error it did not expect: it prints a `stop` line naming the error and the journal's last step); **64** the command was typed wrong (unknown command or option: never 2, which is `stop`); **130** the person interrupted it (the journal says which step it was on). | `test_G8_3_commands_and_line_kinds_are_exactly_these` |
 | G8.4 | `doctor` checks every promise of G2 and G4 on the computer as it is now and finishes or undoes a half-done step (INV8). | planned: test_G8_4_doctor_checks_install_and_finishes_half_done_steps |
 | G8.5 | Every `systemctl` and `journalctl` call of the tool passes `--no-pager`, so no call waits on a pager when run from a real terminal. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | `test_G8_5_no_system_call_waits_on_a_pager` |
 | G8.6 | A command never hangs on `waiting`: each wait carries its own deadline, said in the line, and the command ends when it passes. | planned: test_G8_6_no_command_hangs_on_waiting |
@@ -409,7 +409,7 @@ repository made for the proof and deleted after, before the tag.
 - **P4 Disk low.** Free space pushed under the floor with a filler file: runners held, no job started, the hold
   lifts when the filler goes.
 - **P5 Two jobs at once.** Two pushes: one runs, one waits, no shared folder touched by both.
-- **P6 Remove.** `remove --all`: the census is empty on GitHub and the computer, compared with a census taken
+- **P6 Uninstall.** `uninstall --all`: the census is empty on GitHub and the computer, compared with a census taken
   before `setup`.
 - **P7 Turned public.** This proof breaks the first rule for a few minutes, so it runs only under all of these
   guards: a repository made for it, empty of code and secrets; fork pull requests needing approval for all outside
