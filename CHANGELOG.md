@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Tests: a new recorded fixture, `tests/fixtures/path-word-author.jsonl`, holds GitHub's real answer for a commit
+  whose author was named like a path word ("workflows"), scrubbed: the name is replaced and the path keeps its word
+  (G9.5, row R43).
 - `uninstall`'s census now counts a runner service that runs as neither this tool's runner user nor you, without
   naming it, as `look` does. Before, it printed such a service's name. It also says the slice and the watch are
   kept for this tool's other runners only when runners of ours are left (G1.12, row R78).
