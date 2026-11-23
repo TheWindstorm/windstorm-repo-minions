@@ -1670,7 +1670,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_14_the_places_used_in_the_persons_home_are_named_and_listed_alike",
-   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: the person's whole home listed (type, mode, size, time, sha256, hidden folders) on the stock image, before setup, after a real job ran on it and after uninstall --all; no stock file changed at any moment, ~/.ssh/authorized_keys included, and every difference lay in the clone, ~/.config/gh (the person's own gh auth login), ~/.minions and ~/repo-minions-record. Listed with the lane's own script; later sightings use the family's home_snapshot.py.",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: the person's whole home listed (type, mode, size, time, sha256, hidden folders) on the stock image, before setup, after a real job ran on it and after uninstall --all; no stock file changed at any moment, ~/.ssh/authorized_keys included, and every difference lay in the clone, ~/.config/gh (the person's own gh auth login), ~/.minions and ~/repo-minions-record. Listed with the lane's own script; later sightings use the family's home_snapshot.py. Seen again the same evening with the family's home_snapshot.py (path, size, times, inode, sha256, folders) on a stock Ubuntu 24.04.5 virtual machine, the release branch at the commit tested, as the release list's step: stock, before setup, after a real job ran there, after uninstall --all; every pair diffed against docs/home-named.txt read 0 UNNAMED (stock to after uninstall: 85 differences, every one in the named places).",
    "issue": 291,
    "moved_why": "",
    "moved_by_person": ""
@@ -1684,7 +1684,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_19_a_watch_pass_in_the_same_second_as_the_last_is_still_seen",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, the release branch at the commit tested: after setup the watch's pass count read 1; the timer's own pass moved it to 2; setup run again on the installed runner renewed the watch and touched nothing else, said no \"wrote nothing\", and the count read 3. That the two passes fell in one second was not arranged on the machine; the same-second case is held by the test.",
    "issue": 296,
    "moved_why": "",
    "moved_by_person": ""
