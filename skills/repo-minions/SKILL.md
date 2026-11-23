@@ -111,8 +111,8 @@ they carry; if one is missing, say it in these words:
   `setup <owner/repo> --limits <processors>,<memory %>`. If look says the memory share is too small for a job,
   give the person its way out and what that costs their own work, as the line says.
 - **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
-  low battery still puts it to sleep, a little later. A job cut that way is named as cut, not as your test
-  failing." The tool takes two locks during a job: one that holds only the computer's own idle sleep, and one
+  low battery still puts it to sleep, about N seconds later." Give the delay look's numbered block names for this
+  computer, not a number of your own. "A job cut that way is named as cut, not as your test failing." The tool takes two locks during a job: one that holds only the computer's own idle sleep, and one
   that puts off a requested sleep by the short delay the system allows. It never holds the lid switch, the power
   or sleep keys, a shutdown, or a sleep someone asks for.
 - **One repository.** "This version serves one repository per computer; more come in the next version."

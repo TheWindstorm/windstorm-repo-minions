@@ -702,6 +702,11 @@ def survey(host: Host, rep: Report) -> dict:
         rep.ok(f"disk for the work folders: {s['disk']}, {gb(free[0])} free of {gb(free[1])}")
     else:
         rep.warn(f"disk for the work folders: {s['disk']}, free space not read")
+    s["sleep_delay"] = sleep_delay(host)
+    if s["sleep_delay"] is None:
+        rep.warn("the delay a sleep gets while a job runs: not read")
+    else:
+        rep.ok(f"a sleep asked while a job runs is put off by at most {s['sleep_delay']} s (logind's delay)")
     s["battery"] = has_battery(host)
     if s["battery"] is None:
         rep.warn("battery: not read")
@@ -775,6 +780,28 @@ def has_battery(host: Host) -> bool | None:
         if (host.read(f"/sys/class/power_supply/{name}/type") or "").strip() == "Battery":
             return True
     return False
+
+
+LOGIND_DELAY = ["busctl", "get-property", "org.freedesktop.login1", "/org/freedesktop/login1",
+                "org.freedesktop.login1.Manager", "InhibitDelayMaxUSec"]
+
+
+def sleep_delay(host: Host) -> int | None:
+    """G4.9 (R48): how long this computer puts off a sleep while our delay lock is held, in whole seconds, read from
+    logind (no admin rights needed); None when it could not be read."""
+    if host.system() != "Linux":
+        return None
+    rc, out = host.run(LOGIND_DELAY)
+    m = re.fullmatch(r"t (\d+)", out.strip()) if rc == 0 else None
+    return int(m.group(1)) // 1_000_000 if m else None
+
+
+def sleep_delay_words(seconds: int | None) -> str:
+    if seconds is None:
+        return "a little later (how much later could not be read on this computer)"
+    if seconds == 0:
+        return "at once"
+    return f"about {seconds} seconds later (this computer's own delay)"
 
 
 def default_route_iface(route_text: str) -> str | None:
@@ -1244,7 +1271,7 @@ def journal(host: Host, step: str, detail: str = "") -> None:
 def record_look(host: Host, repo: str, rep: Report, s: dict | None) -> None:
     data = load_state(host)
     keep = {k: v for k, v in (s or {}).items() if k in ("system", "machine", "cores", "mem", "disk", "free",
-                                                          "battery", "os")}
+                                                          "battery", "os", "sleep_delay")}
     data.setdefault("looks", {})[repo] = {"time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
                                           "stopped": rep.stopped, "survey": keep}
     save_state(host, data)
@@ -3698,7 +3725,8 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
              f"{GITHUB_GIVES_UP_H} hours.")
     rep.tell("A restart of this computer cancels the job running on it; a sleep delays it or cancels it. While a job "
              "runs, this computer does not fall asleep by itself; a sleep you ask for, the lid, or a low battery still "
-             "puts it to sleep, a little later. `status` names a job cut that way as cut, not as your test failing.")
+             f"puts it to sleep, {sleep_delay_words(s.get('sleep_delay'))}. `status` names a job cut that way as cut, "
+             "not as your test failing.")
     rep.tell(floor or limits_in_words(lim))
     if s.get("battery"):
         rep.tell("This computer has a battery: " + LAPTOP_WORDS + ".")

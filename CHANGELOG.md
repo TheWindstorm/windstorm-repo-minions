@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `look` reads the delay this computer gives a sleep during a job (logind's own setting, no admin rights) and
+  the words for the person name it, or say it could not be read, instead of "a little later" (G4.9, row R48).
 - `setup` says this version serves one repository per computer, and holds it: a second repository's `setup`
   changes nothing, names the repository already served and says to uninstall it first (G7.6).
 - The skill names where to clone: the person's home folder. Seen once, over a restart: nothing that `setup`
