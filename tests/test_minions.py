@@ -3211,6 +3211,48 @@ class P1a(unittest.TestCase):
 
 
 class G9(unittest.TestCase):
+    def test_G9_3_the_github_stand_in_answers_as_recorded(self):
+        # Every recorded call is answered exactly as GitHub answered it, in the order it was recorded, once; a call
+        # nobody recorded gets 404 and is kept, never a made-up answer.
+        for name in sorted(os.listdir(FIX)):
+            if not name.endswith(".jsonl"):
+                continue
+            rows = load(name)
+            gh = StandIn(rows)
+            for r in rows:
+                self.assertEqual(gh.api(r["method"], r["path"], r.get("body")), (r["status"], r["data"]),
+                                 (name, r["method"], r["path"]))
+            self.assertEqual(gh.misses, [], name)
+            self.assertEqual(gh.api(rows[0]["method"], rows[0]["path"])[0], 404, name)
+            self.assertEqual(len(gh.misses), 1, name)
+        # The hand-made answers the runner tests use carry only what a recorded answer carries (runner-life.jsonl:
+        # a real runner registered, idle, busy, held by drain, resumed, held again and removed, 2026-11-23).
+        life = load("runner-life.jsonl")
+        lists = [r["data"] for r in life if r["method"] == "GET" and "/actions/runners?" in r["path"]]
+        real = [x for d in lists for x in d["runners"]]
+        keys, label_keys = set().union(*map(set, real)), set().union(*(set(y) for x in real for y in x["labels"]))
+        put_keys = set().union(*(set(r["data"]) for r in life if r["method"] == "PUT"))
+        made = [runners_answer()[1], StatusGH().api("GET", f"repos/{REPO}/actions/runners?per_page=100")[1],
+                DrainGH().api("GET", f"repos/{REPO}/actions/runners?per_page=100")[1]]
+        for d in made:
+            self.assertEqual(set(d) - {"total_count", "runners"}, set(), d)
+            for x in d["runners"]:
+                self.assertEqual(set(x) - keys, set(), x)
+                for y in x["labels"]:
+                    self.assertEqual(set(y if isinstance(y, dict) else {"name": y}) - label_keys, set(), y)
+        g = DrainGH()
+        self.assertEqual(set(g.api("PUT", f"repos/{REPO}/actions/runners/7/labels", {"labels": ["x"]})[1]) - put_keys,
+                         set())
+        # The states the stand-ins play are states a real runner was seen in, and the hold reads as recorded.
+        seen = {(x["status"], x["busy"]) for x in real}
+        self.assertTrue({("online", False), ("online", True), ("offline", False)} <= seen, seen)
+        held = [sorted(y["name"] for y in r["data"]["labels"]) for r in life if r["method"] == "PUT"]
+        self.assertEqual(held[0], [M.HELD_LABEL])
+        self.assertEqual(held[1], ["minions", "minions-medium"])
+        tok = [r["data"] for r in life if r["path"].endswith("/registration-token")][0]
+        self.assertEqual(set(tok), {"token", "expires_at"})
+        self.assertEqual(tok["token"], "RECORDED-TOKEN-REMOVED")
+
     def test_G9_7_a_stand_in_grants_nothing_a_real_machine_refuses(self):
         # The watch's passes, on a stand-in that refuses `sudo -n` as a system timer does: private, blind, public,
         # and kept public. None asks for admin rights, and each still does its work (the record, the labels).
