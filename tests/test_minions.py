@@ -1816,6 +1816,10 @@ class G5(unittest.TestCase):
         self.assertNotIn("could not be taken off", lines[0])
         gh3 = StatusGH(private=False, busy=True)  # GitHub lists our labels on it: said
         self.assertIn("our labels could not be taken off yet", run_cmd(M.status, REPO, host=host, gh=gh3)[1][0])
+        # Idle and still listed: the removal is owed, said as such (seen when the watch could not reach GitHub).
+        line = run_cmd(M.status, REPO, host=host, gh=StatusGH(private=False))[1][0]
+        self.assertIn("our runner is still on the repository on GitHub's side, with no job on it: the watch could not "
+                      "take it off yet (each pass tries again)", line)
         # GitHub not reached: the watch's record, and said so.
         class Unread(StatusGH):
             def api(self, method, path, body=None):
@@ -2238,6 +2242,41 @@ class G6(unittest.TestCase):
         self.assertTrue(lines[-1].startswith("waiting") and "`uninstall example-org/example-repo` again" in lines[-1])
         self.assertIsNotNone(gh.runner)
         self.assertIn(FOLDER, world.paths)
+
+    def test_G6_1_an_error_answer_from_github_is_never_taken_for_gone(self):
+        # Seen: GitHub answered errors (HTTP 502) while it still listed our runner, and an uninstall that took an
+        # error for "not listed" deleted everything here and left the runner on GitHub. From any read on, errors:
+        # nothing here is deleted while GitHub lists the runner, and the line says why.
+        class ErrorsFrom(RemoveGH):
+            def __init__(self, n):
+                super().__init__({".github/workflows/ci.yml": MOVED_CI})
+                self.n, self.reads = n, 0
+
+            def api(self, method, path, body=None):
+                if method == "GET" and path.endswith("/actions/runners?per_page=100"):
+                    self.reads += 1
+                    if self.reads >= self.n:
+                        return 502, {"message": "Server Error"}
+                return super().api(method, path, body)
+        for n in range(1, 8):
+            gh, world, host = remove_setup()
+            gh = ErrorsFrom(n)
+            world.gh = gh
+            code, lines = run_uninstall(gh, host, wait_s=60, poll_s=10)
+            if gh.runner is not None:
+                self.assertNotEqual(code, M.EXIT_OK, (n, lines))
+                self.assertIn(FOLDER, world.paths, (n, lines))
+                self.assertFalse(any("no longer lists" in x for x in lines), (n, lines))
+                self.assertIn("could not be read", lines[-1], (n, lines))
+        # status: an error answer is said as not read, never as "GitHub no longer lists our runner".
+        host, clock = g5_host()
+
+        class Unread(StatusGH):
+            def api(self, method, path, body=None):
+                return (502, None) if "/actions/runners" in path else super().api(method, path, body)
+        lines = run_cmd(M.status, REPO, host=host, gh=Unread())[1]
+        self.assertFalse(any("no longer lists" in x for x in lines), lines)
+        self.assertIn("GitHub could not be read for example-org/example-repo's runners now (HTTP 502)", lines[0])
 
     def test_G6_6_uninstall_runs_as_the_runner_and_github_goes_first(self):
         gh, world, host = remove_setup()
