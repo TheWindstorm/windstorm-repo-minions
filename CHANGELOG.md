@@ -14,6 +14,9 @@ Since those cold starts one default changed: a job that needs more memory than i
 reaches the cap, by name, instead of running slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises
 the cap (row R94).
 
+- `look` counts your own containers and other runner services and names them only on `look <owner/repo>
+  --show-names`; `uninstall`'s census counts your own runner services. Their names may be your projects, and an
+  agent keeps what it reads (G1.16, row R106).
 - `setup <owner/repo>` on a runner already set up here puts this version's copy of the tool in place for the watch
   and touches nothing else. It stopped with "exists already", so the step `doctor` and `status` name for an older
   copy did nothing (G4.10, row R101).

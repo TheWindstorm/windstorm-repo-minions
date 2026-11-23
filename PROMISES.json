@@ -1478,6 +1478,20 @@
    "issue": 241,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R106",
+   "seen": "2026-11-23, the family's rule 18 from a sister skill's find that day (a sync printed the name of every project its include list had left out into each agent's transcript); read against this tool's code: `look` named the person's own containers and other runner services, and the census of `uninstall` named the person's own runner services, none of them chosen by the person for this tool.",
+   "promise": "The tool prints names only of what the person chose; the person's own containers and other runner services are counted, and named only on `look <owner/repo> --show-names`.",
+   "codon": "G1.16",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_16_names_are_printed_only_of_what_the_person_chose",
+   "proven": "",
+   "issue": 249,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
