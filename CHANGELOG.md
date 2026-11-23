@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `uninstall --all` ends a job's sleep hold left behind by a service stopped mid-job, by exact PID, and finishes.
+  It stopped on "processes of minions-runner still run" with no way out, though those processes were its own.
+  Any other process of the runner user is named with its name, never ended by the tool, and the line says how
+  to finish (G6.8, row R91).
 - The watch reads a finished job from GitHub once. It read every job in this computer's records again each
   pass (16 calls a pass with 13 jobs, about 190 an hour, against the 24 it said). The words now say the true
   spend: about 24 calls an hour, and at most 2 more for each job that ends here (G8.14, row R90).
