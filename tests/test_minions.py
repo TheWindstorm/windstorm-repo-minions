@@ -687,7 +687,8 @@ class G2(unittest.TestCase):
             entry = json.load(f)["looks"][REPO]
         self.assertFalse(entry["stopped"])
         self.assertEqual(entry["survey"]["cores"], 8)
-        self.assertEqual(set(entry["survey"]), {"system", "machine", "cores", "mem", "disk", "free", "battery", "os"})
+        self.assertEqual(set(entry["survey"]), {"system", "machine", "cores", "mem", "disk", "free", "battery", "os",
+                                                "sleep_delay"})
         # a look of a public repository is a look with a stop: setup refuses it (with G1.1)
         host2, sha = setup_host()
         host2._state = host.state_dir()
@@ -2551,6 +2552,22 @@ def hook_run(folder, seen_value, wait_s=0, event=None):
 
 class P1a(unittest.TestCase):
     """What the two cold starts (P1a, 2026-11-22) found: each fix and its test."""
+
+    def test_G4_9_the_delay_said_is_the_one_this_computer_gives(self):
+        # R48: the words name logind's own delay, read without admin rights, never a fixed number.
+        host = linux_host(runs={tuple(M.LOGIND_DELAY): (0, "t 30000000\n")})
+        lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
+        self.assertIn("ok a sleep asked while a job runs is put off by at most 30 s (logind's delay)", lines)
+        self.assertIn("still puts it to sleep, about 30 seconds later (this computer's own delay).", " ".join(tells_of(lines)))
+        self.assertFalse([a for a in host.ran if a[:1] == ("sudo",) and "busctl" in a])
+        for answer, words in (((1, "Failed to get property\n"), "a little later (how much later could not be read on "
+                                                                  "this computer)"),
+                              ((0, "t 0\n"), "still puts it to sleep, at once.")):
+            host = linux_host(runs={tuple(M.LOGIND_DELAY): answer})
+            lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
+            self.assertIn(words, " ".join(tells_of(lines)))
+        self.assertIn("warn the delay a sleep gets while a job runs: not read",
+                      look(StandIn(load("look-recent-runs.jsonl")), linux_host())[1])
 
     def test_G7_10_look_prints_what_to_tell_the_person_before_setup(self):
         code, lines = look(StandIn(load("look-recent-runs.jsonl")), linux_host())
