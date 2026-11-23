@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `status` begins with its worst true line: a runner neither idle nor busy is a `warn`, and jobs waiting on a
+  runner that is offline or held are a `warn`, first, with what they wait behind and the way on (G5.1, row R67).
 - Below 5 GB free for the work folders, the watch holds our runner before the disk fills, and lifts the hold by
   itself once 6 GB are free; until now only `setup` and `resume` checked the floor (G4.3, row R66).
 - `look` reads the delay this computer gives a sleep during a job (logind's own setting, no admin rights) and
