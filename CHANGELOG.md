@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `look`'s block for the person also says what a job too big for the memory cap does, and that a job has only the
+  tools installed on this computer. In a cold start these were in the README only and did not reach the person
+  (G7.10, row R98).
 - `look` reads the login's scopes from GitHub's own answer where the GitHub CLI does not print them (gh 2.4.0,
   Ubuntu 22.04's); it said it could not read them (G1.3, row R97).
 - Below Python 3.10 every command stops before any step, saying the version found and that this version runs on

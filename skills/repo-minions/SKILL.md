@@ -101,10 +101,10 @@ folder).
 
 ## Before setup
 
-look's last lines are `tell the person` lines, numbered `tell the person 1 of 7:` to `7 of 7:`. Paste them to the
-person as they are, as one block, all of them, numbers included: never shortened, merged, reworded or left out.
-Add your own words only after the block, never inside it. Then wait for their go before setup. These are what
-they carry; if one is missing, say it in these words:
+look's last lines are `tell the person` lines, numbered `tell the person 1 of N:` to `N of N:` (9 on most
+computers). Paste them to the person as they are, as one block, all of them, numbers included: never shortened,
+merged, reworded or left out. Add your own words only after the block, never inside it. Then wait for their go
+before setup. These are what they carry; if one is missing, say it in these words:
 
 - **What a job can reach.** Name what look listed: the secrets a job can read (names only) and what already runs
   on this computer. Then say: "Anyone who can push to this repository can run code on this computer."
@@ -119,6 +119,10 @@ they carry; if one is missing, say it in these words:
   give the person its way out and what that costs their own work, as the line says. On a computer with one
   processor the line says "1 of 1" and that everything else there will be slow while a job runs: read that too,
   and let the person decide.
+- **A job too big for the cap.** "A job that needs more memory than that fails when it reaches the cap, and
+  `status` names it, instead of running slowly."
+- **A job's tools.** "A job here has only the tools installed on this computer. GitHub's own computers come with
+  many tools already installed, so a job that stops with "command not found" needs that tool installed here."
 
 - **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
   low battery still puts it to sleep, about N seconds later." Give the delay look's numbered block names for this

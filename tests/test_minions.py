@@ -3309,7 +3309,9 @@ class P1a(unittest.TestCase):
                       "waited 24 hours.",
                       "A restart of this computer cancels the job running on it",
                       "This version serves one repository per computer",
-                      "GitHub's billing page, read "):
+                      "GitHub's billing page, read ",
+                      # R98: a cold start on the shipping README showed these reached the person only from the tool
+                      M.MEMORY_TRADE_OFF, M.JOB_TOOLS):
             self.assertIn(words, said)
         limits = next(x for x in lines if x.startswith("ok jobs here get at most"))
         self.assertIn(limits[len("ok "):], tells)  # the limits, word for word as look printed them

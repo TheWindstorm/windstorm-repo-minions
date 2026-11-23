@@ -1366,6 +1366,20 @@
    "issue": 219,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R98",
+   "seen": "2026-11-23, a cold start on a stock Ubuntu 24.04.5 virtual machine, the smallest model following the skill against the release branch's head: every line of the tool's block reached the person word for word, but two sentences the README had gained that day did not: that a job too big for its memory cap fails when it reaches the cap instead of running slowly, and that a job has only the tools installed on this computer. The agent relays what the tool prints, not the README.",
+   "promise": "Before setup the tool itself tells the person, in its numbered block, what a job too big for the memory cap does and that a job has only the tools installed on this computer.",
+   "codon": "G7.10",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_10_look_prints_what_to_tell_the_person_before_setup",
+   "proven": "",
+   "issue": 222,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
