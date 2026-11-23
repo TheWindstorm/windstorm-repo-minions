@@ -2374,6 +2374,39 @@ class G5(unittest.TestCase):
         self.assertEqual((code, gh.reruns), (M.EXIT_STOP, [9001]))
         self.assertIn("stop job 1234 is not one this computer cut or its limit stopped: nothing was run again", lines)
 
+    def test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back(self):
+        # The watch writes down since when GitHub has shown our runner offline while its service runs here with no
+        # job process; it restarts nothing (no admin rights). Past two intervals, status names it first, with the
+        # way on. Back online, it is cleared. (By ruling, 2026-11-23: seen coming back by itself in a VM.)
+        host, clock = g5_host()
+        run_cmd(M.watch, host=host, gh=StatusGH(status="offline"))
+        mine = M.load_state(host)["runners"][REPO]
+        self.assertEqual(mine["offline_since"], "2026-11-22T23:00:00Z")
+        self.assertFalse([a for a in host.ran if a[:2] == ("sudo", "-n")], "the watch restarts nothing")
+        clock.sleep(240)  # under two intervals (2 x 300 s): only the usual not-ready line
+        run_cmd(M.watch, host=host, gh=StatusGH(status="offline"))
+        self.assertEqual(M.load_state(host)["runners"][REPO]["offline_since"], "2026-11-22T23:00:00Z")
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline"))[1]
+        self.assertFalse([x for x in lines if "has shown it offline since" in x], lines)
+        clock.sleep(420)  # 11 min: past two intervals
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline"))[1]
+        self.assertEqual(lines[0], "warn minions-box-1 for example-org/example-repo: GitHub has shown it offline since "
+                                   "23:00:00Z (11 min) while its service runs here, so no job lands on it. A runner "
+                                   "usually comes back by itself within a few minutes of a wake or of the network "
+                                   "returning; this one has not. `drain example-org/example-repo --stop`, then "
+                                   "`resume example-org/example-repo`, starts it fresh (each asks for the admin "
+                                   "password once)")
+        # Back online: cleared, and not named.
+        run_cmd(M.watch, host=host, gh=StatusGH(status="online"))
+        self.assertNotIn("offline_since", M.load_state(host)["runners"][REPO])
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(status="online"))[1]
+        self.assertFalse([x for x in lines if "has shown it offline since" in x], lines)
+        # A job process runs, or the service is stopped: not this case.
+        for kw, runs in (({"worker": True}, None), ({}, {("systemctl", "is-active"): (3, "inactive\n")})):
+            host, clock = g5_host(runs=runs, **kw)
+            run_cmd(M.watch, host=host, gh=StatusGH(status="offline"))
+            self.assertNotIn("offline_since", M.load_state(host)["runners"][REPO], kw)
+
     def test_G11_5_a_job_cut_by_sleep_is_named_and_offered_again(self):
         # After a wake: a job the sleep cut is named as cut by the sleep (both sides agree), offered once, and run
         # again once on the person's word (as G5.7).

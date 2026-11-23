@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- G11.4, by ruling, with the reason: a runner whose service runs while GitHub has shown it offline for more than
+  two watch intervals is named first in `status`, as a `warn` with its way on (`drain --stop`, then `resume`).
+  The codon promised a restart; it is made smaller because the watch has no admin rights and cannot restart
+  anything, and the runner was seen coming back by itself after a network cut and two suspends in a virtual
+  machine. A listener that never reconnects has not been seen; if it is, the row reopens (row R74).
 - Tests: a new recorded fixture, `tests/fixtures/runner-life.jsonl`, holds GitHub's real answers for one runner's
   life (registered, idle, busy, held, resumed, removed; tokens removed, scrubbed). The test stand-in answers every
   recorded call exactly as recorded, and the hand-made runner answers carry only what a recorded one carries (G9.3).
