@@ -579,6 +579,14 @@ def fresh_look(host, minutes=5, stopped=False, survey=True):
     M.save_state(host, {"looks": {REPO: {"time": when, "stopped": stopped, "survey": s}}})
 
 
+def no_event():
+    """This process's environment without GitHub's event record: in CI, GitHub's runner sets GITHUB_EVENT_PATH for
+    this repository's own (public) job, and the hook under test rightly refuses on it (seen 2026-11-23)."""
+    env = dict(os.environ)
+    env.pop("GITHUB_EVENT_PATH", None)
+    return env
+
+
 def fresh_seen(folder, value=None):
     """G5.15: the watch's record that it read the repository private, as a hook test needs it."""
     path = os.path.join(folder, "seen-private")
@@ -1327,7 +1335,7 @@ class G4(unittest.TestCase):
         with open(os.path.join(bindir, "systemd-inhibit"), "w") as f:
             f.write(FAKE_INHIBIT)
         os.chmod(os.path.join(bindir, "systemd-inhibit"), 0o755)
-        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""), MINIONS_TEST_LOG=log,
+        env = dict(no_event(), PATH=bindir + os.pathsep + os.environ.get("PATH", ""), MINIONS_TEST_LOG=log,
                    RUNNER_TRACKING_ID="github_job_1", GITHUB_WORKSPACE=os.path.join(folder, "_work", "r", "r"))
         seen = fresh_seen(folder)
         for name, text in (("start.sh", M.job_started_script(folder, seen=seen)), ("done.sh", M.job_completed_script(folder))):
@@ -1906,7 +1914,7 @@ class G5(unittest.TestCase):
                 f.write("low 0\nhigh 3\nmax 2\noom 1\noom_kill 1\n")
             recs = os.path.join(d, "records")
             os.makedirs(recs)
-            env = dict(os.environ, GITHUB_RUN_ID="555", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="check",
+            env = dict(no_event(), GITHUB_RUN_ID="555", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="check",
                        GITHUB_WORKSPACE=os.path.join(d, "nowhere"), PATH="/usr/bin:/bin")
             with mock.patch.object(M, "MEMORY_EVENTS", events):
                 seen = fresh_seen(d)
@@ -2333,8 +2341,7 @@ def hook_run(folder, seen_value, wait_s=0, event=None):
     path = os.path.join(folder, "start.sh")
     with open(path, "w") as f:
         f.write(text)
-    env = dict(os.environ, PATH="/usr/bin:/bin", GITHUB_RUN_ID="77", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="j")
-    env.pop("GITHUB_EVENT_PATH", None)
+    env = dict(no_event(), PATH="/usr/bin:/bin", GITHUB_RUN_ID="77", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="j")
     if event is not None:
         env["GITHUB_EVENT_PATH"] = os.path.join(folder, "event.json")
         with open(env["GITHUB_EVENT_PATH"], "w") as f:
@@ -2451,7 +2458,7 @@ class P1a(unittest.TestCase):
             text = M.job_started_script(folder, seen=seen, hold_wait_s=20).replace("command -v systemd-inhibit", "false")
             with open(os.path.join(folder, "s.sh"), "w") as f:
                 f.write(text)
-            p = subprocess.Popen(["bash", os.path.join(folder, "s.sh")], env=dict(os.environ, PATH="/usr/bin:/bin"),
+            p = subprocess.Popen(["bash", os.path.join(folder, "s.sh")], env=dict(no_event(), PATH="/usr/bin:/bin"),
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             time.sleep(2)
             fresh_seen(folder)
