@@ -88,7 +88,8 @@ class FakeHost(M.Host):
         self.dirs, self.links, self.page, self.free = dict(dirs or {}), dict(links or {}), page, free
         self.ran, self.fed = [], []  # every argv run; (argv, standard input) of every run_in
         self._state = tempfile.mkdtemp(dir=TMP)
-        self.home_mode, self.download, self.validated, self.tty = 0o750, b"a stand-in runner archive", 0, False
+        self.home_mode, self.download, self.validated, self.tty = 0o750, b"a stand-in runner archive", 0, True
+        self.enter, self.read_enters = True, 0  # G7.15: the person's own terminal; Enter pressed
 
     def _answer(self, argv, input=None):
         for k in sorted(self.runs, key=len, reverse=True):
@@ -118,6 +119,10 @@ class FakeHost(M.Host):
 
     def isatty(self):
         return self.tty
+
+    def read_enter(self):
+        self.read_enters += 1
+        return self.enter
 
     def sudo_validate(self):
         self.validated += 1
@@ -780,7 +785,7 @@ def fresh_seen(folder, value=None):
     return path
 
 
-def run_setup(gh, host, interactive=False):
+def run_setup(gh, host, interactive=True):
     out = io.StringIO()
     code = M.setup(REPO, host=host, gh=gh, out=out, interactive=interactive)
     return code, out.getvalue().splitlines()
@@ -964,16 +969,16 @@ class G2(unittest.TestCase):
         code, lines = run_setup(setup_gh(sha), host, interactive=True)
         self.assertEqual(code, M.EXIT_OK, lines)
         self.assertEqual(host.validated, 1)
-        need = [x for x in lines if x.startswith("need you:")]
+        need = [x for x in lines if x.startswith("need you:") and "press Enter" not in x]  # G7.15's key comes first
         self.assertTrue(need[0].startswith("need you: type this computer's admin password once"), lines)
         self.assertLess(lines.index(need[0]), lines.index("ok admin rights ready (asked once)"))
-        self.assertEqual(sum(x.startswith("need you:") for x in lines), 1)
+        self.assertEqual(len(need), 1)
         # not on a terminal: a blocking need-you, nothing touched
         host, sha = setup_host(runs={("sudo", "-n", "true"): (1, "sudo: a password is required")})
         fresh_look(host)
-        code, lines = run_setup(setup_gh(sha), host)
+        code, lines = run_setup(setup_gh(sha), host, interactive=False)
         self.assertEqual((code, host.validated, admin_steps(host)), (M.EXIT_NEED, 0, []))
-        self.assertIn("run `sudo -v` in your terminal", lines[-1])
+        self.assertIn("in your own terminal: run `python3 -I ", lines[-1])  # G7.15: setup is the person's to run
         # a runner user that is in an admin group is refused
         for groups in ("minions-runner sudo", "minions-runner docker", "minions-runner wheel", "minions-runner users"):
             host, sha = setup_host(runs={("id", "-nG", "minions-runner"): (0, groups + "\n"),
@@ -1051,7 +1056,7 @@ class G2(unittest.TestCase):
             lambda argv, input: (echo[0], echo[1] + f"token was {input.strip()}\n")  # a runner that echoes it
         fresh_look(host)
         out = io.StringIO()
-        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, interactive=False)
+        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, interactive=True)
         self.assertEqual(code, M.EXIT_OK, out.getvalue())
         self.assertFalse([a for a in host.ran if any(TOKEN in x for x in a)], "the token is on a command line")
         fed = [(a, i) for a, i in host.fed if i and TOKEN in i]
@@ -1350,6 +1355,7 @@ class MoveGH(StandIn):
                    "html_url": f"https://github.com/{REPO}/pull/12"}
         self.runs, self.jobs = runs if runs is not None else [], jobs or {}
         self.runner_status = runner_status
+        self.others = []  # G3.7: other self-hosted runners GitHub lists for the repository
 
     def api(self, method, path, body=None):
         self.calls.append((method, path))
@@ -1361,7 +1367,8 @@ class MoveGH(StandIn):
         if method == "GET" and path.split("?")[0] == f"{base}/actions/runners":
             return 200, {"total_count": 1, "runners": [{"id": 7, "name": OURS, "status": self.runner_status,
                                                         "busy": False, "os": "unknown",
-                                                        "labels": [{"name": "minions"}, {"name": "minions-medium"}]}]}
+                                                        "labels": [{"name": "minions"}, {"name": "minions-medium"}]}]
+                         + self.others}
         if method == "GET" and path.split("?")[0] == f"{base}/contents/.github/workflows":
             return 200, [{"name": p.rsplit("/", 1)[1], "path": p} for p in sorted(self.files)]
         if method == "GET" and path.startswith(f"{base}/contents/"):
@@ -1550,6 +1557,49 @@ class G3(unittest.TestCase):
         (dep,) = [c for c in gh.blobs() if c.startswith("name: deploy")]
         self.assertEqual(dep.count("runs-on: [minions]"), 1)
 
+    def test_G3_7_verify_counts_a_job_on_another_computer_of_ours(self):
+        # Seen 2026-11-23 (run I, row R114): two computers of ours served one repository; the other one took the
+        # moved job and verify said it did not move. A runner of ours elsewhere counts, and is named; one GitHub no
+        # longer lists is the third answer; a runner that is not ours is still "did not move".
+        files = {".github/workflows/ci.yml": CI_YML}
+        host, gh = move_host(), MoveGH(files)
+        run_move(gh, host)
+        merged = {p: next(c for c in gh.blobs() if c.splitlines()[0] == text.splitlines()[0]) for p, text in files.items()}
+        runs = [{"id": 5, "wf": "ci.yml", "status": "completed", "created_at": "2026-11-22T23:10:00Z"}]
+        job = lambda name, runner: {"name": name, "runner_name": runner, "labels": ["minions"], "conclusion": "success",
+                                    "html_url": "https://example.invalid/j", "runner_group_name": "Default"}
+        theirs = lambda name, labels: {"id": 9, "name": name, "status": "online", "busy": False, "os": "Linux",
+                                       "labels": [{"name": x} for x in labels]}
+        def verify(runner, others):
+            h = move_host()
+            d = M.load_state(host)
+            d["moves"][REPO].pop("verified", None)
+            M.save_state(h, d)
+            g = MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=list(runs),
+                       jobs={5: [job("Unit tests", runner), job("build", OURS)]})
+            g.others = others
+            return run_move(g, h, verify=True)
+        code, lines = verify("minions-laptop", [theirs("minions-laptop", ["minions", "minions-small"])])
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn("ok moved: .github/workflows/ci.yml job test ran on minions-laptop (another computer of yours "
+                      "with this tool's runner) and succeeded (run 5)", lines)
+        self.assertIn(f"ok moved: .github/workflows/ci.yml job build ran on {OURS} (this computer) and succeeded (run 5)",
+                      lines)
+        self.assertEqual(lines[-1], f"ok moved: every moved job of {REPO} ran on a computer of yours with this tool's "
+                                    "runner (here, or minions-laptop)")
+        # no longer listed: the tool cannot tell, and says so; never "moved", never "did not move"
+        code, lines = verify("minions-gone", [])
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        stop = [x for x in lines if x.startswith("stop ")]
+        self.assertEqual(len(stop), 1, lines)
+        self.assertIn("cannot tell whether it is one of yours", stop[0])
+        self.assertNotIn("did not move", stop[0])
+        self.assertFalse([x for x in lines if x.startswith("ok moved: every")], lines)
+        # a runner that carries GitHub's default labels is not one this tool registered: it did not move
+        code, lines = verify("build-box", [theirs("build-box", ["self-hosted", "Linux", "minions"])])
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertTrue([x for x in lines if x.startswith("stop ") and "did not move" in x], lines)
+
     def test_G3_6_moved_is_said_only_after_a_real_job_ran(self):
         files = {".github/workflows/ci.yml": CI_YML, ".github/workflows/lint.yml":
                  "name: lint\non: [push, workflow_dispatch]\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n"
@@ -1573,7 +1623,7 @@ class G3(unittest.TestCase):
         gh = MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=runs, jobs=jobs)
         code, lines = run_move(gh, host, verify=True)
         self.assertEqual(code, M.EXIT_OK, lines)
-        self.assertIn(f"ok moved: .github/workflows/ci.yml job test ran on {OURS} and succeeded (run 5)", lines)
+        self.assertIn(f"ok moved: .github/workflows/ci.yml job test ran on {OURS} (this computer) and succeeded (run 5)", lines)
         self.assertIn(f"ok moved: every moved job of {REPO} ran on this computer", lines[-1])
         # lint.yml had no run since the merge, every one of its jobs moved and it can be started by hand: started
         self.assertIn(("POST", f"repos/{REPO}/actions/workflows/lint.yml/dispatches"), gh.calls)
@@ -1857,7 +1907,7 @@ class G4(unittest.TestCase):
         self.assertIn("--mode=delay", M.INHIBIT_SLEEP_DELAY)
         with open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")) as f:
             skill = re.sub(r"\s+", " ", f.read())
-        self.assertIn("A sleep you ask for, the lid, or a low battery still puts it to sleep, about N seconds later.",
+        self.assertIn("a sleep you ask for, the lid or a low battery still puts it to sleep, about N seconds later.",
                       skill)
         self.assertIn("one that puts off a requested sleep by the short delay the system allows", skill)
 
@@ -2106,7 +2156,7 @@ class G4(unittest.TestCase):
         # One processor (the owner's ruling, 2026-11-23): "1 of 1", said plainly, never refused.
         words = M.limits_in_words(M.slice_limits({"cores": 1, "mem": 8 * gib}))
         self.assertTrue(words.startswith("jobs here get at most 1 of this computer's 1 processor and 60 % "), words)
-        self.assertTrue(words.endswith(". This computer has one processor: while a job runs it uses all of it, at "
+        self.assertTrue(words.endswith("; this computer has one processor: while a job runs it uses all of it, at "
                                        "low priority, and everything else here will be slow"), words)
         self.assertNotIn("one processor", M.limits_in_words(M.slice_limits({"cores": 2, "mem": 8 * gib})))
 
@@ -3089,7 +3139,7 @@ def remove_setup(own_removal_works=True, interrupt_on=None, busy=(False,), moved
 
 def run_uninstall(gh, host, repo=REPO, **kw):
     out = io.StringIO()
-    code = M.uninstall(repo, host=host, gh=gh, out=out, interactive=False, **kw)
+    code = M.uninstall(repo, host=host, gh=gh, out=out, interactive=True, **kw)
     return code, out.getvalue().splitlines()
 
 
@@ -3135,8 +3185,9 @@ class G6(unittest.TestCase):
         self.assertIn("census:", out[-1])
         # Deleting it is a separate choice typed at a terminal: an agent with no terminal is told it is the person's.
         gh, world, host = world_with_jobs()
+        host.tty = False  # the record's deletion asks the terminal itself; the uninstall was confirmed with Enter
         o = io.StringIO()
-        M.uninstall(None, everything=True, host=host, gh=gh, out=o, interactive=False, delete_record=True)
+        M.uninstall(None, everything=True, host=host, gh=gh, out=o, interactive=True, delete_record=True)
         self.assertNotEqual(host.record_count(), (0, 0))
         self.assertTrue(any(x.startswith("need you: deleting your record") and "your own terminal" in x
                             for x in o.getvalue().splitlines()))
@@ -3145,7 +3196,7 @@ class G6(unittest.TestCase):
             gh, world, host = world_with_jobs()
             host.tty, host.answer = True, typed
             o = io.StringIO()
-            M.uninstall(None, everything=True, host=host, gh=gh, out=o, interactive=False, delete_record=True)
+            M.uninstall(None, everything=True, host=host, gh=gh, out=o, interactive=True, delete_record=True)
             self.assertIn("Type delete", host.asked)
             self.assertEqual(host.record_count() != (0, 0), kept, typed)
             self.assertIn("census:", o.getvalue().splitlines()[-1])
@@ -3168,7 +3219,7 @@ class G6(unittest.TestCase):
             self.assertEqual(M2.TOOL_COPY, "/usr/local/lib/windstorm-repo-minions/minions.py")
             gh, world, host = remove_setup()
             out = io.StringIO()
-            code = M2.uninstall(None, everything=True, host=host, gh=gh, out=out, interactive=False)
+            code = M2.uninstall(None, everything=True, host=host, gh=gh, out=out, interactive=True)
             lines = out.getvalue().splitlines()
             self.assertEqual(code, M.EXIT_NEED, lines)  # to the end: only the put-back pull request is the person's
             self.assertTrue(lines[-1].startswith("ok census:"), lines[-3:])
@@ -3327,6 +3378,30 @@ class G6(unittest.TestCase):
         self.assertTrue(any("was not recorded" in x and "put it back by hand" in x for x in lines), lines)
         self.assertEqual(gh.blobs(), [])
 
+    def test_G6_13_the_census_names_the_folder_the_skill_was_downloaded_into(self):
+        # Seen 2026-11-23 (run J, row R117): the census said nothing of the clone, and the agent filled the silence
+        # by offering to delete it. After `uninstall --all` the census names it: there and whose, gone, or not known.
+        clone = "/home/person/windstorm-repo-minions"
+        plugin = "/home/person/.claude/plugins/cache/the-windstorm/repo-minions/0.1.0"
+        for root, there, said in ((clone, True, f"ok census: the folder this skill was downloaded into: {clone}, still "
+                                                "there; it is yours to keep or delete, and this tool does not touch it"),
+                                  (clone, False, f"ok census: the folder this skill was downloaded into ({clone}): gone"),
+                                  (plugin, True, "it is Claude Code's plugin folder, and Claude Code's own `plugin "
+                                                 "uninstall` takes it"),
+                                  (None, None, "not known on this computer")):
+            gh, world, host = remove_setup()
+            if root:
+                d = M.load_state(host)
+                d["skill_folder"] = root
+                M.save_state(host, d)
+                if there:
+                    host.dirs[root] = ["skills"]
+            code, lines = run_uninstall(gh, host, everything=True)
+            line = next(x for x in lines if "census: the folder this skill was downloaded into" in x)
+            self.assertIn(said, line)
+            self.assertTrue(lines[-1].startswith("ok census: your record"), lines[-2:])  # the record stays last
+            self.assertNotIn("rm ", line)  # no delete command is printed for it
+
     def test_G6_3_uninstall_ends_with_a_census(self):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host)
@@ -3338,8 +3413,9 @@ class G6(unittest.TestCase):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host, everything=True)
         census = [x for x in lines if "census:" in x]
-        self.assertEqual(len(census), 7, census)
-        self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census[:-1]), census)
+        self.assertEqual(len(census), 8, census)  # G6.13: the skill's own folder is named too (here: not known)
+        self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census[:-2]), census)
+        self.assertTrue(census[-2].startswith("warn census: the folder this skill was downloaded into"), census)
         # Rule 8: the census is the last thing printed; it names this tool's state folder, and last the person's
         # record, kept (G6.10).
         self.assertIn("ok census: this tool's state folder: none", census)
@@ -3392,7 +3468,7 @@ class G6(unittest.TestCase):
         self.assertEqual(M.load_state(host)["setting_up"][REPO]["folder"], FOLDER)
         # `uninstall` finds it, never "nothing to uninstall", and takes it away, read back.
         out = io.StringIO()
-        M.uninstall(REPO, host=host, gh=gh, out=out, interactive=False)
+        M.uninstall(REPO, host=host, gh=gh, out=out, interactive=True)
         lines = out.getvalue().splitlines()
         self.assertFalse([x for x in lines if "nothing to uninstall" in x], lines)
         self.assertIn(f"ok uninstalled: {REPO} has no runner on this computer now", lines)
@@ -3523,8 +3599,8 @@ class G8(unittest.TestCase):
             for k in kinds:
                 getattr(rep, k)("x")
             self.assertEqual(rep.code(), code, kinds)
-            for line in rep.lines:
-                self.assertTrue(any(line.startswith(k) for k in M.LINE_KINDS), line)
+            for line in rep.lines:  # a block's head and foot lines (G7.16) begin with -----
+                self.assertTrue(any(line.startswith(k) for k in (*M.LINE_KINDS, "----- ")), line)
         # P1a: every need-you line is exit 3, also one that lets the steps after it run (an agent trusting exit
         # codes went on past an ask); only a password typed at once, in this same run, is not an open ask.
         for kw, code in (({"blocks": False}, M.EXIT_NEED), ({"blocks": False, "answered_here": True}, M.EXIT_OK)):
@@ -3660,7 +3736,8 @@ class P1a(unittest.TestCase):
         self.assertIn("This computer has a battery: " + M.LAPTOP_WORDS + ".", tells_of(lines))
         # They come after the reading, all together, so an agent says them before setup.
         first = min(i for i, x in enumerate(lines) if TELL.match(x))
-        self.assertTrue(all(TELL.match(x) for x in lines[first:]), lines[first:])
+        self.assertTrue(all(TELL.match(x) for x in lines[first:-1]), lines[first:])
+        self.assertTrue(lines[first - 1].startswith("----- ") and lines[-1].startswith("----- end"), lines)  # G7.16
 
     def test_G7_13_the_block_points_to_githubs_page_for_cost_and_claims_none(self):
         # Seen 2026-11-23 (row R109): a cold start relayed the block's cost sentence as "lists self-hosted runners as
@@ -3676,6 +3753,117 @@ class P1a(unittest.TestCase):
             self.assertNotIn(never, said)
         self.assertEqual(len([x for x in lines if x.startswith("ok GitHub's billing page, read ")]), 1, lines)
 
+    def test_G7_15_setup_and_uninstall_show_the_persons_lines_and_wait_for_a_key(self):
+        # Rule 7 (2026-11-23, row R112): in run I the smallest model reworded a five-, a three- and a one-line block,
+        # so the lines a person must hear before an act are shown by the command the person runs, in their own
+        # terminal, before anything changes, and it goes on only when they press Enter.
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        head = next(i for i, x in enumerate(lines) if x.startswith("----- read these "))
+        tells = []
+        for x in lines[head + 1:]:
+            if not TELL.match(x):
+                break
+            tells.append(x)
+        self.assertEqual(lines[head], f"----- read these {len(tells)} lines before anything changes -----")
+        self.assertEqual([TELL.match(x).groups() for x in tells],
+                         [(str(i), str(len(tells))) for i in range(1, len(tells) + 1)])
+        said = " ".join(TELL.sub("", x) for x in tells)
+        limits = next(x for x in lines if x.startswith("ok jobs here get at most"))[len("ok "):]
+        for words in ("Anyone who can push to example-org/example-repo can run code on this computer",
+                      "This is for a private repository only", limits, M.MEMORY_BEFORE_SETUP,
+                      "While this computer is off, asleep or held, your checks wait",
+                      "A restart of this computer cancels the job running on it", M.JOB_TOOLS,
+                      "This version serves one repository per computer", M.ADMIN_MAKES, M.LEAVING_KEEPS,
+                      M.COST_POINTER):
+            self.assertIn(words, said)
+        after = lines[head + 1 + len(tells)]
+        self.assertTrue(after.startswith("need you: read the lines above, then press Enter here"), after)
+        self.assertEqual(host.read_enters, 1)
+        self.assertLess(head, min(i for i, x in enumerate(lines) if x.startswith("ok admin rights")))
+        # No Enter: nothing changed, no admin step, the password never asked.
+        host, sha = setup_host(runs={("sudo", "-n", "true"): (1, "sudo: a password is required")})
+        fresh_look(host)
+        host.enter = False
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual((code, host.validated, admin_steps(host)), (M.EXIT_STOP, 0, []), lines)
+        self.assertIn("nothing was changed", lines[-1])
+        self.assertNotIn(REPO, M.load_state(host).get("runners") or {})
+        # Where nobody can press a key (an agent's shell): nothing shown, nothing changed, the person's command printed
+        # exactly, with the flags they gave.
+        host, sha = setup_host()
+        fresh_look(host)
+        out = io.StringIO()
+        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, interactive=False, limits=(2, 50))
+        lines = out.getvalue().splitlines()
+        self.assertEqual((code, host.read_enters, admin_steps(host)), (M.EXIT_NEED, 0, []), lines)
+        self.assertFalse([x for x in lines if TELL.match(x)], lines)
+        self.assertIn(f"in your own terminal: run `python3 -I {M.tool_path()} setup {REPO} --limits 2,50` there",
+                      lines[-1])
+        # uninstall: what it takes, that the record is kept, the put-back pull request; Enter, or nothing changes.
+        gh, world, host = remove_setup()
+        host.enter = False
+        code, lines = run_uninstall(gh, host, None, everything=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        said = " ".join(tells_of(lines))
+        for words in ("This takes off this computer every runner of this tool", "Your record of what this tool did "
+                      "is kept in", "Then it opens a pull request that puts each moved job back"):
+            self.assertIn(words, said)
+        self.assertIn(REPO, M.load_state(host).get("runners") or {})
+        self.assertEqual(admin_steps(host), [])
+        out = io.StringIO()
+        self.assertEqual(M.uninstall(None, everything=True, host=host, gh=gh, out=out, interactive=False), M.EXIT_NEED)
+        self.assertIn(f"run `python3 -I {M.tool_path()} uninstall --all` there", out.getvalue().splitlines()[-1])
+
+    def test_G7_15_each_line_on_the_persons_screen_is_one_sentence_and_the_count_is_bound(self):
+        # The owner's word (2026-11-23): twelve lines is a lot to read, so each is one plain sentence, and the count
+        # grows only with a row: eleven, twelve on a laptop.
+        lim = M.slice_limits({"cores": 1, "mem": 8 * 1024 ** 3})  # the longest limits line, one processor
+        for s, n in (({"battery": False}, 11), ({"battery": True}, 12), ({"lid": True}, 12)):
+            lines = M.setup_lines(REPO, {**s, "sleep_delay": 30}, lim)
+            self.assertEqual(len(lines), n, lines)
+            gh, world, host = remove_setup()
+            for every in (True, False):
+                lines += M.uninstall_lines(host, REPO, every, M.load_state(host))
+            for x in lines:
+                self.assertIsNone(re.search(r"[.!?] +[A-Z`(]", x), f"more than one sentence: {x}")
+
+    def test_G7_17_the_move_pull_request_opens_with_moves_lines(self):
+        # The owner's ruling (2026-11-23, row R116): the page the person reads when they decide carries move's own
+        # lines, word for word from one source, above anything else.
+        host, gh = move_host(), MoveGH(G3.FILES)
+        lines = run_move(gh, host)[1]
+        body = next(b for m, p, b in gh.writes if m == "POST" and p.endswith("/pulls"))["body"]
+        said = tells_of(lines)
+        self.assertEqual(len(said), 3, lines)
+        self.assertTrue(body.startswith("## Before you merge\n\n" + "".join(f"- {x}\n" for x in said)), body)
+        self.assertLess(body.index(said[-1]), body.index("This pull request changes only"))
+
+    def test_G7_16_a_relayed_block_has_a_head_and_a_foot_line(self):
+        # The owner's ruling (2026-11-23, row R113): the instruction travels in the tool's own output, at the head
+        # and the foot of each block an agent relays, not only in the skill file.
+        for n in (1, 3):
+            rep = M.Report(io.StringIO())
+            rep.ok("before")
+            for i in range(n):
+                rep.tell(f"line {i + 1}")
+            rep.ok("after")
+            body = rep.lines[1:-1]
+            self.assertEqual(len(body), n + 2, rep.lines)
+            self.assertTrue(body[0].startswith(f"----- the {n} numbered line{'s' if n > 1 else ''} below go to the "
+                                               "person whole and word for word, numbers included"), body[0])
+            span = f"1 of {n} to {n} of {n}" if n > 1 else "1 of 1"
+            self.assertEqual(body[-1], f"----- end of the lines for the person: paste {span} whole and unchanged; your "
+                                       "own words come only after this line -----")
+            self.assertEqual(rep.code(), M.EXIT_OK)
+        # look's block, as the agent reads it
+        lines = look(StandIn(load("look-recent-runs.jsonl")), linux_host())[1]
+        first = min(i for i, x in enumerate(lines) if TELL.match(x))
+        self.assertTrue(lines[first - 1].startswith("----- the "), lines[first - 1])
+        self.assertTrue(lines[-1].startswith("----- end of the lines for the person"), lines[-1])
+
     def test_G7_14_each_line_for_the_person_is_said_at_the_stop_where_it_matters(self):
         # The owner's ruling (2026-11-23, rule 7, row R111): nine lines before setup were pasted whole in one small-model
         # run of three; what matters only once jobs move is move's own block, the last thing before the merge it asks
@@ -3685,11 +3873,12 @@ class P1a(unittest.TestCase):
         tells = [x for x in lines if TELL.match(x)]
         self.assertEqual([TELL.match(x).groups() for x in tells], [("1", "3"), ("2", "3"), ("3", "3")], lines)
         said = " ".join(tells_of(lines))
-        for words in ("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has "
-                      "waited 24 hours.", "A restart of this computer cancels the job running on it", M.JOB_TOOLS):
+        for words in ("While this computer is off, asleep or held, your checks wait, and GitHub cancels a check that "
+                      "has waited 24 hours.", "A restart of this computer cancels the job running on it", M.JOB_TOOLS):
             self.assertIn(words, said)
         last_tell = max(i for i, x in enumerate(lines) if TELL.match(x))
-        self.assertEqual(last_tell, len(lines) - 2, lines)
+        self.assertEqual(last_tell, len(lines) - 3, lines)
+        self.assertTrue(lines[-2].startswith("----- end of the lines for the person"), lines)  # G7.16
         self.assertTrue(lines[-1].startswith("need you: read and merge pull request #12 yourself"), lines)
         # status: a job the cap stopped is named, then the trade-off, as its own one-line block at the end
         t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
@@ -3697,7 +3886,8 @@ class P1a(unittest.TestCase):
         host, gh, _ = G5._named(G5(), f"start {t0} 555 1 0 check\nend {t0 + 70} 555 1 1 check\n", failed,
                                      notes=["Process completed with exit code 137."])
         lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
-        self.assertEqual(lines[-1], "tell the person 1 of 1: " + M.MEMORY_TRADE_OFF, lines)
+        self.assertEqual(lines[-2], "tell the person 1 of 1: " + M.MEMORY_TRADE_OFF, lines)
+        self.assertTrue(lines[-1].startswith("----- end of the lines for the person"), lines)
         self.assertNotIn("than that", M.MEMORY_TRADE_OFF)  # it stands alone now, away from the limits line
 
     def test_G7_12_the_tell_block_carries_only_what_the_person_must_hear_within_a_bound(self):
@@ -4353,7 +4543,7 @@ class G8Waits(unittest.TestCase):
 
 class G8Words(unittest.TestCase):
     NEXT = re.compile(r"`|\bagain\b|\bfirst\b|\bcheck\b|\bwrite owner|\bno step to take\b|\bopen an issue\b|\bask\b|"
-                      r"\btype\b|\bFree some space\b|\bmerge\b|\bsettle\b|\bway out\b|\brun\b|\binstall\b", re.I)
+                      r"\btype\b|\bpress Enter\b|\bFree some space\b|\bmerge\b|\bsettle\b|\bway out\b|\brun\b|\binstall\b", re.I)
 
     def test_G8_12_every_stop_and_need_you_line_names_what_happened_and_the_next_step(self):
         # Run B again: `move` stopped on "could not read it, so nothing is moved", with no answer and no way out, and a
@@ -4403,7 +4593,8 @@ class G8Words(unittest.TestCase):
         rep.stop("three: run it again")
         self.assertEqual(rep.code(), M.EXIT_STOP)
         self.assertTrue(rep.out_closed)
-        self.assertEqual(rep.lines, ["ok one", "tell the person 1 of 1: two", "stop three: run it again"])
+        self.assertEqual([x for x in rep.lines if not x.startswith("----- ")],
+                         ["ok one", "tell the person 1 of 1: two", "stop three: run it again"])
         script = os.path.join(ROOT, "scripts", "minions.py")
         r = subprocess.run(["bash", "-c", f"python3 -I {script} look not-a-name 2>&1 | head -c 1 >/dev/null; "
                             f"python3 -I {script} look not-a-name 2>&1 | head -c 0"],
@@ -4417,7 +4608,7 @@ class Helpers(unittest.TestCase):
         code, lines = look(gh, linux_host())
         self.assertEqual(code, M.EXIT_NEED, lines)  # the start test's yes is still the person's (P1a)
         self.assertEqual(gh.misses, [], "every call look makes has a recorded answer")
-        self.assertTrue(all(re.match(r"^(ok|warn|stop|need you:|tell the person \d+ of \d+:) ", x) for x in lines), lines)
+        self.assertTrue(all(re.match(r"^(ok|warn|stop|need you:|tell the person \d+ of \d+:|-----) ", x) for x in lines), lines)
 
     def test_github_api_sends_bodies_on_stdin_never_argv(self):
         seen = {}
