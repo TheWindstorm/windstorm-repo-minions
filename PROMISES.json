@@ -1310,6 +1310,20 @@
    "issue": 202,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R94",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine with a 4 GB swap file, the person's own work timed every 2 s: under the default two marks (high 3.9 GB, max 4.7 GB) a job holding 6 GB of random bytes was pushed into swap (about 24 GB in and 26 GB out over 2 minutes) and passed in 117 s, while the person's 8 MB write and sync went from a median of 12 ms to 126 ms (p90 920 ms, worst 2.1 s); their memory work barely changed. Under the maximum alone with no swap for jobs the same job was killed about 12 s in and named, the person's work as with no job.",
+   "promise": "By default jobs get a memory maximum with no high mark and no swap: a job that needs more fails at once, by name, with the way to raise the limit, and never pushes this computer's disk into swap traffic under the person's work.",
+   "codon": "G4.2",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G4_2_the_runner_runs_low_and_capped",
+   "proven": "",
+   "issue": 0,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
