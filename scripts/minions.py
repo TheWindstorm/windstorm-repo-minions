@@ -2131,6 +2131,13 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
             return rep.code()
         rep.ok(f"GitHub says {repo} is private again, and you said so")
         write_seen(host, mine, str(int(host.now().timestamp())))  # G5.15: just read private
+        if mine["public_stop"].get("removed"):  # G5.4: coming back is registering again, the person's step
+            mine.pop("public_stop", None)
+            mine["gone_on_github"] = stamp(host.now())
+            save_state(host, data)
+            rep.need(f"run `setup {repo}`: it registers the runner again in place, with its folders and labels "
+                     "(it asks for this computer's admin password once; this step is yours)")
+            return rep.code()
         journal(host, "enable", mine["unit"])
         sudo(host, systemctl("enable", mine["unit"]))
     if mine.get("gone_on_github"):
@@ -2284,11 +2291,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         mine = runners[rp]
         ps = mine.get("public_stop")
         if ps:
-            first.append(("stop", f"{rp} was not private at {ps['time']}: this computer refuses every job of it before "
-                                  "its first step" + ("" if ps.get("labels_off", True) else
-                                                      ", and our labels could not be taken off its runner yet")
-                                  + ", because anyone's fork can ask a public repository's runner for a job. Once it "
-                                  f"is private again: `resume {rp} --private-again`"))
+            first.append(("stop", public_words(rp, ps) + ". Anyone's fork can ask a public repository's runner for "
+                                  "a job"))
         r = listed_runner(gh, rp, mine["name"])
         gh_at = host.now()
         active, worker, at = computer_side(host, mine)
@@ -2586,11 +2590,15 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
     mine = data["runners"][repo]
     if mine.get("public_stop"):
         write_seen(host, mine, "public")  # G5.15: kept so until the person says it is private again
-        if not mine["public_stop"].get("labels_off", True):
-            if hold_runner(gh, host, repo, data, rep, "the repository being no longer private") is not None:
-                mine["public_stop"]["labels_off"] = True
-                save_state(host, data)
-        return f"{repo}: refusing its jobs, not private at {mine['public_stop']['time']}", ""
+        ps = mine["public_stop"]
+        if not ps.get("removed"):
+            if not ps.get("labels_off", True):
+                ps["labels_off"] = hold_runner(gh, host, repo, data, rep,
+                                               "the repository being no longer private") is not None
+            remove_public_runner(gh, host, repo, mine)
+            save_state(host, data)
+        return (f"{repo}: refusing its jobs, not private at {ps['time']}"
+                + ("; our runner is off it on GitHub" if ps.get("removed") else "")), ""
     s, d = gh.api("GET", f"repos/{repo}")
     if s == 200 and d is not None and (d.get("private") is False or d.get("visibility") == "public"):
         write_seen(host, mine, "public")  # G5.15: the hook refuses at once, whatever the steps below manage
@@ -2620,11 +2628,42 @@ def public_guard(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> 
     mine = data["runners"][repo]
     journal(host, "public", f"{repo} is no longer private")
     labels_off = hold_runner(gh, host, repo, data, rep, "the repository being no longer private") is not None
-    mine["public_stop"] = {"time": stamp(host.now()), "labels_off": labels_off}
+    mine["public_stop"] = {"time": stamp(host.now()), "labels_off": labels_off, "removed": False}
+    remove_public_runner(gh, host, repo, mine)
     save_state(host, data)
-    rep.stop(f"{repo} is no longer private: this computer refuses every job of it before its first step"
-             + ("" if labels_off else "; our labels could not be taken off yet, and the next pass tries again")
-             + f"; a job already running finishes. Once it is private again: `resume {repo} --private-again`")
+    rep.stop(public_words(repo, mine["public_stop"]))
+
+
+def remove_public_runner(gh: GitHub, host: Host, repo: str, mine: dict) -> None:
+    """G5.4 (INV1): our runner taken off a repository no longer private, on GitHub's side, with the person's own
+    rights, once no job runs on it. GitHub refuses while one does (HTTP 422, seen); once it is removed the runner stops
+    its own service ("terminated error, stop the service, no retry needed", seen). Tried again each pass until done."""
+    ps = mine["public_stop"]
+    s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+    if s != 200:
+        return  # GitHub not reached: the hook holds meanwhile; the next pass tries again
+    r = next((x for x in (d or {}).get("runners", []) if x.get("name") == mine["name"]), None)
+    if r is not None and r.get("busy"):
+        return  # a job that began before the turn finishes (INV4); the next pass tries again
+    if r is not None:
+        journal(host, "remove on GitHub", f"{repo} {mine['name']}: the repository is no longer private")
+        s, _ = gh.api("DELETE", f"repos/{repo}/actions/runners/{r['id']}")
+        if s not in (204, 404):
+            return
+    ps["removed"] = True
+    ps["removed_at"] = stamp(host.now())
+
+
+def public_words(repo: str, ps: dict) -> str:
+    return (f"{repo} is no longer private (read {ps['time']}): this computer refuses every job of it before its "
+            "first step"
+            + ("; our runner is off the repository on GitHub's side, so no job is handed to this computer, and it "
+               "stopped its own service" if ps.get("removed") else
+               "; our runner is taken off the repository on GitHub's side as soon as no job runs on it (each pass "
+               "tries again)")
+            + ("" if ps.get("labels_off", True) or ps.get("removed") else "; our labels could not be taken off yet")
+            + f"; a job already running finishes. Once it is private again: `resume {repo} --private-again`, then "
+            f"`setup {repo}` registers the runner again")
 
 
 def gone_on_github(host: Host, repo: str, data: dict, rep: Report) -> None:

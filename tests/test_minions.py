@@ -1593,6 +1593,12 @@ class StatusGH(StandIn):
             m = re.fullmatch(rf"repos/{re.escape(rp)}/check-runs/(\d+)/annotations", path)
             if method == "GET" and m:
                 return 200, self.annotations.get(int(m.group(1)), [])
+            if method == "DELETE" and path == f"repos/{rp}/actions/runners/{r['id']}":
+                b = r["busy"][0] if isinstance(r["busy"], list) else r["busy"]
+                if b:  # seen on GitHub: a runner running a job cannot be removed
+                    return 422, {"message": "Runner is currently running a job and cannot be deleted."}
+                self.listed = False
+                return 204, None
             m = re.fullmatch(rf"repos/{re.escape(rp)}/actions/jobs/(\d+)/rerun", path)
             if method == "POST" and m:
                 self.reruns.append(int(m.group(1)))
@@ -1690,9 +1696,10 @@ class G5(unittest.TestCase):
         self.assertIn("warn the watch is not running: its last heartbeat was 16 min ago, at 23:00:00Z (it runs every "
                       "5 min)", lines)
 
-    def test_G5_4_a_repository_no_longer_private_is_stopped_after_a_short_drain(self):
-        # Plan 2.0: the watch has no admin rights (G9.7), so it stops nothing. A job still runs: it finishes; the
-        # record says `public` at once (the hook refuses every later job, G5.15) and our labels come off.
+    def test_G5_4_a_repository_no_longer_private_gets_no_job_here_and_our_runner_leaves_it(self):
+        # Plan 2.0: the watch has no admin rights (G9.7). A job still runs: it finishes (GitHub refuses to remove a
+        # busy runner, 422, seen); the record says `public` at once (the hook refuses every later job, G5.15), our
+        # labels come off, and once idle our runner is removed on GitHub's side with the person's own rights.
         host, clock = g5_host(worker=True)
         refuse_sudo(host)
         gh = StatusGH(private=False, busy=True)
@@ -1701,25 +1708,60 @@ class G5(unittest.TestCase):
         self.assertEqual(host.files[M.seen_path(FOLDER)].strip(), "public")
         self.assertFalse([a for a in host.ran if a[:1] == ("sudo",)], "the watch asks for no admin rights")
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertIn("this computer refuses every job of it before its first step; a job already running finishes",
-                      lines[-1])
-        self.assertNotIn("stopped", lines[-1])
+        self.assertIn("this computer refuses every job of it before its first step; our runner is taken off the "
+                      "repository on GitHub's side as soon as no job runs on it (each pass tries again); a job already "
+                      "running finishes", lines[-1])
+        self.assertNotIn(("DELETE", f"repos/{REPO}/actions/runners/7"), gh.calls, "never while a job runs")
+        self.assertFalse(M.load_state(host)["runners"][REPO]["public_stop"]["removed"])
+        # The next pass, the job done: removed on GitHub; said; the record stays `public`.
+        gh.r[REPO]["busy"] = False
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertIn(("DELETE", f"repos/{REPO}/actions/runners/7"), gh.calls)
+        self.assertTrue(M.load_state(host)["runners"][REPO]["public_stop"]["removed"])
+        self.assertEqual(host.files[M.seen_path(FOLDER)].strip(), "public")
+        self.assertFalse([a for a in host.ran if a[:1] == ("sudo",)], "the watch asks for no admin rights")
+        n = len(gh.calls)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertNotIn(("DELETE", f"repos/{REPO}/actions/runners/7"), gh.calls[n:], "removed once")
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(private=False, listed=False))[1]
+        self.assertIn("our runner is off the repository on GitHub's side, so no job is handed to this computer",
+                      lines[0])
+        # Coming back after the removal: the person's word, GitHub says private, then `setup` registers again.
+        host._answer = host.answer_with_sudo
+        code, lines = run_cmd(M.resume, REPO, host=host, gh=StatusGH(private=True, listed=False), private_again=True)
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        self.assertIn(f"need you: run `setup {REPO}`: it registers the runner again in place", lines[-1])
+        st = M.load_state(host)["runners"][REPO]
+        self.assertNotIn("public_stop", st)
+        self.assertTrue(st.get("gone_on_github"))  # setup's G5.12 path registers it again (seen on a real machine)
+        self.assertTrue(host.files[M.seen_path(FOLDER)].strip().isdigit())
         # GitHub not reachable for the labels: said, and the next pass tries again; the record stays `public`.
         host4, _ = g5_host()
         refuse_sudo(host4)
-        run_cmd(M.watch, host=host4, gh=StatusGH(private=False, listed=False))
+
+        class RunnersUnread(StatusGH):  # the repository read public, then GitHub not reached for the runners
+            def api(self, method, path, body=None):
+                return (0, None) if "/actions/runners" in path else super().api(method, path, body)
+        run_cmd(M.watch, host=host4, gh=RunnersUnread(private=False))
         self.assertFalse(M.load_state(host4)["runners"][REPO]["public_stop"]["labels_off"])
+        self.assertFalse(M.load_state(host4)["runners"][REPO]["public_stop"]["removed"])
         gh4 = StatusGH(private=False)
         run_cmd(M.watch, host=host4, gh=gh4)
         self.assertEqual(gh4.puts, [(REPO, ["minions-held"])])
         self.assertTrue(M.load_state(host4)["runners"][REPO]["public_stop"]["labels_off"])
+        self.assertTrue(M.load_state(host4)["runners"][REPO]["public_stop"]["removed"])
         self.assertEqual(host4.files[M.seen_path(FOLDER)].strip(), "public")
         # status says why, first.
         host._answer = host.answer_with_sudo  # status and resume run in the person's terminal
         host2 = host
-        lines = run_cmd(M.status, REPO, host=host2, gh=StatusGH(private=False))[1]
-        self.assertTrue(lines[0].startswith(f"stop {REPO} was not private at"), lines)
-        self.assertIn("anyone's fork can ask a public repository's runner for a job", lines[0])
+        host2 = g5_host(worker=True)[0]
+        refuse_sudo(host2)
+        run_cmd(M.watch, host=host2, gh=StatusGH(private=False, busy=True))
+        host2._answer = host2.answer_with_sudo
+        host = host2
+        lines = run_cmd(M.status, REPO, host=host2, gh=StatusGH(private=False, busy=True))[1]
+        self.assertTrue(lines[0].startswith(f"stop {REPO} is no longer private (read "), lines)
+        self.assertIn("Anyone's fork can ask a public repository's runner for a job", lines[0])
         # resume: refused without the person's word, refused while GitHub says public, works once private again.
         code, lines = run_cmd(M.resume, REPO, host=host, gh=StatusGH(private=False))
         self.assertEqual(code, M.EXIT_STOP)
