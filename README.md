@@ -31,6 +31,9 @@ The tool the skill runs is `scripts/minions.py`. It uses only Python's standard 
 - Python 3.10 or newer, `git`, and the GitHub CLI (`gh`). Ubuntu 22.04 or newer and Debian 12 or newer have a
   Python that is new enough; with an older one the tool stops on its first command, before any step.
 - A **private** repository. This version serves one repository per computer.
+- The tools your jobs use, installed on this computer. GitHub's own computers come with many tools already
+  installed; this computer has only what you installed, so a job that stops with "command not found" needs that
+  tool put on this computer.
 
 **Your steps.** Only these are yours, and your agent stops and asks for each one:
 - installing `gh`, `git` or Python if your computer lacks them (your agent names the one command);
