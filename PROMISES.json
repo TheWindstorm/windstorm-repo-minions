@@ -1166,7 +1166,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_3_the_watch_runs_and_its_silence_is_noticed",
-   "proven": "",
+   "proven": "Seen once, 2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository: 45 seconds after waking from a 12-minute sleep (asked with `systemctl suspend`, woken by the virtual machine's own wake call), status said `ok the watch ran 17 min ago, at 09:54:02Z; this computer slept 12 min since, and the watch's timer counts only waking time: its next pass comes within 5 min of waking time`, with no stop. A watch missing three intervals of waking time was not seen on that machine. Not seen on a real laptop's sleep.",
    "issue": 163,
    "moved_why": "",
    "moved_by_person": ""
