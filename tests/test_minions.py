@@ -1777,6 +1777,12 @@ class G4(unittest.TestCase):
         self.assertEqual(words, "jobs here get at most 4 of this computer's 8 processors and 60 % of its memory "
                                 "(9.6 GB); the one way to change that is `setup <owner/repo> --limits "
                                 "<processors>,<memory %>`")
+        # One processor (the owner's ruling, 2026-11-23): "1 of 1", said plainly, never refused.
+        words = M.limits_in_words(M.slice_limits({"cores": 1, "mem": 8 * gib}))
+        self.assertTrue(words.startswith("jobs here get at most 1 of this computer's 1 processor and 60 % "), words)
+        self.assertTrue(words.endswith(". This computer has one processor: while a job runs it uses all of it, at "
+                                       "low priority, and everything else here will be slow"), words)
+        self.assertNotIn("one processor", M.limits_in_words(M.slice_limits({"cores": 2, "mem": 8 * gib})))
 
 
 class Clock:
@@ -1909,7 +1915,8 @@ class G5(unittest.TestCase):
         host, _ = g5_host()
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline", queued=[job]))[1]
         self.assertTrue(lines[0].startswith(f"warn queue for {REPO}: 1 job(s) waiting for our runner"), lines)
-        self.assertIn("behind our runner being offline or asleep. Start this computer's runner", lines[0])
+        self.assertIn(f"behind our runner being offline or asleep. Start this computer's runner: `resume {REPO}` (it "
+                      "asks for the admin password once", lines[0])
         self.assertFalse([x for x in lines if x.startswith(f"ok queue for {REPO}")])
         self.assertTrue(any(x.startswith("warn minions-box-1 for") and ": not ready." in x for x in lines))
         # Held: the queue line says what holds it and the way on; nothing before it says `ok`.
