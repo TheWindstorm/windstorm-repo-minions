@@ -73,6 +73,10 @@ jobs before their first step, and the check takes the runner off that repository
 - **A check every 5 minutes.** It keeps the runner ready, holds it when something is wrong, and tells `status`.
 - **A folder of notes**, `~/.minions`.
 
+In your own home folder it uses only these: the clone you made in step 1 (`~/windstorm-repo-minions`), the GitHub
+CLI's own login (`~/.config/gh`, written when you run `gh auth login`), `~/.minions`, and, after leaving, your
+record. It changes no other file of yours.
+
 The admin password is used to make the user, install the service, its limits, the two scripts and the check. It is
 typed into your computer's own password prompt, and the tool never sees or keeps it.
 
