@@ -932,6 +932,20 @@
    "issue": 115,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R67",
+   "seen": "2026-11-23, proof P2 on a stock Ubuntu 24.04 machine: the runner's service stopped, a job waiting, and `status` began `ok minions-stock-vm ...: not ready`.",
+   "promise": "`status` never begins with `ok` while a job waits for a runner that is offline or held; the first word of each line is the worst true thing.",
+   "codon": "G5.1",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_1_status_never_begins_with_ok_while_a_job_waits_on_a_runner_that_cannot_take_it",
+   "proven": "",
+   "issue": 117,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

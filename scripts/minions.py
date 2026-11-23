@@ -2406,25 +2406,37 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         if held:
             why = mine.get("held_for") or "a hold"
             hold_words = f"; held for {why} since {mine.get('held_at', 'a time not written')}"
-        rest.append(("ok", f"{mine['name']} for {rp}: {word}. {sides}; {survey_words(data, rp)}{hold_words}"))
+        # The first word is the worst true thing (P2, 2026-11-23: `ok ...: not ready` while a job waited).
+        rest.append(("ok" if word in ("idle", "busy") and not held else "warn",
+                     f"{mine['name']} for {rp}: {word}. {sides}; {survey_words(data, rp)}{hold_words}"))
         # The queue (G5.1) and the jobs waiting behind our hold (G5.13).
         q = [j for j in queued_jobs(gh, rp) if set(j["labels"]) & set(mine.get("labels") or ["minions"])]
-        if q:
-            oldest = min((j["created"] for j in q if j["created"]), default=None)
-            rest.append(("ok", f"queue for {rp}: {len(q)} job(s) waiting for our runner, the oldest for "
-                               f"{minutes((now - oldest).total_seconds()) if oldest else 'a time not read'}"))
-        else:
-            rest.append(("ok", f"queue for {rp}: no job waiting for our runner"))
         blocked_by = ("our hold (" + (mine.get("held_for") or "a hold") + ")" if held else
                       "our runner being offline or asleep" if r is None or r.get("status") != "online" else None)
+        summary = []
+        if q:
+            oldest = min((j["created"] for j in q if j["created"]), default=None)
+            line = (f"queue for {rp}: {len(q)} job(s) waiting for our runner, the oldest for "
+                    f"{minutes((now - oldest).total_seconds()) if oldest else 'a time not read'}")
+            if blocked_by:  # never `ok` first while a job waits on a runner that cannot take it
+                summary.append(("warn", f"{line}, behind {blocked_by}. "
+                                      + (f"`resume {rp}` lets them land here" if held and mine.get("held_for") in
+                                         (None, "drain") else
+                                         "The hold lifts by itself (see the line below)" if held else
+                                         "Start this computer's runner (`setup` again if it does not come back)")))
+            else:
+                rest.append(("ok", line))
+        else:
+            rest.append(("ok", f"queue for {rp}: no job waiting for our runner"))
         if blocked_by:
-            for j in q:
+            for j in q:  # G5.13's per-job warnings first, then the queue's summary
                 age = (now - j["created"]).total_seconds() if j["created"] else 0
                 if age > wait_warn_s:
                     first.append(("warn", f"job '{j['name']}' ({j['workflow']}) of {rp} has waited {minutes(age)} behind "
                                           f"{blocked_by}; GitHub cancels a job that waits {GITHUB_GIVES_UP_H} hours. "
                                           + (f"`resume {rp}` lets it land here" if held else
                                              "Start this computer's runner, or `drain` and move the job back")))
+        first.extend(summary)
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now)
     rest.append(("ok" if ok_ else "warn", words))

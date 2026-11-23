@@ -1705,15 +1705,42 @@ class G5(unittest.TestCase):
         for gh_busy, worker, word in cases:
             host, _ = g5_host(worker=worker)
             code, lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(busy=gh_busy))
-            line = next(x for x in lines if x.startswith("ok minions-box-1 for"))
+            kind = "ok" if word in ("idle", "busy") else "warn"  # the first word is the worst true thing
+            line = next(x for x in lines if x.startswith(f"{kind} minions-box-1 for"))
             self.assertIn(f"for {REPO}: {word}.", line, (gh_busy, worker))
             self.assertIn("GitHub says online, " + ("busy" if gh_busy else "not busy"), line)
             self.assertIn("a job process runs (4321)" if worker else "no job process", line)
         # GitHub offline: never "idle", even with no job process here.
         host, _ = g5_host()
         line = next(x for x in run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline"))[1]
-                    if x.startswith("ok minions-box-1 for"))
+                    if x.startswith("warn minions-box-1 for"))
         self.assertIn(": not ready.", line)
+
+    def test_G5_1_status_never_begins_with_ok_while_a_job_waits_on_a_runner_that_cannot_take_it(self):
+        # P2, 2026-11-23: the runner offline, a job waiting, and status began `ok minions-stock-vm ...: not ready`.
+        job = {"id": 1, "name": "check", "status": "queued", "labels": ["minions"],
+               "created_at": (M.dt.datetime.now(M.dt.timezone.utc) - M.dt.timedelta(minutes=2)).strftime(
+                   "%Y-%m-%dT%H:%M:%SZ")}
+        host, _ = g5_host()
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline", queued=[job]))[1]
+        self.assertTrue(lines[0].startswith(f"warn queue for {REPO}: 1 job(s) waiting for our runner"), lines)
+        self.assertIn("behind our runner being offline or asleep. Start this computer's runner", lines[0])
+        self.assertFalse([x for x in lines if x.startswith(f"ok queue for {REPO}")])
+        self.assertTrue(any(x.startswith("warn minions-box-1 for") and ": not ready." in x for x in lines))
+        # Held: the queue line says what holds it and the way on; nothing before it says `ok`.
+        host, _ = g5_host()
+        data = M.load_state(host)
+        data["runners"][REPO].update(held_for="low disk", held_at="2026-11-23T05:31:41Z")
+        M.save_state(host, data)
+        gh = StatusGH(queued=[job])
+        gh.r[REPO]["labels"] = ["minions-held"]
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(lines[0].startswith("warn queue for"), lines)
+        self.assertIn("behind our hold (low disk). The hold lifts by itself", lines[0])
+        # Online and idle with a job just queued: plain `ok`, nothing to warn of.
+        host, _ = g5_host()
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(queued=[job]))[1]
+        self.assertTrue(lines[0].startswith("ok "), lines)
 
     def test_G5_3_the_watch_runs_and_its_silence_is_noticed(self):
         # The units: a system timer every 5 minutes; its service runs as the person, the tool's root-owned copy.
