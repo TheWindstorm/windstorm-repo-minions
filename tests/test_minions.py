@@ -23,6 +23,7 @@ from unittest import mock
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import minions as M  # noqa: E402
+M.VERSION_ON_DISK = M.VERSION
 
 FIX = os.path.join(ROOT, "tests", "fixtures")
 TMP = tempfile.mkdtemp(prefix="minions-test-")
@@ -800,6 +801,29 @@ class G2(unittest.TestCase):
             self.assertIn("`setup <owner/repo>` again puts this version's copy in place", line)
             self.assertTrue(lines[-1].startswith("stop ") and "the watch's copy of the tool" in lines[-1], lines[-1])
             self.assertTrue(any("the watch runs the older code" in x for x in status()))
+            # The step that line names is true: `setup` again on the installed runner puts this version's copy in
+            # place and touches nothing else (no download, no registration, no service change).
+            newer = os.path.join(TMP, "minions-99.py")
+            with open(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8") as f:
+                text = f.read().replace(f'VERSION = "{M.VERSION_ON_DISK}"', 'VERSION = "99.0.0"', 1)
+            with open(newer, "w", encoding="utf-8") as f:
+                f.write(text)
+            with mock.patch.object(M, "__file__", newer):
+                data = M.load_state(host)
+                looks = dict(data.get("looks") or {})
+                fresh_look(host)
+                looks[REPO] = M.load_state(host)["looks"][REPO]
+                data["watch"] = {**(data.get("watch") or {}), "time": "2026-11-22T00:00:00Z"}  # the last pass, earlier
+                M.save_state(host, {**data, "looks": looks})  # a fresh look, the runner's record kept
+                before = len(host.ran)
+                code, lines = run_setup(setup_gh(sha), host)
+            self.assertIn('VERSION = "99.0.0"', host.files[M.TOOL_COPY])
+            self.assertTrue(any(x.startswith("ok the watch runs this version of the tool (99.0.0)") and
+                                "were not touched" in x for x in lines), lines)
+            later = host.ran[before:]
+            self.assertFalse([a for a in later if "config.sh" in " ".join(a) or "svc.sh" in " ".join(a)], later)
+            code, lines = run_doctor(host, sha)
+            self.assertTrue(lines[-1].startswith("ok every promise"), lines[-3:])
         # Not read is a third answer, never "the same" (rule 6), and not a broken promise.
         del host.files[M.TOOL_COPY]
         code, lines = run_doctor(host, sha)
