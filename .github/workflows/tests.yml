@@ -18,6 +18,28 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: |
           for t in tests/test_*.py; do python "$t" -v || exit 1; done
+  release-place:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install words live only on a release branch, and it differs from main only in README, changelog and manifest
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          case "$BRANCH" in
+            release-*)
+              git fetch -q origin main
+              other=$(git diff --name-only origin/main HEAD | grep -vxE 'README\.md|CHANGELOG\.md|\.claude-plugin/plugin\.json' || true)
+              if [ -n "$other" ]; then echo "::error::$BRANCH differs from main outside README, changelog and manifest:"; echo "$other"; exit 1; fi
+              echo "ok $BRANCH differs from main only in: $(git diff --name-only origin/main HEAD | tr '\n' ' ')" ;;
+            *)
+              if grep -nE 'git clone|minions\.py (look|setup|move)' README.md; then
+                echo "::error::README on $BRANCH carries install lines; before a release they live on the release branch only"; exit 1
+              fi
+              echo "ok README on $BRANCH has no install lines" ;;
+          esac
   skill-spec:
     runs-on: ubuntu-latest
     steps:
