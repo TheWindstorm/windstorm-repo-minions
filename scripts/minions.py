@@ -2083,6 +2083,12 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
             return rep.code()
     if left.get("unit") and limits is not None:  # R92: an installed runner's limits change in place
         return change_limits(host, repo, known, lim, rep)
+    if left.get("unit"):  # G4.10 (R101): an installed runner: this version's copy for the watch, nothing else touched
+        if install_watch(host, rep, repo=repo):
+            kind, words = copy_version_line(host)
+            (rep.ok if kind == "ok" else rep.warn)(words + "; the runner, its service, its limits and a running job "
+                                                   "were not touched")
+        return rep.code()
     if not ensure_runner_user(host, rep):
         return rep.code()
     owner, name_ = repo.split("/", 1)
