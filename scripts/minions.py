@@ -63,7 +63,8 @@ jobs:
       - run: echo never
 """
 ZERO_JOB_WORDS = ("GitHub did not start the run; this is the account's or repository's setting or billing, "
-                  "not your computer")
+                  "not your computer. The repository's Actions settings and the account's billing page on GitHub are "
+                  "yours to read; once GitHub starts runs, run `look <owner/repo> --start-test` again")
 
 
 # ---------------------------------------------------------------------------------------------------------- output
@@ -78,11 +79,35 @@ class Report:
         self.blocked = False
         self.waiting = False
         self.asked = False
+        self.out_closed = False
+        self._tells: list[str] = []
 
     def _put(self, kind: str, text: str) -> None:
-        line = f"{kind} {text}"
+        self._flush_tells()
+        self._print(f"{kind} {text}")
+
+    def _flush_tells(self) -> None:
+        """G7.10: the words for the person go out as one numbered block, "tell the person 1 of 7: ..." to "7 of 7",
+        so a line dropped or merged in a relay shows to the agent and to the person (run B again: a small model
+        shortened the block, dropped two lines and reworded two, under the word "verbatim")."""
+        tells, self._tells = self._tells, []
+        for i, text in enumerate(tells, 1):
+            self._print(f"tell the person {i} of {len(tells)}: {text}")
+
+    def _print(self, line: str) -> None:
         self.lines.append(line)
-        print(line, file=self.out, flush=True)
+        if self.out_closed:
+            return
+        try:
+            print(line, file=self.out, flush=True)
+        except BrokenPipeError:
+            # G8.13: whoever read the output stopped reading (`| head`, seen). The command still finishes its work
+            # and its exit code; it stops printing, and never dies half-done with a traceback.
+            self.out_closed = True
+            try:
+                os.dup2(os.open(os.devnull, os.O_WRONLY), self.out.fileno())
+            except (OSError, ValueError, AttributeError):
+                pass
 
     def ok(self, text: str) -> None:
         self._put("ok", text)
@@ -105,14 +130,16 @@ class Report:
         self._put("need you:", text)
 
     def tell(self, text: str) -> None:
-        """G7.10: words the agent passes on to the person exactly as printed, before the next step."""
-        self._put("tell the person:", text)
+        """G7.10: words the agent passes on to the person exactly as printed, before the next step. Held until the
+        block ends (the next line of another kind, or the command's end), then printed numbered."""
+        self._tells.append(text)
 
     def wait(self, text: str) -> None:
         self.waiting = True
         self._put("waiting", text)
 
     def code(self) -> int:
+        self._flush_tells()
         if self.stopped:
             return EXIT_STOP
         if self.blocked or self.asked:
@@ -380,8 +407,9 @@ def check_admin(host: Host, rep: Report) -> bool:
             rep.ok("you can become admin on this computer (sudo)")
             return True
     rep.need("this needs an admin of this computer: making the runner's own user and its boot service needs admin "
-             "rights once")
-    rep.stop("not touched anything: this account cannot become admin on this computer")
+             "rights once: run it as an account that can become admin (a member of sudo), or ask this computer's admin")
+    rep.stop("not touched anything: this account cannot become admin on this computer. Run it as an account "
+             "that can, or ask this computer's admin")
     return False
 
 
@@ -1284,7 +1312,8 @@ def memory_floor_line(repo: str, lim: dict) -> str | None:
             f"{gb(MEMORY_FLOOR)} a job needs at the least, so a job would likely be killed by the limit")
     if need > MEMORY_PCT_MOST:
         return head + (f". This computer has {gb(lim['mem'])} in all: too little to give a job "
-                       f"{gb(MEMORY_FLOOR)} and keep some for you; it cannot be a minion")
+                       f"{gb(MEMORY_FLOOR)} and keep some for you; it cannot be a minion, and there is no step to take "
+                       "on this computer")
     return head + (f". The way out: `setup {repo} --limits {lim['cores']},{need}` gives jobs up to {need} % "
                    f"({gb(lim['mem'] * need / 100)}); while a job runs, that much less memory is left for your own "
                    "work, so the computer may slow down or the system may close other programs")
@@ -1368,7 +1397,8 @@ def ask_admin_once(host: Host, rep: Report, interactive: bool, cmd: str = "setup
         if host.sudo_validate() == 0 and host.run(["sudo", "-n", "true"])[0] == 0:
             rep.ok("admin rights ready (asked once)")
             return True
-        rep.stop("sudo did not accept the password: nothing was touched")
+        rep.stop("sudo did not accept the password: nothing was touched. Run the same command again and type the "
+                 "password where sudo asks")
         return False
     rep.need(f"this needs this computer's admin password once: run `sudo -v` in your terminal, then run {cmd} again "
              "from that same terminal")
@@ -1382,7 +1412,7 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
         journal(host, "useradd", RUNNER_USER)
         rc, out = sudo(host, ["useradd", "--create-home", "--user-group", "--shell", "/bin/bash", RUNNER_USER])
         if rc != 0:
-            rep.stop(f"could not make the user {RUNNER_USER}: {tail(out)}")
+            rep.stop(f"could not make the user {RUNNER_USER}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
         rep.ok(f"made the user {RUNNER_USER}")
     else:
@@ -1392,14 +1422,14 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
     extra = groups - {RUNNER_USER}
     if rc != 0 or extra & ADMIN_LIKE_GROUPS or extra:
         rep.stop(f"{RUNNER_USER} is in other groups ({', '.join(sorted(extra)) or 'not read'}): a runner user must be "
-                 "in its own group only, never one that gives admin rights")
+                 "in its own group only, never one that gives admin rights. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     home = f"/home/{RUNNER_USER}"
     journal(host, "chmod", f"0750 {home}")
     sudo(host, ["chmod", "0750", home])
     rc, out = sudo(host, ["stat", "-c", "%a", home])
     if rc != 0 or out.strip() != "750":
-        rep.stop(f"the runner's home {home} is not closed to others (mode {out.strip() or 'not read'})")
+        rep.stop(f"the runner's home {home} is not closed to others (mode {out.strip() or 'not read'}). Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rep.ok(f"{RUNNER_USER}: in its own group only, no admin rights, its home closed to others (750)")
     return True
@@ -1427,12 +1457,12 @@ def runner_release(gh: GitHub, repo: str, host: Host, rep: Report) -> dict | Non
     pick = [x for x in (d if s == 200 and isinstance(d, list) else []) if x.get("os") == system
             and x.get("architecture") == arch]
     if not pick:
-        rep.stop(f"GitHub offers no runner for {system} {arch} (HTTP {s})")
+        rep.stop(f"GitHub offers no runner for {system} {arch} (HTTP {s}). Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return None
     rel = pick[0]
     m = re.search(r"-(\d+\.\d+\.\d+)\.(tar\.gz|zip)$", rel.get("filename", ""))
     if not m or not re.fullmatch(r"[0-9a-f]{64}", rel.get("sha256_checksum") or ""):
-        rep.stop("GitHub's runner download list is not in the shape this tool knows: nothing was downloaded")
+        rep.stop("GitHub's runner download list is not in the shape this tool knows: nothing was downloaded. Run the same command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
         return None
     version = m.group(1)
     s, notes = gh.api("GET", f"repos/actions/runner/releases/tags/v{version}")
@@ -1440,10 +1470,10 @@ def runner_release(gh: GitHub, repo: str, host: Host, rep: Report) -> dict | Non
     mm = re.search(rf"<!-- BEGIN SHA {re.escape(key)} -->([0-9a-f]{{64}})<!-- END SHA {re.escape(key)} -->",
                    (notes or {}).get("body", "") if s == 200 else "")
     if not mm:
-        rep.stop(f"the release notes of runner {version} carry no checksum for {key}: nothing was downloaded")
+        rep.stop(f"the release notes of runner {version} carry no checksum for {key}: nothing was downloaded. Run the same command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
         return None
     if mm.group(1) != rel["sha256_checksum"]:
-        rep.stop(f"the two checksums GitHub publishes for runner {version} ({key}) disagree: nothing was downloaded")
+        rep.stop(f"the two checksums GitHub publishes for runner {version} ({key}) disagree: nothing was downloaded. Run the same command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
         return None
     rep.ok(f"runner {version} for {key}; its checksum is the same in GitHub's download list and its release notes")
     return {"version": version, "filename": rel["filename"], "url": rel["download_url"], "sha256": mm.group(1)}
@@ -1463,7 +1493,8 @@ def unpack_runner(host: Host, rel: dict, folder: str, rep: Report) -> bool:
     rc, out = sudo(host, ["test", "-e", folder])
     if rc == 0:
         rep.stop(f"{folder} exists already: a runner for this repository is set up here, or a removal was not "
-                 "finished; nothing was changed")
+                 "finished; nothing was changed. `uninstall <owner/repo>` finishes a removal that was not finished; then "
+                 "setup again")
         return False
     ensure_state_dir(host)
     tmp = os.path.join(host.state_dir(), rel["filename"])
@@ -1472,11 +1503,11 @@ def unpack_runner(host: Host, rel: dict, folder: str, rep: Report) -> bool:
         host.fetch_to(rel["url"], tmp)
         got = sha256_file(tmp)
     except Exception as e:  # noqa: BLE001
-        rep.stop(f"could not download the runner: {e}")
+        rep.stop(f"could not download the runner: {e}. Run the same command again; if it stops here again, the answer named here is the reason")
         return False
     if got != rel["sha256"]:
         os.remove(tmp)
-        rep.stop(f"the downloaded runner's checksum is not the one GitHub publishes: deleted, nothing installed")
+        rep.stop(f"the downloaded runner's checksum is not the one GitHub publishes: deleted, nothing installed. Run the same command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
         return False
     rep.ok(f"downloaded {rel['filename']}, checksum checked")
     journal(host, "unpack", folder)
@@ -1488,16 +1519,16 @@ def unpack_runner(host: Host, rel: dict, folder: str, rep: Report) -> bool:
     for argv, what in steps:
         rc, out = sudo(host, argv)
         if rc != 0:
-            rep.stop(f"could not make {what}: {tail(out)}")
+            rep.stop(f"could not make {what}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
     os.remove(tmp)
     rc, out = as_runner(host, ["sha256sum", f"{folder}/runner.tgz"])
     if rc != 0 or not out.startswith(rel["sha256"]):
-        rep.stop("the copy in the runner's folder does not have the checked checksum: nothing unpacked")
+        rep.stop("the copy in the runner's folder does not have the checked checksum: nothing unpacked. Run the same command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
         return False
     rc, out = as_runner(host, ["tar", "xzf", f"{folder}/runner.tgz", "-C", folder])
     if rc != 0:
-        rep.stop(f"could not unpack the runner: {tail(out)}")
+        rep.stop(f"could not unpack the runner: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     as_runner(host, ["rm", "-f", f"{folder}/runner.tgz"])
     rep.ok(f"unpacked fresh into {folder}, with its own work folder")
@@ -1515,7 +1546,8 @@ def register(gh: GitHub, host: Host, repo: str, folder: str, name: str, labels: 
     s, d = gh.api("POST", f"repos/{repo}/actions/runners/registration-token")
     token = (d or {}).get("token") if s in (200, 201) else None
     if not token:
-        rep.stop(f"GitHub gave no registration token (HTTP {s}): admin on the repository is needed")
+        rep.stop(f"GitHub gave no registration token (HTTP {s}): admin on the repository is needed: log in "
+                 "as one (`gh auth login`) or ask its owner, then run the same command again")
         return False
     journal(host, "register", f"{repo} as {name} with labels {','.join(labels)}")
     url = f"https://github.com/{repo}"
@@ -1524,7 +1556,7 @@ def register(gh: GitHub, host: Host, repo: str, folder: str, name: str, labels: 
     out = mask(out, token)
     token = None  # dropped (INV2)
     if rc != 0:
-        rep.stop(f"the runner's configuration failed: {tail(out)}")
+        rep.stop(f"the runner's configuration failed: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rep.ok(f"registered to {repo} only, as {name}, labels {', '.join(labels)} (no default labels)")
     return True
@@ -1538,7 +1570,7 @@ def lock_credentials(host: Host, folder: str, rep: Report) -> bool:
     rc, out = sudo(host, ["stat", "-c", "%a %U %n"] + files)
     rows = [x.split(None, 2) for x in out.splitlines() if x.strip()]
     if rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
-        rep.stop(f"the runner's credential files are not its own only: {tail(out, 3)}")
+        rep.stop(f"the runner's credential files are not its own only: {tail(out, 3)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rep.ok(f"the credential files are 600, owned by {RUNNER_USER}, read back")
     return True
@@ -1554,7 +1586,7 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits:
     rc, unit = sudo(host, ["cat", f"{folder}/.service"])
     unit = unit.strip()
     if rc != 0 or not re.fullmatch(r"actions\.runner\.[A-Za-z0-9_.@-]+\.service", unit):
-        rep.stop("could not read the name of the runner's unit")
+        rep.stop("could not read the name of the runner's unit. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return None
     limits = limits or slice_limits(survey_)
     journal(host, "write", f"/etc/systemd/system/{SLICE} and {unit}.d/{DROPIN}")
@@ -1563,7 +1595,7 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits:
         sudo(host, ["install", "-d", "-m", "0755", os.path.dirname(path)])
         rc, out = sudo(host, ["tee", path], input=text)
         if rc != 0:
-            rep.stop(f"could not write {path}: {tail(out)}")
+            rep.stop(f"could not write {path}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return None
     for argv in (systemctl("daemon-reload"), systemctl("enable", unit), systemctl("start", unit)):
         journal(host, " ".join(argv))
@@ -1580,7 +1612,7 @@ def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits:
     if "network-online.target" not in got.get("Wants", ""):
         bad.append("Wants has no network-online.target")
     if bad:
-        rep.stop(f"the runner's service is not as written: {', '.join(bad)}")
+        rep.stop(f"the runner's service is not as written: {', '.join(bad)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return None
     rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax"))
     rep.ok(f"boot service {unit}: enabled, in {SLICE} ({limits['CPUQuota']} CPU, memory at most "
@@ -1630,7 +1662,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if entry is None:
         return rep.code()
     if host.system() != "Linux" or not host.which("systemctl"):
-        rep.stop("this version sets up Linux with systemd only; macOS comes in the next version")
+        rep.stop("this version sets up Linux with systemd only; macOS comes in the next version. Nothing was changed, "
+                 "and there is no step to take on this computer now")
         return rep.code()
     survey_ = entry.get("survey") or {}
     lim = slice_limits(survey_, limits)
@@ -1908,7 +1941,7 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
                        ("job-completed.sh", job_completed_script(folder, path=hook_path))):
         rc, out = sudo(host, ["tee", f"{d}/{name}"], input=text)
         if rc != 0:
-            rep.stop(f"could not write {d}/{name}: {tail(out)}")
+            rep.stop(f"could not write {d}/{name}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
         sudo(host, ["chown", "root:root", f"{d}/{name}"])
         sudo(host, ["chmod", "0755", f"{d}/{name}"])
@@ -1917,11 +1950,11 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
     keep += [f"ACTIONS_RUNNER_HOOK_JOB_STARTED={d}/job-started.sh", f"ACTIONS_RUNNER_HOOK_JOB_COMPLETED={d}/job-completed.sh"]
     rc, out = as_runner(host, ["tee", f"{folder}/.env"], input="\n".join(keep) + "\n")
     if rc != 0:
-        rep.stop(f"could not name the job hooks in {folder}/.env: {tail(out)}")
+        rep.stop(f"could not name the job hooks in {folder}/.env: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rc, out = sudo(host, ["stat", "-c", "%a %U", f"{d}/job-started.sh", f"{d}/job-completed.sh"])
     if rc != 0 or [x.strip() for x in out.splitlines() if x.strip()] != ["755 root", "755 root"]:
-        rep.stop(f"the job hooks are not root's and read-only to the runner: {tail(out)}")
+        rep.stop(f"the job hooks are not root's and read-only to the runner: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rep.ok("after each job its work folder is emptied, and during a job this computer does not fall asleep by "
            "itself; a sleep you ask for, or the lid, still puts it to sleep (job hooks, owned by root, read back)")
@@ -2020,7 +2053,7 @@ def start_runner(host: Host, unit: str, folder: str, rep: Report) -> bool:
     journal(host, "start", unit)
     rc, out = sudo(host, systemctl("start", unit))
     if rc != 0:
-        rep.stop(f"the runner's service did not start: {tail(out)}")
+        rep.stop(f"the runner's service did not start: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rep.ok("the runner's service is started again")
     return True
@@ -2031,10 +2064,11 @@ def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why:
     mine = data["runners"][repo]
     s, r = read_runner(gh, repo, mine["name"])
     if s != 200:
-        rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing was held, nothing else was changed")
+        rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing was held, nothing else was changed. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return None
     if r is None:
-        rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}: nothing to hold")
+        rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}: nothing to hold. `status {repo}` "
+                 "says what GitHub and this computer read now")
         return None
     labels = sorted(x.get("name") for x in r.get("labels", []))
     if labels != [HELD_LABEL]:
@@ -2047,7 +2081,7 @@ def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why:
             # GitHub can answer an error and still take the change (HTTP 502, seen): what it lists decides.
             back = listed_runner(gh, repo, mine["name"])
             if back is None or sorted(x.get("name") for x in back.get("labels", [])) != [HELD_LABEL]:
-                rep.stop("GitHub did not take the hold label: nothing else was changed")
+                rep.stop("GitHub did not take the hold label: nothing else was changed. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
                 return None
             journal(host, "hold read back", f"{repo} {mine['name']}: GitHub answered an error, and lists it held")
     rep.ok(f"held: {mine['name']} now carries only `{HELD_LABEL}`, so no new job lands on it; jobs wait on GitHub")
@@ -2094,7 +2128,8 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
     else:
         repos = [repo] if repo in runners else []
     if not repos:
-        rep.stop(f"no runner of ours serves {repo} on this computer" if repo else "no runner of ours on this computer")
+        rep.stop(f"no runner of ours serves {repo} on this computer: `setup {repo}` sets one up" if repo else
+                 "no runner of ours on this computer: `look <owner/repo>`, then `setup <owner/repo>`, sets one up")
         return rep.code()
     states = {}
     for rp in repos:
@@ -2137,7 +2172,7 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
     data = load_state(host)
     mine = (data.get("runners") or {}).get(repo)
     if not mine:
-        rep.stop(f"no runner of ours serves {repo} on this computer")
+        rep.stop(f"no runner of ours serves {repo} on this computer: `setup {repo}` sets one up")
         return rep.code()
     if mine.get("public_stop"):
         if not private_again:
@@ -2146,7 +2181,8 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
             return rep.code()
         s, d = gh.api("GET", f"repos/{repo}")
         if s != 200 or not (d or {}).get("private"):
-            rep.stop(f"GitHub does not say {repo} is private (HTTP {s}): this computer keeps refusing its jobs")
+            rep.stop(f"GitHub does not say {repo} is private (HTTP {s}): this computer keeps refusing its jobs. "
+                     "Make it private on GitHub, then run the same command again")
             return rep.code()
         rep.ok(f"GitHub says {repo} is private again, and you said so")
         write_seen(host, mine, str(int(host.now().timestamp())))  # G5.15: just read private
@@ -2186,14 +2222,14 @@ def lift_hold(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, tries:
         if i < tries - 1:
             host.sleep(5)
     if not r:
-        rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}")
+        rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}: `status {repo}` says why and what to do")
         return False
     if r.get("status") != "online":
         rep.wait(f"for GitHub to read {mine['name']} online before the hold is lifted. Next: `resume {repo}` again")
         return False
     journal(host, "resume", f"{repo} {mine['name']} labels {','.join(want)}")
     if set_labels(gh, repo, r["id"], want) != want:
-        rep.stop("GitHub did not take our labels back: the runner is still held")
+        rep.stop("GitHub did not take our labels back: the runner is still held. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return False
     for k in ("labels_before_hold", "held_for", "held_at"):
         mine.pop(k, None)
@@ -2302,7 +2338,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
     runners = data.get("runners") or {}
     repos = [repo] if repo else sorted(runners)
     if not repos or any(r not in runners for r in repos):
-        rep.stop(f"no runner of ours serves {repo} on this computer" if repo else "no runner of ours on this computer")
+        rep.stop(f"no runner of ours serves {repo} on this computer: `setup {repo}` sets one up" if repo else
+                 "no runner of ours on this computer: `look <owner/repo>`, then `setup <owner/repo>`, sets one up")
         return rep.code()
     first, rest = [], []  # G5.4's why, then G5.13's warns, come first
     now = host.now()
@@ -2774,27 +2811,27 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
     found, missing = resolve_programs(host, names)
     if [m for m in ("gh", "systemctl", "sudo") if m in missing]:
         rep.stop("the watch needs " + ", ".join(m for m in ("gh", "systemctl", "sudo") if m in missing)
-                 + ", and this terminal's PATH does not find it: nothing of the watch was written")
+                 + ", and this terminal's PATH does not find it: nothing of the watch was written. Install it so this terminal finds it, then run the same command again")
         return False
     journal(host, "write", f"{TOOL_COPY}, /etc/systemd/system/{WATCH_UNIT}.service and .timer")
     sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", HOOKS_ROOT])
     rc, out = sudo(host, ["install", "-o", "root", "-g", "root", "-m", "0755", src, TOOL_COPY])
     if rc != 0:
-        rep.stop(f"could not copy the tool for the watch: {tail(out)}")
+        rep.stop(f"could not copy the tool for the watch: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     svc, tmr = watch_units(host.user(), every_s, path_for(found))
     for path, text in ((f"/etc/systemd/system/{WATCH_UNIT}.service", svc),
                        (f"/etc/systemd/system/{WATCH_UNIT}.timer", tmr)):
         rc, out = sudo(host, ["tee", path], input=text)
         if rc != 0:
-            rep.stop(f"could not write {path}: {tail(out)}")
+            rep.stop(f"could not write {path}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
     for argv in (systemctl("daemon-reload"), systemctl("enable", "--now", f"{WATCH_UNIT}.timer")):
         journal(host, " ".join(argv))
         sudo(host, argv)
     rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
     if active.strip() != "active":
-        rep.stop(f"the watch's timer is not active ({active.strip() or 'not read'})")
+        rep.stop(f"the watch's timer is not active ({active.strip() or 'not read'}). Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     data = load_state(host)
     data["watch"] = dict(data.get("watch") or {}, every_s=every_s)
@@ -2939,7 +2976,7 @@ def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report) -> 
     if s == 404:
         return []
     if s != 200 or not isinstance(d, list):
-        rep.stop(f"could not list the workflows (HTTP {s})")
+        rep.stop(f"could not list the workflows: GitHub answered HTTP {s}; nothing is changed. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return None
     files = []
     for f in d:
@@ -2951,7 +2988,8 @@ def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report) -> 
         except (ValueError, UnicodeDecodeError):
             text = None
         if fs != 200 or text is None:
-            rep.stop(f"{f['path']}: could not read it, so nothing is moved")
+            why = f"GitHub answered HTTP {fs}" if fs != 200 else "its content could not be read as text"
+            rep.stop(f"{f['path']}: could not read it ({why}); nothing is changed. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
             return None
         files.append((f["path"], text))
     return files
@@ -2987,20 +3025,20 @@ def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str
     s2, com = gh.api("GET", f"repos/{repo}/git/commits/{head_sha}") if head_sha else (0, None)
     base_tree = ((com or {}).get("tree") or {}).get("sha") if s2 == 200 else None
     if not base_tree:
-        rep.stop(f"could not read the tip of {base} (HTTP {s}/{s2})")
+        rep.stop(f"could not read the tip of {base} (HTTP {s}/{s2}). Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return None
     entries = []
     for path, text in sorted(changed.items()):
         bs, blob = gh.api("POST", f"repos/{repo}/git/blobs", {"content": text, "encoding": "utf-8"})
         if bs != 201:
-            rep.stop(f"GitHub refused the changed {path} (HTTP {bs})")
+            rep.stop(f"GitHub refused the changed {path} (HTTP {bs}). Run the same command again; if it stops here again, GitHub's answer named here is the reason")
             return None
         entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
     ts, tree = gh.api("POST", f"repos/{repo}/git/trees", {"base_tree": base_tree, "tree": entries})
     cs, commit = gh.api("POST", f"repos/{repo}/git/commits", {
         "message": kind["message"], "tree": (tree or {}).get("sha"), "parents": [head_sha]}) if ts == 201 else (ts, None)
     if cs != 201:
-        rep.stop(f"GitHub refused the commit (HTTP {ts}/{cs})")
+        rep.stop(f"GitHub refused the commit (HTTP {ts}/{cs}). Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return None
     branch = kind["prefix"] + secrets.token_hex(4)
     journal(host, "move-branch", f"{repo} {branch}")
@@ -3008,7 +3046,7 @@ def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str
     if rs != 201:
         why = " (a workflow file needs the `workflow` right on your GitHub login: `gh auth refresh -s workflow`)" \
             if rs in (403, 404, 422) else ""
-        rep.stop(f"GitHub refused the branch {branch} (HTTP {rs}){why}")
+        rep.stop(f"GitHub refused the branch {branch} (HTTP {rs}){why}. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return None
     journal(host, "move-pr", f"{repo} {branch}")
     ps, pr = gh.api("POST", f"repos/{repo}/pulls", {
@@ -3073,7 +3111,7 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     s, d = gh.api("GET", f"repos/{repo}")
     base = (d or {}).get("default_branch") if s == 200 else None
     if not base:
-        rep.stop(f"could not read {repo} (HTTP {s})")
+        rep.stop(f"could not read {repo} (HTTP {s}). Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return rep.code()
     files = read_workflow_files(gh, repo, None, rep)
     if files is None:
@@ -3131,7 +3169,7 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
         return
     s, pr = gh.api("GET", f"repos/{repo}/pulls/{mv['pr']}")
     if s != 200:
-        rep.stop(f"could not read pull request #{mv['pr']} (HTTP {s})")
+        rep.stop(f"could not read pull request #{mv['pr']} (HTTP {s}). Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return
     if not pr.get("merged_at"):
         if pr.get("state") == "closed":
@@ -3165,7 +3203,7 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
                 where = j.get("runner_name") or "no runner"
                 if where != mine["name"] or "minions" not in labels:
                     rep.stop(f"{path} job {w['id']} ran on {where} (labels {', '.join(labels) or 'none'}), not on our "
-                             f"runner {mine['name']}: it did not move")
+                             f"runner {mine['name']}: it did not move. Check that job's `runs-on`, then run the same command again")
                     all_ok = False
                 elif j.get("conclusion") == "success":
                     rep.ok(f"moved: {path} job {w['id']} ran on {where} and succeeded (run {run['id']})")
@@ -3287,7 +3325,7 @@ def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Repor
         journal(host, "DELETE runner", f"{repo} {mine['name']} id {r.get('id')}")
         s, _ = gh.api("DELETE", f"repos/{repo}/actions/runners/{r['id']}")
         if s not in (204, 404):
-            rep.stop(f"GitHub did not remove {mine['name']} (HTTP {s}): nothing on this computer is deleted yet")
+            rep.stop(f"GitHub did not remove {mine['name']} (HTTP {s}): nothing on this computer is deleted yet. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
             return False
     s, back = read_runner(gh, repo, mine["name"])
     if s != 200 or back is not None:
@@ -3318,7 +3356,7 @@ def remove_service(host: Host, mine: dict, rep: Report) -> bool:
             sudo(host, ["rm", "-rf", unit_path(unit) + ".d"])
         sudo(host, systemctl("daemon-reload"))
         if not unit_gone(host, unit):
-            rep.stop(f"the runner's service {unit} is still there after its removal")
+            rep.stop(f"the runner's service {unit} is still there after its removal. Run the same command again: it finishes a removal that was not finished")
             return False
     rep.ok("the runner's service and our drop-in are gone, read back")
     return True
@@ -3335,7 +3373,7 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
             sudo(host, ["rm", "-rf", "--one-file-system", path])
     left = [x for x in paths if exists_as_root(host, x)]
     if left:
-        rep.stop(f"could not delete {', '.join(left)}")
+        rep.stop(f"could not delete {', '.join(left)}. Run the same command again: it finishes a removal that was not finished")
         return False
     rep.ok("the runner's folders, its hooks and its jobs' records are deleted, read back")
     return True
@@ -3460,7 +3498,7 @@ def remove_shared(host: Host, rep: Report) -> bool:
     sudo(host, systemctl("daemon-reload"))
     for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):
         if not unit_gone(host, unit):
-            rep.stop(f"{unit} is still there after its removal")
+            rep.stop(f"{unit} is still there after its removal. Run the same command again: it finishes a removal that was not finished")
             ok = False
     if ok:
         rep.ok("the watch's timer and service are gone, read back")
@@ -3471,7 +3509,7 @@ def remove_shared(host: Host, rep: Report) -> bool:
             journal(host, "delete", path)
             sudo(host, ["rm", "-rf", "--one-file-system", path])
     if any(exists_as_root(host, x) for x in (HOOKS_ROOT, RECORDS_ROOT)):
-        rep.stop(f"could not delete {HOOKS_ROOT} or {RECORDS_ROOT}")
+        rep.stop(f"could not delete {HOOKS_ROOT} or {RECORDS_ROOT}. Run the same command again: it finishes a removal that was not finished")
         ok = False
     else:
         rep.ok(f"the tool's copy, the job hooks and the jobs' records are deleted ({HOOKS_ROOT}, {RECORDS_ROOT})")
@@ -3483,7 +3521,7 @@ def remove_shared(host: Host, rep: Report) -> bool:
         journal(host, "userdel", RUNNER_USER)
         sudo(host, ["userdel", "-r", RUNNER_USER])
     if host.run(["id", RUNNER_USER])[0] == 0 or exists_as_root(host, f"/home/{RUNNER_USER}"):
-        rep.stop(f"the user {RUNNER_USER} or its home is still there")
+        rep.stop(f"the user {RUNNER_USER} or its home is still there. Run the same command again: it finishes a removal that was not finished")
         return False
     rep.ok(f"the user {RUNNER_USER} and its home are deleted, read back")
     return ok
@@ -3500,7 +3538,7 @@ def remove_slice(host: Host, rep: Report) -> bool:
         sudo(host, ["rm", "-f", path])
     sudo(host, systemctl("daemon-reload"))
     if not unit_gone(host, SLICE):
-        rep.stop(f"{SLICE} is still loaded or active after its removal")
+        rep.stop(f"{SLICE} is still loaded or active after its removal. Run the same command again: it finishes a removal that was not finished")
         return False
     rep.ok(f"{SLICE} was stopped before its file was deleted, and is gone, read back")
     return True
@@ -3574,7 +3612,7 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
         journal(host, "delete", f"{host.state_dir()} (the last step)")
         shutil.rmtree(host.state_dir(), ignore_errors=True)
         if os.path.isdir(host.state_dir()):
-            rep.stop(f"could not delete {host.state_dir()}")
+            rep.stop(f"could not delete {host.state_dir()}. Run the same command again: it finishes a removal that was not finished")
         else:
             rep.ok(f"this tool's state ({host.state_dir()}) is deleted: nothing of Windstorm Repo Minions is left "
                    "on this computer")

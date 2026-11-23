@@ -29,6 +29,24 @@ REPO = "example-org/example-repo"
 BRANCH = re.compile(r"minions-start-test-[0-9a-f]{8}")
 
 
+TELL = re.compile(r"^tell the person (\d+) of (\d+): ")
+
+
+def tells_of(lines):
+    """The tell lines' texts; each block numbered whole, 1 of N to N of N, in order (G7.10)."""
+    out, block = [], []
+    for x in lines + [""]:
+        m = TELL.match(x)
+        if m:
+            block.append((int(m.group(1)), int(m.group(2)), x[m.end():]))
+            continue
+        if block:
+            n = len(block)
+            assert [(i, k) for i, k, _ in block] == [(i, n) for i in range(1, n + 1)], block
+            out += [t for _, _, t in block]
+            block = []
+    return out
+
 def load(name):
     with open(os.path.join(FIX, name), encoding="utf-8") as f:
         return [json.loads(x) for x in f]
@@ -457,14 +475,14 @@ jobs:
         host.now = lambda: M.dt.datetime(2026, 11, 22, 18, 0, tzinfo=M.dt.timezone.utc)
         _, lines = look(StandIn(self.recent), host)
         line = [x for x in lines if "billing page" in x][0]
-        self.assertTrue(line.startswith("tell the person: GitHub's billing page, read 2026-11-22 18:00 UTC"), line)
+        self.assertTrue(TELL.sub("", line).startswith("GitHub's billing page, read 2026-11-22 18:00 UTC"), line)
         self.assertIn("Self-hosted runners.", line)
         self.assertIn(M.COST_URL, line)
         for page in (OSError("offline"), "<html><p>Something else entirely.</p></html>"):
             host = linux_host(page=page)
             _, lines = look(StandIn(self.recent), host)
             self.assertTrue(any(x.startswith("warn I could not read GitHub's rule today") for x in lines), lines)
-            self.assertIn("tell the person: I could not read GitHub's page about charges today.", lines)
+            self.assertIn("I could not read GitHub's page about charges today.", tells_of(lines))
             self.assertFalse(any("lists \"Self-hosted runners\"" in x for x in lines))
 
     def test_G1_10_no_github_cli_or_login_is_the_first_need_you(self):
@@ -2513,7 +2531,10 @@ class P1a(unittest.TestCase):
 
     def test_G7_10_look_prints_what_to_tell_the_person_before_setup(self):
         code, lines = look(StandIn(load("look-recent-runs.jsonl")), linux_host())
-        tells = [x[len("tell the person: "):] for x in lines if x.startswith("tell the person: ")]
+        tells = tells_of(lines)
+        # One block, numbered 1 of N to N of N, so a line dropped or merged in a relay shows (run B again).
+        self.assertEqual([TELL.match(x).groups() for x in lines if TELL.match(x)],
+                         [(str(i), str(len(tells))) for i in range(1, len(tells) + 1)])
         said = " ".join(tells)
         for words in ("Anyone who can push to example-org/example-repo can run code on this computer",
                       "This is for a private repository only",
@@ -2530,16 +2551,16 @@ class P1a(unittest.TestCase):
         host = linux_host(files={"/sys/class/power_supply/BAT0/type": "Battery\n"},
                           dirs={"/sys/class/power_supply": ["BAT0"]})
         lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
-        self.assertIn("tell the person: This computer has a battery: " + M.LAPTOP_WORDS + ".", lines)
+        self.assertIn("This computer has a battery: " + M.LAPTOP_WORDS + ".", tells_of(lines))
         # They come after the reading, all together, so an agent says them before setup.
-        first = min(i for i, x in enumerate(lines) if x.startswith("tell the person: "))
-        self.assertTrue(all(x.startswith("tell the person: ") for x in lines[first:]), lines[first:])
+        first = min(i for i, x in enumerate(lines) if TELL.match(x))
+        self.assertTrue(all(TELL.match(x) for x in lines[first:]), lines[first:])
 
     def test_G6_7_uninstall_says_the_put_back_checks_before_its_pull_request(self):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host, repo=None, everything=True)
-        tell = next(i for i, x in enumerate(lines) if x.startswith("tell the person: The pull request that puts 1 "
-                                                                    "job(s) back starts its own checks"))
+        tell = next(i for i, x in enumerate(lines) if x.startswith("tell the person 1 of 1: The pull request that "
+                                                                    "puts 1 job(s) back starts its own checks"))
         ask = next(i for i, x in enumerate(lines) if x.startswith("need you: read and merge pull request #12"))
         self.assertLess(tell, ask)
         self.assertIn("runs there once for it, before you merge", lines[tell])
@@ -2752,13 +2773,73 @@ class G9(unittest.TestCase):
         self.assertEqual(host.run(["sudo", "-n", "true"])[0], 1)
 
 
+class G8Words(unittest.TestCase):
+    NEXT = re.compile(r"`|\bagain\b|\bfirst\b|\bcheck\b|\bwrite owner|\bno step to take\b|\bopen an issue\b|\bask\b|"
+                      r"\btype\b|\bFree some space\b|\bmerge\b|\bsettle\b|\bway out\b|\brun\b|\binstall\b", re.I)
+
+    def test_G8_12_every_stop_and_need_you_line_names_what_happened_and_the_next_step(self):
+        # Run B again: `move` stopped on "could not read it, so nothing is moved", with no answer and no way out, and a
+        # cold agent went into the tool's source. Every stop and need-you line carries its next step; one that is
+        # built elsewhere is checked where it is built.
+        with open(os.path.join(ROOT, "scripts", "minions.py")) as f:
+            src = f.read()
+        lacking = []
+        import ast
+        for n in ast.walk(ast.parse(src)):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("stop", "need")
+                    and isinstance(n.func.value, ast.Name) and n.func.value.id == "rep" and n.args):
+                a = n.args[0]
+                if isinstance(a, (ast.Name, ast.Call)):
+                    continue  # public_words, blind_words, the memory floor: checked below
+                words = " ".join(x.value for x in ast.walk(a) if isinstance(x, ast.Constant) and isinstance(x.value, str))
+                if words.strip() == "start test:":
+                    continue  # its words are ZERO_JOB_WORDS, checked below
+                if not self.NEXT.search(words):
+                    lacking.append((n.lineno, words[:80]))
+        self.assertEqual(lacking, [])
+        for built in (M.ZERO_JOB_WORDS, M.public_words(REPO, {"time": "t"}),
+                      M.memory_floor_line(REPO, {"MemoryMax": 1, "pct": 60, "mem": 2 * 1024 ** 3, "cores": 1}),
+                      M.memory_floor_line(REPO, {"MemoryMax": 1, "pct": 60, "mem": 16 * 1024 ** 3, "cores": 1})):
+            self.assertTrue(self.NEXT.search(built), built)
+        # GitHub's own answer is named: move's stop on a workflow file it could not read (seen in run B again).
+        class FileErr(StandIn):
+            def api(self, method, path, body=None):
+                if method == "GET" and path.endswith("/contents/.github/workflows"):
+                    return 200, [{"name": "mac.yml", "path": ".github/workflows/mac.yml"}]
+                return 502, {"message": "Server Error"}
+        rep = M.Report(out=io.StringIO())
+        self.assertIsNone(M.read_workflow_files(FileErr([]), REPO, None, rep))
+        self.assertEqual(rep.lines[-1], ".github/workflows/mac.yml: could not read it (GitHub answered HTTP 502); "
+                                        "nothing is changed. Run the same command again; if it stops here again, "
+                                        "GitHub's answer named here is the reason".join(["stop ", ""]))
+
+    def test_G8_13_a_reader_that_stops_reading_never_cuts_a_command_short(self):
+        # Seen: `look ... | head -2` ended in a BrokenPipeError traceback. A closed pipe stops the printing only: the
+        # command finishes its work and its exit code, with no traceback.
+        r, w = os.pipe()
+        os.close(r)
+        out = os.fdopen(w, "w")
+        rep = M.Report(out=out)
+        rep.ok("one")
+        rep.tell("two")
+        rep.stop("three: run it again")
+        self.assertEqual(rep.code(), M.EXIT_STOP)
+        self.assertTrue(rep.out_closed)
+        self.assertEqual(rep.lines, ["ok one", "tell the person 1 of 1: two", "stop three: run it again"])
+        script = os.path.join(ROOT, "scripts", "minions.py")
+        r = subprocess.run(["bash", "-c", f"python3 -I {script} look not-a-name 2>&1 | head -c 1 >/dev/null; "
+                            f"python3 -I {script} look not-a-name 2>&1 | head -c 0"],
+                           capture_output=True, text=True, timeout=60)
+        self.assertNotIn("Traceback", r.stdout + r.stderr)
+
+
 class Helpers(unittest.TestCase):
     def test_look_end_to_end_on_recorded_answers_reads_every_call_it_makes(self):
         gh = StandIn(load("look-recent-runs.jsonl"))
         code, lines = look(gh, linux_host())
         self.assertEqual(code, M.EXIT_NEED, lines)  # the start test's yes is still the person's (P1a)
         self.assertEqual(gh.misses, [], "every call look makes has a recorded answer")
-        self.assertTrue(all(re.match(r"^(ok|warn|stop|need you:|tell the person:) ", x) for x in lines), lines)
+        self.assertTrue(all(re.match(r"^(ok|warn|stop|need you:|tell the person \d+ of \d+:) ", x) for x in lines), lines)
 
     def test_github_api_sends_bodies_on_stdin_never_argv(self):
         seen = {}
