@@ -1802,7 +1802,8 @@ def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: 
 def one_repository_here(host: Host, repo: str, rep: Report) -> bool:
     """G7.6: version 0.1.0 serves one repository per computer, says so at setup, and holds it: a second repository's
     setup changes nothing while this tool's record names another one here."""
-    others = sorted(r for r in (load_state(host).get("runners") or {}) if r != repo)
+    data = load_state(host)
+    others = sorted(r for r in {**(data.get("setting_up") or {}), **(data.get("runners") or {})} if r != repo)
     if others:
         rep.stop(f"this computer already serves {others[0]}, and this version serves one repository per computer, so "
                  f"nothing was changed. To serve {repo} here instead, run `uninstall {others[0]}` first, then "
@@ -1849,15 +1850,30 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if ((known.get("runners") or {}).get(repo) or {}).get("gone_on_github"):
         reregister(gh, host, repo, known, rep)  # G5.12
         return rep.code()
+    adopt_unfinished(host, known, {repo})
+    left = (known.get("runners") or {}).get(repo) or {}
+    if left.get("unfinished") or left.get("removing"):
+        # R71: run again after a cut, setup finishes it: what the cut setup made is taken away, read back, then fresh.
+        rep.ok(f"a setup or removal of {repo} here was cut part-way: what it made is taken away first, read back, "
+               "then setup starts fresh")
+        if not remove_one(gh, host, repo, known, rep, DRAIN_WAIT_S, 10, f"setup {repo}"):
+            return rep.code()
     if not ensure_runner_user(host, rep):
         return rep.code()
     owner, name_ = repo.split("/", 1)
     folder = f"/home/{RUNNER_USER}/runners/{owner}-{name_}"
-    rel = runner_release(gh, repo, host, rep)
-    if rel is None or not unpack_runner(host, rel, folder, rep):
-        return rep.code()
     labels = runner_labels(survey_)
     runner_name = f"minions-{re.sub(r'[^A-Za-z0-9-]', '-', host.hostname())}"[:60]
+    rel = runner_release(gh, repo, host, rep)
+    if rel is None:
+        return rep.code()
+    known = load_state(host)
+    if repo not in (known.get("runners") or {}):  # R71: written before anything is made, so a cut is found again
+        known.setdefault("setting_up", {})[repo] = {"name": runner_name, "folder": folder, "labels": labels,
+                                                    "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
+        save_state(host, known)
+    if not unpack_runner(host, rel, folder, rep):
+        return rep.code()
     if not register(gh, host, repo, folder, runner_name, labels, rep):
         return rep.code()
     if not lock_credentials(host, folder, rep):
@@ -1874,6 +1890,9 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
                                             "limits": {k: lim[k] for k in ("cores", "pct", "CPUQuota", "MemoryHigh",
                                                                            "MemoryMax")},
                                             "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
+    (data.get("setting_up") or {}).pop(repo, None)
+    if "setting_up" in data and not data["setting_up"]:
+        data.pop("setting_up")
     save_state(host, data)
     if not install_watch(host, rep, repo=repo):
         return rep.code()
@@ -3525,9 +3544,18 @@ PUT_BACK_PR = {"prefix": PUT_BACK_PREFIX, "title": "Run these jobs where they ra
 RUNNERS_HOME = f"/home/{RUNNER_USER}/runners/"
 
 
+def root_test(host: Host, path: str) -> bool | None:
+    """Read as root: the runner user's home is closed to the person (G2.2), so the person's own checks cannot see in.
+    None when it could not be read (no admin rights open in this terminal): a third answer, never a no (R71)."""
+    rc, out = sudo(host, ["test", "-e", path])
+    if rc == 0:
+        return True
+    return None if "a password is required" in out else False
+
+
 def exists_as_root(host: Host, path: str) -> bool:
-    """Read as root: the runner user's home is closed to the person (G2.2), so the person's own checks cannot see in."""
-    return sudo(host, ["test", "-e", path])[0] == 0
+    """A path that could not be read counts as there, so a removal never reads "gone" from a refused read (R71)."""
+    return root_test(host, path) is not False
 
 
 def unit_path(unit: str) -> str:
@@ -3629,6 +3657,23 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
         return False
     rep.ok("the runner's folders, its hooks and its jobs' records are deleted, read back")
     return True
+
+
+def adopt_unfinished(host: Host, data: dict, repos: set[str] | None) -> list[str]:
+    """R71: a setup cut part-way left a half-made runner (a folder, maybe a registration or a service). Its record
+    joins the runners to remove, so `uninstall` and `setup` again find it instead of saying there is nothing."""
+    half = data.get("setting_up") or {}
+    took = sorted(r for r in half if repos is None or r in repos)
+    if not took:
+        return []
+    runners = data.setdefault("runners", {})
+    for r in took:
+        entry = half.pop(r)
+        runners.setdefault(r, {**entry, "unit": entry.get("unit") or "", "unfinished": entry.get("time")})
+    if not half:
+        data.pop("setting_up", None)
+    save_state(host, data)
+    return took
 
 
 def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_s: int, poll_s: float,
@@ -3798,8 +3843,15 @@ def remove_slice(host: Host, rep: Report) -> bool:
 
 def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report) -> None:
     """G6.3, INV6: what is left, each "none" or named. With --all every line should read none."""
-    def line(what: str, found: list[str], kept_why: str = "") -> None:
-        if not found:
+    unread: list[str] = []
+
+    def line(what: str, found: list[str], kept_why: str = "", start: int | None = None) -> None:
+        missed = unread[start:] if start is not None else []
+        if missed:  # R71: not read is a third answer, never "none"
+            rep.warn(f"census: {what}: " + (", ".join(found) + "; " if found else "") + "not read, because admin "
+                     f"rights are not open in this terminal: {', '.join(missed)} (the same command run in your own "
+                     "terminal asks for the password and reads them)")
+        elif not found:
             rep.ok(f"census: {what}: none")
         elif kept_why:
             rep.ok(f"census: {what}: {', '.join(found)} ({kept_why})")
@@ -3813,20 +3865,27 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
             names = [r.get("name") for r in d.get("runners", [])]
             line(f"runners on GitHub for {repo}", [f"{n} (not ours)" if not n.startswith("minions-") else n
                                                    for n in names])
+    def there(path: str) -> bool:
+        t = root_test(host, path)
+        if t is None:
+            unread.append(path)
+        return bool(t)
     rc, out = host.run(systemctl("list-units", "--all", "--plain", "--no-legend", "actions.runner.*", "minions*"))
     units = sorted({x.split()[0] for x in out.splitlines() if x.strip() and not x.startswith("0 ")})
+    mark = len(unread)
     files = [u for u in ("minions.slice", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service")
-             if exists_as_root(host, unit_path(u))]
+             if there(unit_path(u))]
     shared = {SLICE, f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"}
     runner_units = [u for u in units if u.startswith("actions.runner.")]
     line("runner services", runner_units)
     line("the slice and the watch (scheduled checks)", sorted(set(u for u in units if u in shared) | set(files)),
-         "" if everything else "kept for the other runners here; `uninstall --all` takes them")
+         "" if everything else "kept for the other runners here; `uninstall --all` takes them", mark)
     rc, _ = host.run(["id", RUNNER_USER])
     line("the runner user", [RUNNER_USER] if rc == 0 else [],
          "" if everything else "kept; `uninstall --all` takes it")
-    folders = [x for x in (HOOKS_ROOT, RECORDS_ROOT, f"/home/{RUNNER_USER}") if exists_as_root(host, x)]
-    line("folders", folders, "" if everything else "kept; `uninstall --all` takes them")
+    mark = len(unread)
+    folders = [x for x in (HOOKS_ROOT, RECORDS_ROOT, f"/home/{RUNNER_USER}") if there(x)]
+    line("folders", folders, "" if everything else "kept; `uninstall --all` takes them", mark)
 
 
 def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
@@ -3840,6 +3899,7 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
         rep.stop(f"not a repository name: {repo!r} (write owner/name)")
         return rep.code()
     data = load_state(host)
+    adopt_unfinished(host, data, None if everything or not repo else {repo})
     runners = data.get("runners") or {}
     if repo and repo not in runners and not everything:
         rep.ok(f"no runner of ours serves {repo} on this computer: nothing to uninstall")
