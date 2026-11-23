@@ -6,7 +6,10 @@ What is scrubbed:
 - the owner and repository become example-org/example-repo;
 - every e-mail address becomes person@example.invalid;
 - a person's name or login found in the fields GitHub uses for people (author, committer, actor,
-  triggering_actor, sender) becomes Example Person / example-person.
+  triggering_actor, sender) becomes Example Person / example-person;
+- every account object (one with a `login`: a person, an organisation, an owner) loses its number: `id` becomes
+  EXAMPLE_ACCOUNT_ID, `node_id` EXAMPLE_NODE_ID, `avatar_url` a numberless one, `gravatar_id` empty. A login is
+  scrubbed, but the number GitHub gives an account names it just as surely (it leads back to the login).
 
 Where (G9.5): a name only where it is the whole value of a name field; a login only where it is the whole value of a
 login field or a whole segment of a URL path. Never inside other text, and never inside a file path: once a committer
@@ -70,11 +73,33 @@ def scrub(obj, repo: str, names: set, logins: set, key: str = ""):
     return s
 
 
+EXAMPLE_ACCOUNT_ID = 1
+EXAMPLE_AVATAR = "https://avatars.githubusercontent.com/u/0?v=4"
+AVATAR_ID = re.compile(r"avatars\.githubusercontent\.com/u/(\d+)")
+
+
+def accounts(obj):
+    """Every account object loses the number that names it (see the top of this file)."""
+    if isinstance(obj, dict):
+        out = {k: accounts(v) for k, v in obj.items()}
+        if isinstance(obj.get("login"), str):
+            for k, v in (("id", EXAMPLE_ACCOUNT_ID), ("node_id", "EXAMPLE_NODE_ID"), ("avatar_url", EXAMPLE_AVATAR),
+                         ("gravatar_id", "")):
+                if k in out:
+                    out[k] = v
+        return out
+    if isinstance(obj, list):
+        return [accounts(v) for v in obj]
+    if isinstance(obj, str):
+        return AVATAR_ID.sub("avatars.githubusercontent.com/u/0", obj)
+    return obj
+
+
 def scrub_rows(rows: list, repo: str) -> list:
     names, logins = set(), set()
     for r in rows:
         people(r, names, logins)
-    return [scrub(r, repo, names, logins) for r in rows]
+    return [accounts(scrub(r, repo, names, logins)) for r in rows]
 
 
 def main():

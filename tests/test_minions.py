@@ -3028,6 +3028,22 @@ class Helpers(unittest.TestCase):
             self.assertIsNone(re.search(r"gh[opsu]_[A-Za-z0-9]{20,}|github_pat_", t), name)
             emails = set(re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", t))
             self.assertLessEqual(emails, {"person@example.invalid"}, name)
+            # R25 (2026-11-23): the number GitHub gives an account names it as surely as its login does.
+            self.assertIsNone(re.search(r"avatars\.githubusercontent\.com/u/[1-9]", t), name)
+            if name.endswith(".jsonl"):
+                def account_ids(o):
+                    if isinstance(o, dict):
+                        if isinstance(o.get("login"), str):
+                            yield o.get("id"), o.get("node_id")
+                        for v in o.values():
+                            yield from account_ids(v)
+                    elif isinstance(o, list):
+                        for v in o:
+                            yield from account_ids(v)
+                for line in t.splitlines():
+                    for i, node in account_ids(json.loads(line)):
+                        self.assertIn(i, (None, 1), name)
+                        self.assertIn(node, (None, "EXAMPLE_NODE_ID"), name)
 
     def test_G9_5_scrubbing_never_changes_paths(self):
         import importlib.util
