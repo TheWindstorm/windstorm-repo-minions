@@ -2034,8 +2034,12 @@ def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why:
         mine["held_at"] = host.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         save_state(host, data)
         if set_labels(gh, repo, r["id"], [HELD_LABEL]) != [HELD_LABEL]:
-            rep.stop("GitHub did not take the hold label: nothing else was changed")
-            return None
+            # GitHub can answer an error and still take the change (HTTP 502, seen): what it lists decides.
+            back = listed_runner(gh, repo, mine["name"])
+            if back is None or sorted(x.get("name") for x in back.get("labels", [])) != [HELD_LABEL]:
+                rep.stop("GitHub did not take the hold label: nothing else was changed")
+                return None
+            journal(host, "hold read back", f"{repo} {mine['name']}: GitHub answered an error, and lists it held")
     rep.ok(f"held: {mine['name']} now carries only `{HELD_LABEL}`, so no new job lands on it; jobs wait on GitHub")
     return r
 
@@ -2296,8 +2300,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         mine = runners[rp]
         ps = mine.get("public_stop")
         if ps:
-            first.append(("stop", public_words(rp, ps) + ". Anyone's fork can ask a public repository's runner for "
-                                  "a job"))
+            first.append(("stop", public_words(rp, public_now(gh, host, rp, mine)) + ". Anyone's fork can ask a "
+                                  "public repository's runner for a job"))
         r = listed_runner(gh, rp, mine["name"])
         gh_at = host.now()
         active, worker, at = computer_side(host, mine)
@@ -2354,9 +2358,9 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
 def gone_words(repo: str, mine: dict) -> str:
     return (f"GitHub no longer lists our runner {mine['name']} for {repo}. GitHub removes a runner it has not seen "
             "connect for more than 14 days (a computer away or switched off that long), and the watch takes it off a "
-            "repository that is no longer private. GitHub's runner program then stops its own service. Run "
-            f"`setup {repo}` again: it registers the runner again with your login, keeping "
-            "its folders and labels")
+            "repository that is no longer private. GitHub hands it no job now. Run "
+            f"`setup {repo}` again: it stops what is left of the runner here, then registers it again with your login, keeping its "
+            "folders and labels")
 
 
 CANCELED = "The operation was canceled."
@@ -2660,21 +2664,42 @@ def remove_public_runner(gh: GitHub, host: Host, repo: str, mine: dict) -> None:
     ps["removed_at"] = stamp(host.now())
 
 
+def public_now(gh: GitHub, host: Host, repo: str, mine: dict) -> dict:
+    """What `status` says of a repository no longer private is read now, never taken from the watch's last pass:
+    GitHub's list of runners (an error answer can hide a change GitHub made, seen) and this computer's service."""
+    ps = dict(mine["public_stop"])
+    s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+    if s == 200:
+        r = next((x for x in (d or {}).get("runners", []) if x.get("name") == mine["name"]), None)
+        ps["removed"] = r is None
+        ps["labels_off"] = r is None or sorted(x.get("name") for x in r.get("labels", [])) == [HELD_LABEL]
+    else:
+        ps["unread"] = f"GitHub not read now (HTTP {s}): from the watch's pass"
+    rc, active = host.run(systemctl("is-active", mine["unit"]))
+    ps["service"] = active.strip() or "not read"
+    return ps
+
+
 def public_words(repo: str, ps: dict) -> str:
     return (f"{repo} is no longer private (read {ps['time']}): this computer refuses every job of it before its "
             "first step"
-            + ("; our runner is off the repository on GitHub's side, so no job is handed to this computer, and it "
-               "stopped its own service" if ps.get("removed") else
+            + ("; our runner is off the repository on GitHub's side, so GitHub hands this computer no job of it"
+               if ps.get("removed") else
                "; our runner is taken off the repository on GitHub's side as soon as no job runs on it (each pass "
                "tries again)")
             + ("" if ps.get("labels_off", True) or ps.get("removed") else "; our labels could not be taken off yet")
+            + (f" ({ps['unread']})" if ps.get("unread") else "")
+            + (f"; its service here is {ps['service']}" + (" (a removed runner's listener can wait idle for a long "
+               "while; GitHub hands it nothing, and `setup` stops it before registering again)"
+               if ps["service"] == "active" and ps.get("removed") else "") if ps.get("service") else "")
             + f"; a job already running finishes. Once it is private again: `resume {repo} --private-again`, then "
             f"`setup {repo}` registers the runner again")
 
 
 def gone_on_github(host: Host, repo: str, data: dict, rep: Report) -> None:
-    """G5.12: GitHub removed the runner. GitHub's runner program then stops its own service ("terminated error, stop
-    the service, no retry needed", seen), so the watch, which has no admin rights (G9.7), only reads it and names it."""
+    """G5.12: GitHub removed the runner and hands it no job. Its listener stops itself, or waits idle for a long while
+    (both seen, no restart loop); the watch, which has no admin rights (G9.7), only reads the service and names it.
+    `setup` again stops what still runs before it registers again."""
     mine = data["runners"][repo]
     if runner_pids(host, mine["folder"], "Runner.Worker"):
         return  # a job process still runs here: named once it ends
@@ -2787,6 +2812,15 @@ def reregister(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> bo
     """G5.12: `setup` again for a runner GitHub removed: registered again in place, its folders and labels kept."""
     mine = data["runners"][repo]
     folder = mine["folder"]
+    if runner_pids(host, folder, "Runner.Worker"):
+        rep.wait(f"a job process of {mine['name']} still runs here; nothing is changed. Next: `setup {repo}` again "
+                 "once it has ended")
+        return False
+    # A removed runner's listener can keep running, idle, long after GitHub dropped it (13 minutes and more, seen):
+    # it is stopped and read back before the new registration, or the old process keeps the service and the new
+    # registration never connects (seen). GitHub hands a removed runner no job, so nothing is cut.
+    if not stop_runner(host, mine["unit"], folder, rep, drained=True):
+        return False
     journal(host, "re-register", f"{repo} {mine['name']} in {folder}")
     as_runner(host, ["rm", "-f", f"{folder}/.runner", f"{folder}/.credentials", f"{folder}/.credentials_rsaparams"])
     if not register(gh, host, repo, folder, mine["name"], mine["labels"], rep):

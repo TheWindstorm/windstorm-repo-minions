@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A removed runner's listener can keep running for a while: `setup` again now stops it before registering
+  again (without that, the new registration stayed offline); `status` reads GitHub and the service for a
+  repository no longer private instead of repeating the watch's record; a hold GitHub took behind an error answer
+  is read back (G5.4, G5.12). G5.15 says what the runner fetches before the hook.
 - The job-completed hook also deletes the actions a job fetched: GitHub's runner downloads them before any hook
   runs, so even a refused job left them on disk (G4.3).
 - Plan 2.0: INV1, INV4 and G5.4 corrected to the guard a real machine has (the job-start hook refuses every
