@@ -188,6 +188,9 @@ class FakeHost(M.Host):
     def listdir_or_none(self, path):
         return self.dirs.get(path, [])
 
+    def there(self, path):
+        return path in self.files or path in self.dirs
+
     def user(self):
         return "person"
 
@@ -2083,6 +2086,10 @@ class StatusGH(StandIn):
         return 404, {"message": "Not Found"}
 
 
+def dt_hms(t):
+    return M.hms(M.dt.datetime.fromtimestamp(t, M.dt.timezone.utc))
+
+
 def g5_host(runs=None, repos=(REPO,), worker=False):
     """A computer with our runner set up for each repository, the service active, and a survey."""
     r = {("systemctl", "is-active"): (0, "active\n"),
@@ -2151,6 +2158,28 @@ class G9Version(unittest.TestCase):
 
 
 class G5(unittest.TestCase):
+    def test_G5_17_status_says_when_github_last_handed_this_runner_a_job(self):
+        # Seen once, on one new private repository (2026-11-23, row R105): a 10-minute schedule did not fire once in
+        # an hour, with the runner connected and waiting. A job GitHub never hands over is GitHub's side.
+        host, clock = g5_host()
+        jobs = M.records_dir_of(f"/home/minions-runner/runners/example-org-example-repo") + "/jobs.log"
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+        line = next(x for x in lines if "GitHub has not handed this runner a job" in x)
+        self.assertTrue(line.startswith("ok ") and "on GitHub's side" in line and "connected and waiting" in line)
+        t = int(host.now().timestamp()) - 25 * 60
+        host.files[jobs] = f"start {t - 600} 11 1 0 build\nend {t - 500} 11 1 0 build\nstart {t} 12 1 0 soak\n"
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+        want = dt_hms(t)
+        self.assertIn(f"ok the last job GitHub handed this runner started at {want} UTC, 25 min ago ('soak' of {REPO})",
+                      lines)
+        # Not read is a third answer (rule 6), never "not handed a job yet".
+        host.files.pop(jobs)
+        host.there = lambda path: None
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+        self.assertTrue(any(x.startswith("warn when GitHub last handed a job") and "could not be read" in x
+                            for x in lines))
+        self.assertFalse(any("has not handed" in x for x in lines))
+
     def test_G5_1_status_reads_both_sides_and_the_queue(self):
         host, clock = g5_host()
         gh = StatusGH(queued=[{"id": 1, "name": "check", "status": "queued", "labels": ["minions"],
