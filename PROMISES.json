@@ -1058,6 +1058,20 @@
    "issue": 146,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R76",
+   "seen": "2026-11-23, read in the code before an agent run built to reach it: at move --verify's deadline, a run still queued because GitHub shows our runner offline ended on \"Next: move --verify again after the next push or pull request\", without saying the runner is offline.",
+   "promise": "When move --verify reaches its deadline while GitHub shows our runner not online, its waiting line says so and names `resume OWNER/NAME` first, then `move OWNER/NAME --verify` again; nothing is called moved before one job ran here.",
+   "codon": "G3.6",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G3_6_moved_is_said_only_after_a_real_job_ran",
+   "proven": "",
+   "issue": 148,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `move --verify`, when its deadline passes while GitHub shows our runner offline, now says so and names
+  `resume OWNER/NAME` first, then `move OWNER/NAME --verify` again. Before, it said to verify again after the
+  next push, which the waiting run does not need (G3.6, row R76).
 - `look` now gives the computer's own upkeep ports (remote login, name, address and time services, local name
   discovery) an `ok` line that names what each one is and says it is not counted as something live. Before, a
   remote-login port alone was a `warn`, and an agent asked the person whether to go on at all. Any other port

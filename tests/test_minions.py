@@ -1394,6 +1394,15 @@ class G3(unittest.TestCase):
         self.assertTrue([x for x in lines if re.search(r"until \d\d:\d\dZ at the latest", x)], lines)
         self.assertTrue([x for x in lines if "still in_progress at the deadline" in x], lines)
         self.assertIn("--verify", lines[-1])
+        # R76: the same wait while GitHub shows our runner offline: said as that, with `resume` named first
+        gh = MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=slow, jobs=jobs)
+        gh.runner_status = "offline"
+        code, lines = run_move(gh, host2, verify=True, wait_s=30, poll_s=10)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertEqual(lines[-1], f"waiting on our runner {OURS}: GitHub shows it offline, so the moved jobs wait for it; "
+                                    f"nothing is called moved before one has run here. Next: `resume {REPO}`, then "
+                                    f"`move {REPO} --verify` again")
+        self.assertFalse([x for x in lines if x.startswith("ok moved")])
 
 
 FAKE_INHIBIT = """#!/bin/bash

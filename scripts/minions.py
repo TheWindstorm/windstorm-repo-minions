@@ -3578,8 +3578,17 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
                     rep.warn(f"moved: {path} job {w['id']} ran on {where} and ended {j.get('conclusion')}: that is "
                              f"the job's own result; its log is at {j.get('html_url')}")
     if rep.waiting and not rep.stopped:
-        rep.wait(f"for one finished run of each moved workflow of {repo}; nothing is called moved before that. "
-                 f"Next: `move {repo} --verify` again after the next push or pull request")
+        # R76: a run that waits on our runner while GitHub shows it offline is said as that, with the one command
+        # that starts it; "after the next push" would send the person to make a push the run does not need.
+        s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+        listed = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == mine["name"]]
+        seen = (listed[0].get("status") if listed else "not listed") if s == 200 else None
+        if seen and seen != "online":
+            rep.wait(f"on our runner {mine['name']}: GitHub shows it {seen}, so the moved jobs wait for it; nothing is "
+                     f"called moved before one has run here. Next: `resume {repo}`, then `move {repo} --verify` again")
+        else:
+            rep.wait(f"for one finished run of each moved workflow of {repo}; nothing is called moved before that. "
+                     f"Next: `move {repo} --verify` again after the next push or pull request")
         return
     if all_ok and not rep.stopped:
         data = load_state(host)
