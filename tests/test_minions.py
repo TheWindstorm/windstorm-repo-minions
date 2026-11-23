@@ -2964,6 +2964,78 @@ class G8Limit(unittest.TestCase):
         self.assertLess(clock.t - M.parse_stamp("2026-11-22T23:00:00Z"), M.dt.timedelta(seconds=60))
 
 
+class INV(unittest.TestCase):
+    def test_INV1_never_a_runner_on_a_public_repository(self):
+        # Every door, for every visibility that is not private.
+        for vis in ("public", "internal"):
+            # look stops before anything is installed, and setup then refuses (it needs a look with no stop).
+            gh = StandIn(load("look-recent-runs.jsonl"), overrides={
+                ("GET", f"repos/{REPO}"): (200, {"full_name": REPO, "private": False, "visibility": vis})})
+            host = linux_host()
+            code, lines = look(gh, host)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertTrue([x for x in lines if x.startswith(f"stop {REPO} is {vis}: Repo Minions never puts a "
+                                                               "runner on a repository that is not private")], lines)
+            sha = setup_host()[1]
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_STOP)
+            self.assertIn("ended with a `stop`", lines[-1])
+        # On the minion: the job hook refuses before any step once the record says public, or GitHub's own record
+        # of the event says not private (the scheduled-run exception is bounded by G5.15's fresh read).
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            folder = os.path.realpath(d)
+            now = int(time.time())
+            self.assertEqual(hook_run(folder, "public")[0], 1)
+            public = {"repository": {"full_name": REPO, "private": False, "visibility": "public"}}
+            self.assertEqual(hook_run(folder, str(now), event=public)[0], 1)
+            self.assertEqual(hook_run(folder, str(now - 16 * 60), event={"schedule": "0 * * * *"})[0], 1)
+        # The watch: the record says public at once, our labels come off, our runner leaves GitHub's side once idle.
+        host, clock = g5_host()
+        refuse_sudo(host)
+        gh = StatusGH(private=False)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(host.files[M.seen_path(FOLDER)].strip(), "public")
+        self.assertEqual(gh.puts, [(REPO, ["minions-held"])])
+        self.assertIn(("DELETE", f"repos/{REPO}/actions/runners/7"), gh.calls)
+        # And nothing brings it back while it is not private: resume refuses.
+        code, lines = run_cmd(M.resume, REPO, host=host, gh=gh)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn("was not private", lines[-1])
+
+
+    def test_INV4_never_kill_a_running_job(self):
+        # Every command that could stop the runner, run while a job runs: it holds and waits, and neither stops the
+        # runner's service nor sends any process a signal. (0.1.0 has no `uninstall --now`: no exception exists.)
+        def kills(host):
+            return [a for a in host.ran if "kill" in " ".join(a) or
+                    (a[:1] == ("sudo",) and "systemctl" in a and ("stop" in a or "restart" in a) and UNIT in a)]
+        for stop, restart in ((False, False), (True, False), (False, True)):
+            host, clock = g5_host(worker=True)
+            code, lines = run_cmd(M.drain, REPO, host=host, gh=StatusGH(busy=True), stop=stop, restart=restart,
+                                  wait_s=60, poll_s=10)
+            self.assertEqual(code, M.EXIT_WAIT, (stop, restart, lines))
+            self.assertEqual(kills(host), [], (stop, restart))
+        gh, world, host = remove_setup(busy=(True,))
+        code, lines = run_uninstall(gh, host, wait_s=60, poll_s=10)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertEqual(kills(host), [])
+        # setup again for a runner GitHub dropped, while a job process still runs here: nothing is stopped.
+        host, clock = g5_host(worker=True)
+        data = M.load_state(host)
+        data["runners"][REPO]["gone_on_github"] = "2026-11-22T22:00:00Z"
+        M.save_state(host, data)
+        lines = []
+        out = io.StringIO()
+        M.reregister(StatusGH(listed=False), host, REPO, M.load_state(host), M.Report(out))
+        self.assertEqual(kills(host), [])
+        self.assertIn("a job process of minions-box-1 still runs here; nothing is changed", out.getvalue())
+        # The watch, for a repository no longer private, with a job running: no admin step at all.
+        host, clock = g5_host(worker=True)
+        refuse_sudo(host)
+        run_cmd(M.watch, host=host, gh=StatusGH(private=False, busy=True))
+        self.assertFalse([a for a in host.ran if a[:1] == ("sudo",)])
+
+
 class G8Waits(unittest.TestCase):
     def test_G8_6_no_command_hangs_on_waiting(self):
         start = M.parse_stamp("2026-11-22T23:00:00Z")
