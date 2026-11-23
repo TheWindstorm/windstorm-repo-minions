@@ -946,6 +946,20 @@
    "issue": 117,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R68",
+   "seen": "2026-11-23: the fleet's GitHub login spent its 5000 calls an hour (fast polling outside the tool); the proof machine's watch got HTTP 403 for 7 minutes and its words said to check the network.",
+   "promise": "When GitHub refuses for the API limit, the tool names it with GitHub's reset time, makes no call until then, and never polls into it; what it spends an hour at its defaults is said.",
+   "codon": "G8.14",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_14_a_spent_api_limit_is_named_and_never_polled_into",
+   "proven": "",
+   "issue": 119,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
