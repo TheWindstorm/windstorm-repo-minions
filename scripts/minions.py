@@ -1974,9 +1974,9 @@ def one_repository_here(host: Host, repo: str, rep: Report) -> bool:
     if others:
         rep.stop(f"this computer already serves {others[0]}, and this version serves one repository per computer, so "
                  f"nothing was changed. To serve {repo} here instead, run `uninstall {others[0]}` first, then "
-                 f"`setup {repo}` again; more repositories per computer come in the next version")
+                 f"`setup {repo}` again")
         return False
-    rep.ok(f"this version serves one repository per computer: here, {repo}; more come in the next version")
+    rep.ok(f"this version serves one repository per computer: here, {repo}")
     return True
 
 
@@ -4570,8 +4570,8 @@ LAPTOP_WORDS = ("a laptop takes jobs only while it is awake, on the network and 
 
 MEMORY_TRADE_OFF = ("A job that needs more memory than that fails when it reaches the cap, and `status` names it, "
                     "instead of running slowly; jobs are kept out of this computer's swap where it holds that.")
-JOB_TOOLS = ("A job here has only the tools installed on this computer. GitHub's own computers come with many tools "
-             "already installed, so a job that stops with \"command not found\" needs that tool installed here.")
+JOB_TOOLS = ("A job here has only the tools installed on this computer: a job that stops with \"command not found\" "
+             "needs that tool installed here.")  # G7.12: what GitHub's computers carry is only good to know (README)
 
 
 def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
@@ -4585,7 +4585,7 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
     rep.tell("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has waited "
              f"{GITHUB_GIVES_UP_H} hours.")
     rep.tell("A restart of this computer cancels the job running on it. A short sleep only delays it; a sleep of more "
-             f"than about {LONG_SLEEP_MIN} minutes fails it on GitHub (seen). While a job "
+             f"than about {LONG_SLEEP_MIN} minutes fails it on GitHub. While a job "
              "runs, this computer does not fall asleep by itself; a sleep you ask for, the lid, or a low battery still "
              f"puts it to sleep, {sleep_delay_words(s.get('sleep_delay'))}. `status` names a job cut that way as cut, "
              "not as your test failing.")
@@ -4596,7 +4596,7 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
         rep.tell("This computer has a battery: " + LAPTOP_WORDS + ".")
     elif s.get("lid"):
         rep.tell("This computer has a lid: " + LAPTOP_WORDS + ".")
-    rep.tell("This version serves one repository per computer; more come in the next version.")
+    rep.tell("This version serves one repository per computer.")  # G7.12: no promise about a later version
 
 
 class Parser(argparse.ArgumentParser):

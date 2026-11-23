@@ -121,15 +121,15 @@ before setup. These are what they carry; if one is missing, say it in these word
   and let the person decide.
 - **A job too big for the cap.** "A job that needs more memory than that fails when it reaches the cap, and
   `status` names it, instead of running slowly."
-- **A job's tools.** "A job here has only the tools installed on this computer. GitHub's own computers come with
-  many tools already installed, so a job that stops with "command not found" needs that tool installed here."
+- **A job's tools.** "A job here has only the tools installed on this computer: a job that stops with "command not
+  found" needs that tool installed here."
 
 - **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
   low battery still puts it to sleep, about N seconds later." Give the delay look's numbered block names for this
   computer, not a number of your own. "A job cut that way is named as cut, not as your test failing." The tool takes two locks during a job: one that holds only the computer's own idle sleep, and one
   that puts off a requested sleep by the short delay the system allows. It never holds the lid switch, the power
   or sleep keys, a shutdown, or a sleep someone asks for.
-- **One repository.** "This version serves one repository per computer; more come in the next version."
+- **One repository.** "This version serves one repository per computer."
 - **Storage.** "Artifact and cache storage count the same whichever computer ran the job."
 
 ## Cost

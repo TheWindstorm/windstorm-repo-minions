@@ -752,13 +752,12 @@ def run_doctor(host, sha, **kw):
 
 
 class G2(unittest.TestCase):
-    def test_G7_6_version_0_1_says_one_repository_and_more_next(self):
+    def test_G7_6_version_0_1_says_and_holds_one_repository_per_computer(self):
         host, sha = setup_host()
         fresh_look(host)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_OK, lines)
-        self.assertIn(f"ok this version serves one repository per computer: here, {REPO}; more come in the next "
-                      "version", lines)
+        self.assertIn(f"ok this version serves one repository per computer: here, {REPO}", lines)
         # A second repository: stopped before anything is touched, the one served named, and the way on.
         host, sha = setup_host()
         fresh_look(host)
@@ -770,10 +769,11 @@ class G2(unittest.TestCase):
         self.assertTrue(lines[-1].startswith("stop this computer already serves example-org/other-repo"), lines)
         self.assertIn("nothing was changed", lines[-1])
         self.assertIn(f"run `uninstall example-org/other-repo` first, then `setup {REPO}` again", lines[-1])
-        self.assertIn("more repositories per computer come in the next version", lines[-1])
+        self.assertNotIn("next version", lines[-1])  # G7.12: a line the person must hear promises no later version
         self.assertEqual(admin_steps(host), [], "nothing is touched for a second repository")
         skill = open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")).read()
-        self.assertIn("This version serves one repository per computer; more come in the next version.", skill)
+        self.assertIn("This version serves one repository per computer.", skill)
+        self.assertNotIn("next version", skill)
 
     def test_G2_1_setup_needs_a_fresh_clean_look(self):
         host, sha = setup_host()
@@ -3327,6 +3327,21 @@ class P1a(unittest.TestCase):
         # They come after the reading, all together, so an agent says them before setup.
         first = min(i for i, x in enumerate(lines) if TELL.match(x))
         self.assertTrue(all(TELL.match(x) for x in lines[first:]), lines[first:])
+
+    def test_G7_12_the_tell_block_carries_only_what_the_person_must_hear_within_a_bound(self):
+        # Seen 2026-11-23 (row R104): the smallest model kept all nine lines in meaning but reworded seven and lost
+        # three clauses, each only good to know. What is only good to know lives in the README; the block is bound.
+        for host in (linux_host(), linux_host(files={"/sys/class/power_supply/BAT0/type": "Battery\n"},
+                                              dirs={"/sys/class/power_supply": ["BAT0"]})):
+            tells = tells_of(look(StandIn(load("look-recent-runs.jsonl")), host)[1])
+            self.assertLessEqual(len(tells), 10, tells)
+            rest = [x for x in tells if not x.startswith("GitHub's billing page, read ")]  # G7.1 holds its words
+            self.assertEqual(len(rest), len(tells) - 1, "the cost sentence is one line of the block")
+            self.assertLessEqual(max(len(x) for x in rest), 420, rest)
+            self.assertLessEqual(sum(len(x) for x in rest), 1700, rest)
+            said = " ".join(tells)
+            for never in ("next version", "(seen)", "GitHub's own computers come with"):
+                self.assertNotIn(never, said)
 
     def test_G7_11_setup_limits_changes_an_installed_runner_in_place(self):
         # Seen on a stock VM (2026-11-23): the kill line named `setup --limits` the one way to change the limit, and
