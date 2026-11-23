@@ -3295,7 +3295,13 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
         if done_ is not None:  # R90: a finished job is read from GitHub once, then judged from what was kept
             if not done_.get("verdict"):
                 continue
-            g, verdict, kept = {"id": done_["id"], "name": done_.get("name")}, tuple(done_["verdict"]), True
+            g, verdict, kept = ({"id": done_["id"], "name": done_.get("name"), "workflow": done_.get("workflow")},
+                                tuple(done_["verdict"]), True)
+            if not g["workflow"]:  # G5.18: settled before the workflow was kept; read it once now
+                g["workflow"] = workflow_of_run(gh, repo, j["start"]["run"])
+                if g["workflow"]:
+                    done_["workflow"] = g["workflow"]
+                    fresh_settled = True
         else:
             g = github_job(gh, repo, j["start"], mine["name"])
             if g is None or g.get("status") not in (None, "completed") or g.get("conclusion") is None:
@@ -3308,7 +3314,10 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
             kept = (data.get("named") or {}).get(str(g["id"]))
             if verdict is None and kept:
                 verdict = (kept["kind"], kept["why"])  # named once, while this computer still had its record
-            settled[key] = {"id": g["id"], "name": g.get("name"), "verdict": list(verdict) if verdict else None}
+            if verdict is not None:
+                g["workflow"] = workflow_of_run(gh, repo, j["start"]["run"])  # G5.18 (R118): which of the person's jobs
+            settled[key] = {"id": g["id"], "name": g.get("name"), "workflow": g.get("workflow"),
+                            "verdict": list(verdict) if verdict else None}
             fresh_settled = True
         if verdict is None and kept:
             verdict = (kept["kind"], kept["why"])  # named once, while this computer still had its record
@@ -3323,21 +3332,22 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
             journal(host, "named", f"{repo} job {g['id']}: {verdict[0]} by {verdict[1]}")
         named[int(g["id"])] = g
         when = hms(dt.datetime.fromtimestamp(j["start"]["t"], dt.timezone.utc))
+        which = stopped_job_words(g, j["start"]["run"], when)
         done = int(g["id"]) in (data.get("reruns") or [])
         again = (" It was run again once already." if done else
                  f" To run it again, once: `status {repo} --rerun {g['id']}`.")
         if verdict[0] == "refused":
-            lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was refused before "
+            lines.append(("warn", f"{which} was refused before "
                                   f"its first step by this computer's guard: {verdict[1]}. No step of it ran here; "
                                   f"GitHub shows it as failed, not a failing test of yours.{again}"))
         elif verdict[0] == "killed":
             lim = ((data.get("named") or {}).get(str(g["id"])) or {}).get("limit")  # R93: as named, or no number
-            lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was stopped by "
+            lines.append(("warn", f"{which} was stopped by "
                                   f"this computer's memory limit{' (' + gb(int(lim)) + ')' if lim else ''}, not by your "
                                   "code failing; GitHub shows it as failed. The one way to change the limit: "
                                   f"`setup {repo} --limits <processors>,<memory %>`.{again}"))
         else:
-            lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was cut by "
+            lines.append(("warn", f"{which} was cut by "
                                   f"{verdict[1]}, not a failing test of yours; GitHub shows it as failed.{again}"))
     if fresh_settled:
         fresh = load_state(host)  # never write back an older copy of what other steps saved meanwhile
@@ -3509,6 +3519,21 @@ def memory_held_pass(host: Host, mine: dict, data: dict) -> None:
     else:
         mine.pop("memory_held", None)
     save_state(host, data)
+
+
+def workflow_of_run(gh: GitHub, repo: str, run_id) -> str | None:
+    """The workflow file a run came from (GitHub's own `path`), or None when it cannot be read."""
+    s, d = gh.api("GET", f"repos/{repo}/actions/runs/{run_id}")
+    path = (d or {}).get("path") if s == 200 else None
+    return path.split("@")[0] if isinstance(path, str) and path else None
+
+
+def stopped_job_words(g: dict, run_id, when: str) -> str:
+    """G5.18 (R118): a stopped job is named by its workflow file and its own name as well as the run, the person's
+    first question after a kill being "which of my jobs?"; when the workflow cannot be read, it says so."""
+    if g.get("workflow"):
+        return f"job '{g.get('name')}' of {g['workflow']} (run {run_id}, started {when})"
+    return f"job '{g.get('name')}' (run {run_id}, started {when}; which workflow it came from could not be read)"
 
 
 def memory_held_words(repo: str, mine: dict, recs: list[dict]) -> str:

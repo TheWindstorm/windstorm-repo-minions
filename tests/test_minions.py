@@ -2217,6 +2217,9 @@ class StatusGH(StandIn):
             if method == "POST" and m:
                 self.reruns.append(int(m.group(1)))
                 return 201, {}
+            m = re.fullmatch(rf"repos/{re.escape(rp)}/actions/runs/(\d+)", path)
+            if method == "GET" and m and getattr(self, "workflow_path", ".github/workflows/ci.yml"):
+                return 200, {"id": int(m.group(1)), "path": getattr(self, "workflow_path", ".github/workflows/ci.yml")}
         return 404, {"message": "Not Found"}
 
 
@@ -2797,7 +2800,7 @@ class G5(unittest.TestCase):
         host, gh, _ = self._named(start, cut, stopped, notes=[M.CANCELED])
         lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
         named = [x for x in lines if x.startswith("warn job 'check'")]
-        self.assertEqual(named, ["warn job 'check' (run 555, started 22:40:00Z) was cut by a stop of this computer's "
+        self.assertEqual(named, ["warn job 'check' of .github/workflows/ci.yml (run 555, started 22:40:00Z) was cut by a stop of this computer's "
                                  "runner service, not a failing test of yours; GitHub shows it as failed. To run it "
                                  f"again, once: `status {REPO} --rerun 9001`."])
         # The stop is only in the unit's journal (systemd's own start and stop times were replaced since, as a
@@ -2916,7 +2919,7 @@ class G5(unittest.TestCase):
                  (0, "%d.8 box-1 systemd-sleep[9]: Performing sleep operation 'suspend'...\n" % (t0 + 40))}
         host, gh, _ = self._named(rec, cut, slept)
         lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
-        self.assertIn("warn job 'check' (run 555, started 22:40:00Z) was cut by this computer going to sleep, not a "
+        self.assertIn("warn job 'check' of .github/workflows/ci.yml (run 555, started 22:40:00Z) was cut by this computer going to sleep, not a "
                       "failing test of yours; GitHub shows it as failed. To run it again, once: "
                       f"`status {REPO} --rerun 9001`.", lines)
         code, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=9001)
@@ -2927,6 +2930,31 @@ class G5(unittest.TestCase):
         host, gh, _ = self._named(rec, {"conclusion": "success", "steps": []}, slept)
         self.assertFalse([x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1] if x.startswith("warn job")])
 
+    def test_G5_18_a_stopped_job_is_named_by_its_workflow_file(self):
+        # Seen 2026-11-23 (run K, row R118): status named a job killed at the cap only as 'j' and its run; the agent
+        # could not say which of the person's workflows it was, since several name their job `j`.
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        failed = {"conclusion": "failure", "steps": [{"name": "Build", "conclusion": "failure"}]}
+        host, gh, _ = self._named(f"start {t0} 555 1 0 check\nend {t0 + 70} 555 1 1 check\n", failed,
+                                  notes=["Process completed with exit code 137."])
+        gh.workflow_path = ".github/workflows/mem-big.yml"
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        named = [x for x in lines if x.startswith("warn job 'check'")]
+        self.assertEqual(len(named), 1, lines)
+        self.assertTrue(named[0].startswith("warn job 'check' of .github/workflows/mem-big.yml (run 555, started "
+                                            "22:40:00Z) was stopped by this computer's memory limit"), named[0])
+        # Read once, then kept: a later status needs no read of the run.
+        gh.workflow_path = None
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any("of .github/workflows/mem-big.yml (run 555" in x for x in lines), lines)
+        # Where it cannot be read, the line says so, never a guess.
+        host, gh, _ = self._named(f"start {t0} 555 1 0 check\nend {t0 + 70} 555 1 1 check\n", failed,
+                                  notes=["Process completed with exit code 137."])
+        gh.workflow_path = None
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        named = [x for x in lines if x.startswith("warn job 'check'")]
+        self.assertTrue(named and "which workflow it came from could not be read" in named[0], lines)
+
     def test_G5_14_a_job_killed_by_our_limit_is_named_as_such(self):
         t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
         failed = {"conclusion": "failure", "steps": [{"name": "Build", "conclusion": "failure"}]}
@@ -2935,7 +2963,7 @@ class G5(unittest.TestCase):
                                   notes=["Process completed with exit code 137."])
         lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
         named = [x for x in lines if x.startswith("warn job 'check'")]
-        self.assertEqual(named, ["warn job 'check' (run 555, started 22:40:00Z) was stopped by this computer's memory "
+        self.assertEqual(named, ["warn job 'check' of .github/workflows/ci.yml (run 555, started 22:40:00Z) was stopped by this computer's memory "
                                  "limit (4.0 GB), not by your code failing; GitHub shows it as failed. The one way to "
                                  f"change the limit: `setup {REPO} --limits <processors>,<memory %>`. To run it again, once: "
                                  f"`status {REPO} --rerun 9001`."])
@@ -4155,7 +4183,7 @@ class P1a(unittest.TestCase):
                                     failed, notes=note)
             lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
             named = [x for x in lines if x.startswith("warn job 'check'")]
-            self.assertEqual(named, [f"warn job 'check' (run 555, started 22:40:00Z) was refused before its first step "
+            self.assertEqual(named, [f"warn job 'check' of .github/workflows/ci.yml (run 555, started 22:40:00Z) was refused before its first step "
                                      f"by this computer's guard: {why}. No step of it ran here; GitHub shows it as "
                                      f"failed, not a failing test of yours. To run it again, once: `status {REPO} "
                                      "--rerun 9001`."])
