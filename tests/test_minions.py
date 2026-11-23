@@ -276,7 +276,10 @@ class G1(unittest.TestCase):
         host = linux_host(runs={("gh", "auth", "status"): (0, SCOPES.replace(", 'workflow'", ""))})
         _, lines = look(StandIn(rows), host)
         self.assertTrue(any(x.startswith("need you: admin on the repository") for x in lines), lines)
-        self.assertIn("need you: your login lacks the `workflow` scope: run `gh auth refresh -s workflow`", lines)
+        need = [x for x in lines if x.startswith("need you: your login may not change workflow files")]
+        self.assertEqual(len(need), 1, lines)
+        self.assertIn(M.GH_SCOPE_DOCS, need[0])
+        self.assertNotIn("gh auth refresh", need[0])  # the owner's ruling, G8.16: never run as printed here
         host = linux_host(runs={("gh", "auth", "status"): (0, "  ✓ Logged in to github.com account x\n")})
         _, lines = look(StandIn(self.recent), host)
         self.assertTrue(any("could not read the token's scopes" in x for x in lines), lines)
@@ -2229,6 +2232,7 @@ class G9Version(unittest.TestCase):
         self.assertEqual(found - set(M.PRINTED_COMMANDS), set(), "printed, not in PRINTED_COMMANDS")
         self.assertEqual(set(M.PRINTED_COMMANDS) - found, set(), "in PRINTED_COMMANDS, no longer printed")
         self.assertNotIn("brew install gh", found)
+        self.assertNotIn("gh auth refresh -s workflow", found)  # the owner's ruling (11-23): what is missing + where
         if M.VERSION != "0.0.0":  # a release: every one was run as printed somewhere real
             self.assertEqual([c for c, where in M.PRINTED_COMMANDS.items() if not where], [],
                              "printed for the person and never run as printed")

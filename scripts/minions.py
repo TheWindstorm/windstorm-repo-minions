@@ -458,13 +458,15 @@ INSTALL_GH = {
     "debian": "sudo apt update && sudo apt install gh",  # P1a: a fresh cloud image has no package lists yet
 }
 GH_DOCS = "https://github.com/cli/cli#installation"
+# G8.16, the owner's ruling (11-23): `gh auth refresh -s workflow` acts only on a login made in a browser, so it was
+# never run as printed here; the line says what is missing and names GitHub's own manual page for adding a permission.
+GH_SCOPE_DOCS = "https://cli.github.com/manual/gh_auth_refresh"
 # G8.16 (R108): every system command this tool prints for the person, with where it was run exactly as printed (its
 # prompts answered by hand). Empty: not yet run as printed; its version is refused (test_strand) until it is, or the
 # line is replaced by what is missing and where to read. Our own subcommands are run by the tests themselves.
 PRINTED_COMMANDS = {
     "sudo apt update && sudo apt install gh": "",
     "gh auth login": "",
-    "gh auth refresh -s workflow": "",
     "sudo -v": "",
     "journalctl -u {}.service": "",
     "sudo systemctl start {}.timer": "",
@@ -577,7 +579,9 @@ def check_repository(gh: GitHub, host: Host, repo: str, rep: Report) -> dict | N
     elif "workflow" in scopes:
         rep.ok("your login has the `workflow` scope (needed to change workflow files)")
     else:
-        rep.need("your login lacks the `workflow` scope: run `gh auth refresh -s workflow`", blocks=False)
+        rep.need("your login may not change workflow files (it lacks GitHub's `workflow` permission), so a workflow "
+                 "cannot be moved to your runner until it has it. Adding a permission to your login is your step, in "
+                 f"your own terminal: read {GH_SCOPE_DOCS}", blocks=False)
     return data
 
 
@@ -3896,7 +3900,8 @@ def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str
     journal(host, "move-branch", f"{repo} {branch}")
     rs, _ = gh.api("POST", f"repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
     if rs != 201:
-        why = " (a workflow file needs the `workflow` right on your GitHub login: `gh auth refresh -s workflow`)" \
+        why = (" (a workflow file needs the `workflow` permission on your GitHub login; adding it is your step: read "
+               f"{GH_SCOPE_DOCS})") \
             if rs in (403, 404, 422) else ""
         rep.stop(f"GitHub refused the branch {branch} (HTTP {rs}){why}. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
         return None
