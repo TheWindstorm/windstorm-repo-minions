@@ -1282,6 +1282,20 @@
    "issue": 196,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R92",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: `setup <owner/repo> --limits 2,60` on the runner set up there stopped with \"... exists already: a runner for this repository is set up here ...; nothing was changed\", exit 2, while the tool's kill line named `setup --limits <processors>,<memory %>` (without the repository) the one way to change the limit.",
+   "promise": "`setup <owner/repo> --limits` changes an installed runner's limits in place, read back from systemd and recorded, touching nothing else; every line naming it names the repository, so it works as written.",
+   "codon": "G7.11",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_11_setup_limits_changes_an_installed_runner_in_place",
+   "proven": "",
+   "issue": 200,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
