@@ -1562,6 +1562,62 @@
    "issue": 264,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R112",
+   "seen": "2026-11-23, a cold start with the smallest model on a stock Ubuntu 24.04 virtual machine (run I): look's five-line block, move's three-line block and uninstall's one-line block were all reworded by the agent, so length was not the cause.",
+   "promise": "What the person must hear before an act is also shown by the command the person runs: setup and uninstall print it in the person's own terminal before anything changes and go on only when the person presses Enter there; where nobody can press a key they change nothing and print the command for the person.",
+   "codon": "G7.15",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_15_setup_and_uninstall_show_the_persons_lines_and_wait_for_a_key",
+   "proven": "",
+   "issue": 270,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R113",
+   "seen": "2026-11-23, the same cold start: the skill file's instruction to paste each numbered block whole, never shortened or reworded, was not followed.",
+   "promise": "Each block an agent relays is printed between a head line and a foot line that carry the instruction in the tool's own output: the numbered lines go to the person whole and word for word, and the agent's own words come only after the foot.",
+   "codon": "G7.16",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_16_a_relayed_block_has_a_head_and_a_foot_line",
+   "proven": "",
+   "issue": 271,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R114",
+   "seen": "2026-11-23, two computers set up by this tool served one private proof repository: the other one took the moved job twice after the merge, and move --verify said the job did not move.",
+   "promise": "move --verify counts a moved job that ran on any runner this tool registered for that repository and names which runner ran it; a runner it cannot identify is a third answer, said as such.",
+   "codon": "G3.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G3_7_verify_counts_a_job_on_another_computer_of_ours",
+   "proven": "",
+   "issue": 272,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R115",
+   "seen": "2026-11-23, the same cold start: after uninstall --all the agent offered an rm -r of the record uninstall keeps, a step the tool never printed.",
+   "promise": "The skill says an agent never deletes, and never offers to delete, what uninstall kept, unless the person asks in their own words in that conversation; the cold-start graders count each offer.",
+   "codon": "G8.18",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_18_the_skill_never_offers_to_delete_what_uninstall_kept",
+   "proven": "",
+   "issue": 273,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
