@@ -912,7 +912,8 @@ def sleep_setting(host: Host) -> str | None:
 
 # ------------------------------------------------------------------------------------------------------------ G1.7
 
-UPKEEP_PORTS = {22, 53, 67, 68, 123, 5353}
+UPKEEP_PORTS = {22: "remote login", 53: "name service", 67: "address service", 68: "address service",
+                123: "time service", 5353: "local name discovery"}
 
 
 def listening_ports(tcp_text: str) -> set[int]:
@@ -978,10 +979,18 @@ def what_lives_here(host: Host, rep: Report) -> dict:
         if rc == 0:
             out["runners"] = [x.split()[-1] for x in text.splitlines() if "actions.runner." in x]
     ports = sorted(out["ports"])
-    if ports:
-        rep.warn(f"{len(ports)} port(s) open to the network here: {', '.join(map(str, ports[:20]))}"
-                 f"{' ...' if len(ports) > 20 else ''}")
-    else:
+    # R75: the computer's own upkeep (remote login and the like) is normal on every Linux machine: an ok line that
+    # says what it is, so an agent does not turn it into a question for the person; any other port stays a warn.
+    upkeep = [p for p in ports if p in UPKEEP_PORTS]
+    other = [p for p in ports if p not in UPKEEP_PORTS]
+    if upkeep:
+        rep.ok(f"{plural(len(upkeep), 'port')} open to the network for this computer's own upkeep: "
+               + ", ".join(f"{p} ({UPKEEP_PORTS[p]})" for p in upkeep)
+               + "; normal on most computers, not counted as something live")
+    if other:
+        rep.warn(f"{plural(len(other), 'port')} open to the network here: {', '.join(map(str, other[:20]))}"
+                 f"{' ...' if len(other) > 20 else ''}")
+    if not ports:
         rep.ok("no port open to the network")
     if out["containers"]:
         rep.warn(f"{len(out['containers'])} container(s) of yours running: {', '.join(out['containers'][:20])}")
@@ -3569,8 +3578,17 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
                     rep.warn(f"moved: {path} job {w['id']} ran on {where} and ended {j.get('conclusion')}: that is "
                              f"the job's own result; its log is at {j.get('html_url')}")
     if rep.waiting and not rep.stopped:
-        rep.wait(f"for one finished run of each moved workflow of {repo}; nothing is called moved before that. "
-                 f"Next: `move {repo} --verify` again after the next push or pull request")
+        # R76: a run that waits on our runner while GitHub shows it offline is said as that, with the one command
+        # that starts it; "after the next push" would send the person to make a push the run does not need.
+        s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+        listed = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == mine["name"]]
+        seen = (listed[0].get("status") if listed else "not listed") if s == 200 else None
+        if seen and seen != "online":
+            rep.wait(f"on our runner {mine['name']}: GitHub shows it {seen}, so the moved jobs wait for it; nothing is "
+                     f"called moved before one has run here. Next: `resume {repo}`, then `move {repo} --verify` again")
+        else:
+            rep.wait(f"for one finished run of each moved workflow of {repo}; nothing is called moved before that. "
+                     f"Next: `move {repo} --verify` again after the next push or pull request")
         return
     if all_ok and not rep.stopped:
         data = load_state(host)
