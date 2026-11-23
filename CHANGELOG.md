@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `setup` now asks before it runs jobs on a computer that serves something live, as `look` said it would: it
+  names what look found and changes nothing until the person says yes in words (`setup OWNER/NAME
+  --beside-live-too`) or chooses another computer. Any port open to the network counts, except the computer's
+  own upkeep; a port on 127.0.0.53 (a stock Ubuntu's own name service) is no longer counted as open to the
+  network (G1.7, row R72).
 - A setup cut part-way (for example when sudo's permission ran out) is found again: `uninstall` takes the
   half-made runner away, and `setup` run again takes it away first, read back, then sets up fresh. A read as
   root that sudo refused is said as not read in the census, never as none (G2.12, row R71).

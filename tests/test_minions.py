@@ -373,6 +373,22 @@ class G1(unittest.TestCase):
         _, lines = look(StandIn(self.recent), host)
         self.assertIn("ok no port open to the network", lines)
         self.assertFalse(any("serves something live" in x for x in lines))
+        # R72: loopback is all of 127.0.0.0/8 (a stock Ubuntu's own name service listens on 127.0.0.53) and 127.x
+        # mapped into IPv6; the computer's own upkeep (here remote login) is not something live; any other port is,
+        # and the look's record keeps it for setup.
+        self.assertEqual(M.listening_ports("  sl\n 0: 3500007F:0035 00000000:0000 0A\n"
+                                           " 1: 0000000000000000FFFF00000100007F:1F90 00000000:0000 0A\n"), set())
+        host = linux_host(files={"/proc/net/tcp": "  sl\n 0: 00000000:0016 00000000:0000 0A\n"
+                                                  " 1: 3500007F:0035 00000000:0000 0A\n"})
+        _, lines = look(StandIn(self.recent), host)
+        self.assertIn("warn 1 port(s) open to the network here: 22", lines)
+        self.assertFalse(any("serves something live" in x for x in lines), lines)
+        self.assertFalse(M.load_state(host)["looks"][REPO]["survey"]["serves"])
+        host = linux_host(files={"/proc/net/tcp": "  sl\n 0: 00000000:1F98 00000000:0000 0A\n"})
+        _, lines = look(StandIn(self.recent), host)
+        self.assertTrue(any("serves something live" in x for x in lines), lines)
+        s = M.load_state(host)["looks"][REPO]["survey"]
+        self.assertEqual((s["serves"], s["serves_what"]), (True, "port(s) open to the network: 8088"))
 
     def test_G1_12_other_peoples_things_are_counted_never_named(self):
         host = linux_host(which=("gh", "sudo", "systemctl", "docker"),
@@ -598,7 +614,7 @@ def setup_gh(sha, overrides=None):
 def fresh_look(host, minutes=5, stopped=False, survey=True):
     when = (M.dt.datetime.now(M.dt.timezone.utc) - M.dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
     s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024,
-         "free": 100 * 1024 ** 3} if survey else {}
+         "free": 100 * 1024 ** 3, "serves": False, "serves_what": ""} if survey else {}
     M.save_state(host, {"looks": {REPO: {"time": when, "stopped": stopped, "survey": s}}})
 
 
@@ -688,7 +704,7 @@ class G2(unittest.TestCase):
         self.assertFalse(entry["stopped"])
         self.assertEqual(entry["survey"]["cores"], 8)
         self.assertEqual(set(entry["survey"]), {"system", "machine", "cores", "mem", "disk", "free", "battery", "lid", "os",
-                                                "sleep_delay"})
+                                                "sleep_delay", "serves", "serves_what"})
         # a look of a public repository is a look with a stop: setup refuses it (with G1.1)
         host2, sha = setup_host()
         host2._state = host.state_dir()
@@ -814,6 +830,40 @@ class G2(unittest.TestCase):
         for name in os.listdir(host.state_dir()):
             with open(os.path.join(host.state_dir(), name), errors="replace") as f:
                 self.assertNotIn(TOKEN, f.read(), name)
+
+    def test_G1_7_setup_asks_before_jobs_run_beside_something_live(self):
+        # Seen on a stock VM (2026-11-23): look warned "setup will ask", and setup never asked (row R72).
+        host, sha = setup_host()
+        fresh_look(host)
+        data = M.load_state(host)
+        data["looks"][REPO]["survey"].update(serves=True, serves_what="port(s) open to the network: 8088")
+        M.save_state(host, data)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        self.assertTrue(lines[-1].startswith("need you: this computer serves something live (port(s) open to the "
+                                             "network: 8088)"), lines)
+        self.assertIn("Nothing was changed", lines[-1])
+        self.assertIn(f"`setup {REPO} --beside-live-too`", lines[-1])
+        self.assertEqual(admin_steps(host), [])
+        self.assertFalse(host.validated)
+        # The person's yes in words: setup goes on, and says what it runs beside.
+        self.assertTrue(M.parser().parse_args(["setup", REPO, "--beside-live-too"]).beside_live)
+        self.assertFalse(M.parser().parse_args(["setup", REPO]).beside_live)
+        out = io.StringIO()
+        code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, beside_live=True)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn("ok this computer serves something live (port(s) open to the network: 8088); you said yes to "
+                      "jobs beside it, and they get only the limits below", lines)
+        # A look from before this version did not record it: a new look, never a silent no.
+        host, sha = setup_host()
+        fresh_look(host)
+        data = M.load_state(host)
+        del data["looks"][REPO]["survey"]["serves"]
+        M.save_state(host, data)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(f"run `look {REPO}` again", lines[-1])
 
     def test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked(self):
         # Asked once, in this terminal; every admin step after it is `sudo -n` (it never asks again by itself).
@@ -1676,7 +1726,7 @@ class G4(unittest.TestCase):
         self.assertGreaterEqual(int(M.slice_limits(small, (1, 70))["MemoryMax"]), M.MEMORY_FLOOR)
         host, sha = setup_host()
         M.save_state(host, {"looks": {REPO: {"time": M.dt.datetime.now(M.dt.timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"), "stopped": False, "survey": small}}})
+            "%Y-%m-%dT%H:%M:%SZ"), "stopped": False, "survey": dict(small, serves=False)}}})
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP)
         self.assertEqual(admin_steps(host), [])
