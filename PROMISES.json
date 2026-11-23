@@ -143,7 +143,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G4_2_the_runner_runs_low_and_capped",
    "proven": "",
    "issue": 16,
    "moved_why": "",
