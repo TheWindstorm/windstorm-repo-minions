@@ -1389,7 +1389,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G6_10_uninstall_keeps_the_persons_record_in_one_folder_they_own",
    "proven": "",
    "issue": 228,
    "moved_why": "",

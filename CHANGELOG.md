@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `uninstall` keeps your record of what the tool did on your computer: the journal of every step and each job's
+  start and end move into one plain-text folder you own, `~/repo-minions-record`, and the census names it last.
+  Nothing of the tool is left installed or running. `uninstall --all --delete-record` deletes the record too, once
+  you type delete at your own terminal. Before, `uninstall --all` deleted that record (G6.10, INV6, row R99).
 - The skill says what keeps running after Claude Code's own `plugin uninstall` (the runner, the watch, the
   limits: they do your jobs) and the one command that takes them off, run from the copy setup installed. A test
   runs `uninstall --all` from that copy alone, to the end (G6.11, row R100).
