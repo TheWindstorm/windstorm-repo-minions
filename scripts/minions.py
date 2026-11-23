@@ -2730,6 +2730,25 @@ def queued_jobs(gh: GitHub, repo: str) -> list[dict]:
     return out
 
 
+def copy_version_line(host: Host) -> tuple[str, str]:
+    """G4.10 (R101): the version of the copy the watch runs, against this tool's own. Three answers (rule 6): the
+    same ("ok"), different ("warn", which is older and the one step), or not read ("warn", never "same")."""
+    text = host.read(TOOL_COPY)
+    m = re.search(r'^VERSION = "(\d+\.\d+\.\d+)"', text or "", re.M)
+    if not m:
+        return "warn", (f"the version of the copy the watch runs ({TOOL_COPY}) could not be read"
+                        + ("" if text is None else ": it names none") + "; `setup <owner/repo>` again puts this "
+                        f"version's copy in place")
+    theirs = m.group(1)
+    if theirs == VERSION:
+        return "ok", f"the watch runs this version of the tool ({VERSION})"
+    older = tuple(int(x) for x in theirs.split(".")) < tuple(int(x) for x in VERSION.split("."))
+    return "warn", (f"the watch runs version {theirs} of the tool, and this is {VERSION}: "
+                    + ("the watch runs the older code. `setup <owner/repo>` again puts this version's copy in place"
+                       if older else "this tool is the older one. Run the newer tool, or `setup <owner/repo>` "
+                       "with this one to put its copy back"))
+
+
 def watch_heartbeat(data: dict, now: dt.datetime, slept_now: float | None = None) -> tuple[bool, str]:
     """G5.3: a heartbeat older than three intervals of waking time is "the watch is not running". R83: the watch's
     timer counts only waking time, so time this computer slept since the last pass is not counted against it."""
@@ -2845,6 +2864,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now, host.slept_s())
     rest.append(("ok" if ok_ else "warn", words))
+    rest.append(copy_version_line(host))  # G4.10: a watch running older code is said
     w = data.get("watch") or {}
     every = int(w.get("every_s") or WATCH_EVERY_S)
     for rp in repos:  # G5.15: a blind watch is a stop line, first, never "ok"
@@ -4132,6 +4152,10 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
     else:
         rep.warn(f"the watch's timer is {active.strip() or 'not read'}: `setup` again puts it back")
         broken.append("the watch")
+    kind, words = copy_version_line(host)  # G4.10 (R101)
+    (rep.ok if kind == "ok" else rep.warn)(words)
+    if kind != "ok" and "could not be read" not in words:
+        broken.append("the watch's copy of the tool")
     if broken:
         rep.stop(f"{len(broken)} promise(s) not kept here: {', '.join(broken)}. Nothing was changed: run the command "
                  "each line above names, then `doctor` again")

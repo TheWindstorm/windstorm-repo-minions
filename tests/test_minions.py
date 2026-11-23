@@ -130,7 +130,11 @@ class FakeHost(M.Host):
 
     def run(self, argv, timeout=20):
         self.ran.append(tuple(argv))
-        return self._answer(argv)
+        rc, out = self._answer(argv)
+        if rc == 0 and argv[:3] == ["sudo", "-n", "install"] and argv[-1] == M.TOOL_COPY:  # G4.10: the copy is there
+            with open(argv[-2], encoding="utf-8") as f:
+                self.files[M.TOOL_COPY] = f.read()
+        return rc, out
 
     def read(self, path):
         return self.files.get(path)
@@ -752,6 +756,31 @@ def run_doctor(host, sha, **kw):
 
 
 class G2(unittest.TestCase):
+    def test_G4_10_doctor_and_status_name_an_older_copy_running_the_watch(self):
+        # Found 2026-11-23 (row R101): after the plugin updates, the watch runs the copy setup installed until setup
+        # runs again; nothing said so.
+        host, sha = doctor_world()
+        self.assertIn(f'VERSION = "{M.VERSION}"', host.files[M.TOOL_COPY])  # setup put this version's copy there
+        status = lambda: run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))[1]
+        code, lines = run_doctor(host, sha)
+        self.assertIn(f"ok the watch runs this version of the tool ({M.VERSION})", lines)
+        self.assertTrue(lines[-1].startswith("ok every promise"), lines)
+        self.assertIn(f"ok the watch runs this version of the tool ({M.VERSION})", status())
+        # The plugin updated, the copy did not: doctor names it as a promise not kept, status says it.
+        with mock.patch.object(M, "VERSION", "99.0.0"):
+            code, lines = run_doctor(host, sha)
+            line = next(x for x in lines if "the watch runs version" in x)
+            self.assertTrue(line.startswith("warn ") and "the watch runs the older code" in line, line)
+            self.assertIn("`setup <owner/repo>` again puts this version's copy in place", line)
+            self.assertTrue(lines[-1].startswith("stop ") and "the watch's copy of the tool" in lines[-1], lines[-1])
+            self.assertTrue(any("the watch runs the older code" in x for x in status()))
+        # Not read is a third answer, never "the same" (rule 6), and not a broken promise.
+        del host.files[M.TOOL_COPY]
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(any(x.startswith("warn the version of the copy the watch runs") and "could not be read" in x
+                            for x in lines), lines)
+        self.assertFalse(any("the watch runs this version" in x for x in lines))
+
     def test_G7_6_version_0_1_says_and_holds_one_repository_per_computer(self):
         host, sha = setup_host()
         fresh_look(host)
