@@ -34,7 +34,7 @@ import sys
 import time
 import urllib.request
 
-VERSION = "0.0.0"
+VERSION = "0.1.0"
 
 # G8.3: every way a command can end. The worst line decides among 0, 2, 3 and 4.
 EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 64, 130

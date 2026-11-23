@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (the tag's day, New York)
+
+The first release. Linux with systemd; one private repository per computer. Every row due in 0.1.0 in
+`PROMISES.json` has its test, and each row says whether, where and how it was seen on a real machine. They were
+seen on stock virtual machines (Ubuntu 24.04.5, Ubuntu 22.04.5, Debian 12) against a private repository, with
+Claude Code 2.1.330 following the skill from a cold start. Not seen yet, by name: a laptop (battery, lid, its own
+sleep, a change of network); an account whose GitHub Actions start no jobs; GitHub's own removal of a runner after
+14 days offline; a repository really turned public with a runner on it; GitHub's API limit running out while the
+tool works; other Linux distributions, macOS and Windows.
 
 - A job held at our memory limit is named. With the default limits a job that outgrows them is not killed: the
   kernel holds it at the high mark and it barely moves, perhaps until GitHub's own time limit. The watch now reads
