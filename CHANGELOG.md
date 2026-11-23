@@ -14,6 +14,21 @@ Since those cold starts one default changed: a job that needs more memory than i
 reaches the cap, by name, instead of running slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises
 the cap (row R94).
 
+- `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
+  anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
+  Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for
+  you (G7.15, row R112).
+- Every block of lines for you that an agent passes on comes between a head and a foot line saying, in the tool's
+  own output, that it goes to you whole and word for word (G7.16, row R113).
+- The move pull request opens with move's own lines about waiting checks, restarts and sleep, and a job's tools, so
+  you read them on the page where you decide to merge (G7.17, row R116).
+- `move --verify` counts a moved job that ran on another computer of yours with this tool's runner, and names it; a
+  runner it cannot identify is said as such (G3.7, row R114).
+- After `uninstall --all` the census names the folder the skill was downloaded into: still there and yours to keep
+  or delete, or gone (G6.13, row R117). The skill says an agent never deletes, or offers to delete, what uninstall
+  kept (G8.18, row R115), and never looks into your keys or saved logins (G8.17, row R110).
+- Each line for you is said where it matters: before setup, before the merge, when status names a job the memory
+  cap stopped (G7.14, row R111). The cost line points to GitHub's own page and claims nothing (G7.13, row R109).
 - Every system command the tool prints for you is one that was run exactly as printed on that kind of system; the
   tool lists them. Off Debian and Ubuntu, the GitHub CLI's install line names no command, only where to read. Lines
   name this computer's values instead of placeholders (G8.16, row R108).
