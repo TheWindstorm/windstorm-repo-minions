@@ -704,7 +704,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again",
-   "proven": "",
+   "proven": "Seen once, 2026-11-23, a stock Ubuntu 22.04.5 virtual machine (systemd 249) and the private proof repository: a job cut by a 12-minute sleep was named as cut by this computer going to sleep, read from the older wording \"Entering sleep state\", and a rerun offered once. The newer wording was seen on Ubuntu 24.04.5 (the night of 2026-11-22).",
    "issue": 84,
    "moved_why": "",
    "moved_by_person": ""
@@ -1082,7 +1082,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_10_no_github_cli_or_login_is_the_first_need_you",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 08:45-08:46 UTC: with gh missing, and with gh installed but logged out, look's need-you line said that this skill reaches GitHub only through the GitHub CLI and its own login, that no SSH key and no other saved login is used or looked for, and that the step is the person's.",
    "issue": 150,
    "moved_why": "",
    "moved_by_person": ""
@@ -1096,7 +1096,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_12_other_peoples_things_are_counted_never_named",
-   "proven": "",
+   "proven": "Seen once on the fix, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 09:00 UTC, with another user's runner service running: the census after uninstall and after uninstall --all counted it and named none, the slice line said kept until uninstall --all, and the other user's service stayed active.",
    "issue": 154,
    "moved_why": "",
    "moved_by_person": ""
@@ -1154,6 +1154,34 @@
    "test": "test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure",
    "proven": "",
    "issue": 160,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R83",
+   "seen": "2026-11-23, a stock Ubuntu 22.04 virtual machine: 2 minutes after waking from a 12-minute sleep, status began with a stop saying the watch was not running and every job would be refused, while the watch's timer was active and due 3 minutes after the wake (the timer counts only waking time).",
+   "promise": "status judges the watch's heartbeat by waking time: time the computer slept since the last pass is not counted against it, and the line says so; a watch that misses three intervals of waking time is still called stopped.",
+   "codon": "G5.3",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_3_the_watch_runs_and_its_silence_is_noticed",
+   "proven": "",
+   "issue": 163,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R84",
+   "seen": "2026-11-23, a stock Ubuntu 22.04 virtual machine, the runner's listener paused (SIGSTOP) during a job to hold one side back: status said `ok ... busy` while GitHub said offline and busy and a job process ran here.",
+   "promise": "status says busy only when GitHub says online and busy and a job process runs here; GitHub showing the runner offline while a job runs here is said as the two sides disagreeing, as a warn.",
+   "codon": "G5.2",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_2_idle_only_when_both_sides_agree",
+   "proven": "",
+   "issue": 166,
    "moved_why": "",
    "moved_by_person": ""
   }
