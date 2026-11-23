@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- New command `doctor [OWNER/NAME]` (G8.4, INV8): it reads back every promise of the install on this computer as
+  it is now (the runner's user, its folder and credential files, the boot service, the limits, the job hooks, the
+  disk floor, the runner's version, one copy only, both sides with our labels, the watch), one line each, and
+  changes nothing else. The last line counts the promises not kept, each named above with its next step (exit 2).
+  A setup or removal cut part-way is undone or finished, read back. Without admin rights or a terminal to ask,
+  what only an admin can read is said as not read.
 - On a computer with one processor, the limits sentence in `look` and `setup` says "1 of 1" and, plainly, that
   while a job runs it uses all of it, at low priority, and everything else there will be slow (G7.8).
 - `status`'s warning for a job waiting on an offline runner names the command that starts it: `resume OWNER/NAME`.

@@ -656,6 +656,26 @@ def admin_steps(host):
     return [a for a in host.ran if a[:1] == ("sudo",) and a[:3] != ("sudo", "-n", "true")]
 
 
+def doctor_world():
+    """A computer after a real setup, and a GitHub that lists our runner online and idle with our labels."""
+    host, sha = setup_host()
+    fresh_look(host)
+    code, lines = run_setup(setup_gh(sha), host)
+    assert code == M.EXIT_OK, lines
+    lim = M.load_state(host)["runners"][REPO]["limits"]
+    host.runs[("systemctl", "show", "minions.slice")] = (0, f"CPUQuotaPerSecUSec={lim['cores']}s\n"
+                                                            f"MemoryHigh={lim['MemoryHigh']}\nMemoryMax={lim['MemoryMax']}\n")
+    host.runs[("sudo", "-n", "test", "-e", FOLDER)] = (0, "")
+    host.runs[("sudo", "-n", "stat", "-c", "%a", "/home/minions-runner")] = (0, "750\n")
+    return host, sha
+
+
+def run_doctor(host, sha, **kw):
+    out = io.StringIO()
+    code = M.doctor(REPO, host=host, gh=setup_gh(sha), out=out, interactive=kw.pop("interactive", False), **kw)
+    return code, out.getvalue().splitlines()
+
+
 class G2(unittest.TestCase):
     def test_G7_6_version_0_1_says_one_repository_and_more_next(self):
         host, sha = setup_host()
@@ -2793,6 +2813,49 @@ class G6(unittest.TestCase):
 
 
 class G8(unittest.TestCase):
+    def test_G8_4_doctor_checks_install_and_finishes_half_done_steps(self):
+        # Every promise of G2 and G4 read back as kept, one line each, and nothing changed.
+        host, sha = doctor_world()
+        host.ran.clear()
+        code, lines = run_doctor(host, sha)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        for want in ("is in its own group only, no admin rights", "the credential files are 600",
+                     "the boot service is enabled, in minions.slice", "the limits read back: at most 4 processors and 60 % of",
+                     "the job hooks are root's and read-only to the runner", "free for the work folders, over the",
+                     "runner version 2.338.2", "both sides: GitHub lists minions-box-1 online, idle",
+                     "the watch's timer is active"):
+            self.assertTrue(any(want in x for x in lines), (want, lines))
+        self.assertEqual(lines[-1], "ok every promise of the install read back as kept")
+        changed = [a for a in admin_steps(host) if a[2] not in ("stat", "test", "cat", "-u")]
+        self.assertEqual(changed, [], "doctor changes nothing it was not asked to finish")
+        # A promise not kept: named with its way on; the last line counts them, exit 2; still nothing changed.
+        host.runs[("sudo", "-n", "stat", "-c", "%a %U %n")] = (0, f"644 minions-runner {FOLDER}/.credentials\n"
+                                                                    f"600 minions-runner {FOLDER}/.runner\n"
+                                                                    f"600 minions-runner {FOLDER}/.credentials_rsaparams\n")
+        host.runs[("id", "-nG", "minions-runner")] = (0, "minions-runner docker\n")
+        host.ran.clear()
+        code, lines = run_doctor(host, sha)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertTrue(any("credential files are not 600" in x for x in lines), lines)
+        self.assertTrue(any("minions-runner is in other groups (docker)" in x for x in lines), lines)
+        self.assertTrue(lines[-1].startswith(f"stop 2 promise(s) not kept here: {REPO} runner user, {REPO} credential "
+                                             "files. Nothing was changed"), lines)
+        self.assertFalse([a for a in admin_steps(host) if a[2] in ("chmod", "gpasswd", "rm")])
+        # No admin rights open and no terminal to ask: what only an admin reads is "not read", never "kept".
+        host, sha = doctor_world()
+        refuse_sudo(host)
+        code, lines = run_doctor(host, sha)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue(lines[0].startswith("warn admin rights are not open here and no terminal can ask"), lines)
+        self.assertIn(f"warn {REPO}: the credential files: not read", lines)
+        self.assertIn(f"warn {REPO}: the job hooks: not read", lines)
+        self.assertFalse([x for x in lines if "credential files are 600" in x], lines)
+        self.assertEqual(lines[-1], "ok every promise of the install read back as kept, of those that could be read")
+        # Nothing of ours here: nothing to check.
+        code, lines = run_doctor(setup_host()[0], sha)
+        self.assertEqual((code, lines), (M.EXIT_OK, [f"ok no runner of ours serves {REPO} on this computer: nothing "
+                                                     "to check"]))
+
     def test_G8_3_commands_and_line_kinds_are_exactly_these(self):
         # The commands built so far are the plan's own, in its order (a subsequence of it); more come with genes.
         plan = ("look", "setup", "move", "lint", "status", "watch", "hold", "resume", "drain", "doctor", "uninstall",
@@ -3256,6 +3319,46 @@ class INV(unittest.TestCase):
         self.assertEqual(code, M.EXIT_STOP, lines)
         self.assertIn("was not private", lines[-1])
 
+
+    def test_INV8_an_interrupted_step_is_finished_or_undone(self):
+        # A setup cut part-way is undone by doctor, read back; it says how to set up again.
+        host, sha = setup_host()
+        fresh_look(host)
+        config = ("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT)
+        host.runs[config] = (1, "sudo: a password is required\n")
+        none = (200, {"total_count": 0, "runners": []})
+        listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
+        self.assertEqual(run_setup(setup_gh(sha, {listing: none}), host)[0], M.EXIT_STOP)
+        self.assertIn(REPO, M.load_state(host)["setting_up"])
+        # Without a terminal or admin rights, doctor touches nothing and says how.
+        host.runs[("sudo", "-n", "true")] = (1, "sudo: a password is required\n")
+        out = io.StringIO()
+        code = M.doctor(REPO, host=host, gh=setup_gh(sha, {listing: none}), out=out, interactive=False)
+        self.assertEqual(code, M.EXIT_NEED, out.getvalue())
+        self.assertIn(f"then run `doctor {REPO}` again", out.getvalue())
+        self.assertIn(REPO, M.load_state(host)["setting_up"])
+        host.runs[("sudo", "-n", "true")] = (0, "")
+        out = io.StringIO()
+        code = M.doctor(REPO, host=host, gh=setup_gh(sha, {listing: none}), out=out, interactive=False)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue(any(x.startswith(f"ok a setup of {REPO} here was cut part-way: what it made is taken away")
+                            for x in lines), lines)
+        self.assertIn(f"ok uninstalled: {REPO} has no runner on this computer now", lines)
+        self.assertIn(f"ok `setup {REPO}` sets it up again, fresh, when you want it", lines)
+        state = M.load_state(host)
+        self.assertNotIn("setting_up", state)
+        self.assertNotIn(REPO, state.get("runners") or {})
+        # A removal cut part-way (the record says removing) is finished, read back.
+        gh, world, host = remove_setup(interrupt_on=lambda a: a[:3] == ["sudo", "-n", "rm"])
+        self.assertEqual(M.main(["uninstall", REPO], host=host, out=io.StringIO(), gh=gh), M.EXIT_INTERRUPTED)
+        self.assertTrue(M.load_state(host)["runners"][REPO]["removing"])
+        out = io.StringIO()
+        code = M.doctor(REPO, host=host, gh=gh, out=out, interactive=False)
+        lines = out.getvalue().splitlines()
+        self.assertTrue(any(x.startswith(f"ok a removal of {REPO} here was cut part-way") for x in lines), lines)
+        self.assertIn(f"ok uninstalled: {REPO} has no runner on this computer now", lines)
+        self.assertNotIn(REPO, M.load_state(host).get("runners") or {})
 
     def test_INV4_never_kill_a_running_job(self):
         # Every command that could stop the runner, run while a job runs: it holds and waits, and neither stops the
