@@ -5,6 +5,13 @@
 - The skill has evals, in the skill-creator layout (`skills/repo-minions/evals/evals.json`): the cold-start runs
   written as cases, each with the sentence the agent is given, what the person must be told and what must not
   happen (G9.9, row R103).
+- `uninstall` keeps your record of what the tool did on your computer: the journal of every step and each job's
+  start and end move into one plain-text folder you own, `~/repo-minions-record`, and the census names it last.
+  Nothing of the tool is left installed or running. `uninstall --all --delete-record` deletes the record too, once
+  you type delete at your own terminal. Before, `uninstall --all` deleted that record (G6.10, INV6, row R99).
+- The skill says what keeps running after Claude Code's own `plugin uninstall` (the runner, the watch, the
+  limits: they do your jobs) and the one command that takes them off, run from the copy setup installed. A test
+  runs `uninstall --all` from that copy alone, to the end (G6.11, row R100).
 - `doctor` and `status` say when the watch runs a different version of the tool than the one you run, which is
   older, and the one step that puts this version's copy in place. After an update of the skill, the watch went on
   running the old copy with nothing said (G4.10, row R101).
