@@ -165,7 +165,8 @@ amount, a promise that something costs nothing, or that the person spends less: 
 - **The person's home.** In the person's home folder this skill uses only these: the clone
   (`~/windstorm-repo-minions`), the GitHub CLI's own login (`~/.config/gh`, written by the person's `gh auth login`),
   the tool's notes (`~/.minions`), and after uninstall the person's record (`~/repo-minions-record`). It changes no
-  other file of theirs; neither do you.
+  other file of theirs; neither do you. Installing the plugin is Claude Code's own act: it writes only Claude Code's
+  plugin places. The skill itself makes nothing until the person asks for runners to be set up.
 - **What uninstall kept.** Never delete, and never offer to delete, what an uninstall kept (the person's record of
   what this tool did), unless the person asks for it in their own words in this conversation.
 - **Merge rules.** Never tell the person that required checks or branch protection hold their merges unless look
