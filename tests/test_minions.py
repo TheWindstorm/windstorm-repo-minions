@@ -2677,6 +2677,12 @@ class G6(unittest.TestCase):
         # Cut again; then the same command again, as the stop says: setup takes the half-made runner away first,
         # read back, and ends set up.
         self.assertEqual(run_setup(setup_gh(sha, {listing: none}), host)[0], M.EXIT_STOP)
+        # (Seen on the VM: an `uninstall` that stopped to ask for the password before it removed anything still
+        # leaves the cut setup to be found by `setup` again.)
+        sudo_true = host.runs[("sudo", "-n", "true")]
+        host.runs[("sudo", "-n", "true")] = (1, "sudo: a password is required\n")
+        self.assertEqual(M.uninstall(REPO, host=host, gh=gh, out=io.StringIO(), interactive=False), M.EXIT_NEED)
+        host.runs[("sudo", "-n", "true")] = sudo_true
         host.runs[config] = good
         token = ("POST", f"repos/{REPO}/actions/runners/registration-token")
         gh = setup_gh(sha)

@@ -1850,7 +1850,9 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if ((known.get("runners") or {}).get(repo) or {}).get("gone_on_github"):
         reregister(gh, host, repo, known, rep)  # G5.12
         return rep.code()
-    if adopt_unfinished(host, known, {repo}) or (known.get("runners") or {}).get(repo, {}).get("removing"):
+    adopt_unfinished(host, known, {repo})
+    left = (known.get("runners") or {}).get(repo) or {}
+    if left.get("unfinished") or left.get("removing"):
         # R71: run again after a cut, setup finishes it: what the cut setup made is taken away, read back, then fresh.
         rep.ok(f"a setup or removal of {repo} here was cut part-way: what it made is taken away first, read back, "
                "then setup starts fresh")
