@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The skill has evals, in the skill-creator layout (`skills/repo-minions/evals/evals.json`): the cold-start runs
+  written as cases, each with the sentence the agent is given, what the person must be told and what must not
+  happen (G9.9, row R103).
 - `doctor` and `status` say when the watch runs a different version of the tool than the one you run, which is
   older, and the one step that puts this version's copy in place. After an update of the skill, the watch went on
   running the old copy with nothing said (G4.10, row R101).

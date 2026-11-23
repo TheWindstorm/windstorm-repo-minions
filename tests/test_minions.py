@@ -2087,6 +2087,31 @@ def run_cmd(fn, *a, **kw):
 
 
 class G9Version(unittest.TestCase):
+    def test_G9_9_the_evals_are_the_cold_start_cases_and_each_is_whole(self):
+        # Rule 13 (row R103): the skill's evals, in the skill-creator layout, are the cold-start runs written as
+        # cases: the sentence, what must be said, what must not happen.
+        skill_dir = os.path.join(ROOT, "skills", "repo-minions")
+        with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
+            ev = json.load(f)
+        with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+            name = re.search(r"^name: *(\S+)", f.read(), re.M).group(1)
+        self.assertEqual(ev["skill_name"], name)
+        ids = [e["id"] for e in ev["evals"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        for e in ev["evals"]:
+            self.assertIsInstance(e["id"], int)
+            self.assertTrue(e["prompt"].strip() and e["expected_output"].strip(), e["id"])
+            self.assertIsInstance(e.get("files"), list, e["id"])
+            self.assertTrue(e["expectations"] and all(isinstance(x, str) and x.strip() for x in e["expectations"]))
+            self.assertTrue(any(x.startswith("Must not:") for x in e["expectations"]), f"case {e['id']}: no must-not")
+        # Every line look can tell the person is named by a case, by its opening words.
+        said = " ".join(x for e in ev["evals"] for x in e["expectations"])
+        host = linux_host(files={"/sys/class/power_supply/BAT0/type": "Battery\n"},
+                          dirs={"/sys/class/power_supply": ["BAT0"]})
+        for t in tells_of(look(StandIn(load("look-recent-runs.jsonl")), host)[1]):
+            opening = " ".join(t.replace(REPO, "OWNER/NAME").split()[:4])
+            self.assertIn(opening, said, f"no eval case names the tell line: {t[:80]}")
+
     def test_G9_8_one_version_is_named_everywhere(self):
         # The tool, the manifest (where it exists: on a release branch) and the changelog's top entry (once it is a
         # version) name one version; a half-bumped branch fails here, before a tag.
