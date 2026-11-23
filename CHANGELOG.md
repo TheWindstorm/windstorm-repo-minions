@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `look`'s block for the person carries only what the person must hear: no promise about a later version, no
+  "(seen)", and the tools line says only what to do. A test holds a bound on the block so it cannot grow back. In a
+  cold start the smallest model kept every line in meaning but lost three such clauses (G7.12, row R104).
+- `uninstall --all` prints the census last, and the census names this tool's state folder.
 - `look`'s block for the person also says what a job too big for the memory cap does, and that a job has only the
   tools installed on this computer. In a cold start these were in the README only and did not reach the person
   (G7.10, row R98).

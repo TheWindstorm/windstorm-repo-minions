@@ -141,7 +141,7 @@ class Skill(unittest.TestCase):
                              {"cores": 1, "total_cores": 2, "pct": 60, "MemoryMax": str(4 * 1024 ** 3)}, None, rep)
         rep.code()  # the numbered block is printed when the command ends
         said = out.getvalue()
-        self.assertIn("A short sleep only delays it; a sleep of more than about 10 minutes fails it on GitHub (seen).",
+        self.assertIn("A short sleep only delays it; a sleep of more than about 10 minutes fails it on GitHub.",
                       said)
 
     def test_G7_5_merge_rules_are_said_only_when_read(self):
@@ -169,7 +169,7 @@ class Skill(unittest.TestCase):
                       "for.", before)
 
     def test_the_skill_carries_the_one_repository_sentence(self):
-        self.assertIn("This version serves one repository per computer; more come in the next version.", flat(text()))
+        self.assertIn("This version serves one repository per computer.", flat(text()))
 
     def test_the_skill_carries_the_safety_rules(self):
         safety = flat(section(text(), "Safety rules"))
