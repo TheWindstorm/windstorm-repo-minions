@@ -618,7 +618,7 @@ jobs:
         host.now = lambda: M.dt.datetime(2026, 11, 22, 18, 0, tzinfo=M.dt.timezone.utc)
         _, lines = look(StandIn(self.recent), host)
         line = [x for x in lines if "billing page" in x][0]
-        self.assertTrue(TELL.sub("", line).startswith("GitHub's billing page, read 2026-11-22 18:00 UTC"), line)
+        self.assertTrue(line.startswith("ok GitHub's billing page, read 2026-11-22 18:00 UTC"), line)
         self.assertIn("Self-hosted runners.", line)
         self.assertIn(M.COST_URL, line)
         for page in (OSError("offline"), "<html><p>Something else entirely.</p></html>"):
@@ -2301,7 +2301,7 @@ class G5(unittest.TestCase):
         host.files[jobs] = f"start {t - 600} 11 1 0 build\nend {t - 500} 11 1 0 build\nstart {t} 12 1 0 soak\n"
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
         want = dt_hms(t)
-        self.assertIn(f"ok the last job GitHub handed this runner started at {want} UTC, 25 min ago ('soak' of {REPO})",
+        self.assertIn(f"ok the last job GitHub handed this runner started at {want}, 25 min ago ('soak' of {REPO})",
                       lines)
         # Not read is a third answer (rule 6), never "not handed a job yet".
         host.files.pop(jobs)
@@ -3643,7 +3643,7 @@ class P1a(unittest.TestCase):
                       "waited 24 hours.",
                       "A restart of this computer cancels the job running on it",
                       "This version serves one repository per computer",
-                      "GitHub's billing page, read ",
+                      M.COST_POINTER,
                       # R98: a cold start on the shipping README showed these reached the person only from the tool
                       M.MEMORY_TRADE_OFF, M.JOB_TOOLS):
             self.assertIn(words, said)
@@ -3659,6 +3659,20 @@ class P1a(unittest.TestCase):
         first = min(i for i, x in enumerate(lines) if TELL.match(x))
         self.assertTrue(all(TELL.match(x) for x in lines[first:]), lines[first:])
 
+    def test_G7_13_the_block_points_to_githubs_page_for_cost_and_claims_none(self):
+        # Seen 2026-11-23 (row R109): a cold start relayed the block's cost sentence as "lists self-hosted runners as
+        # free", dropping its date, the storage clause and the source. The block now says whose it is to say and
+        # where to read; look's own line keeps the sentence read, with its date.
+        host = linux_host()
+        lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
+        tells = tells_of(lines)
+        self.assertEqual([x for x in tells if "GitHub" in x and "charge" in x], [M.COST_POINTER])
+        self.assertIn(M.COST_URL, M.COST_POINTER)
+        said = " ".join(tells).lower()
+        for never in ("free", "billing page, read", "does not charge", "cheaper", "no bill", "postponed"):
+            self.assertNotIn(never, said)
+        self.assertEqual(len([x for x in lines if x.startswith("ok GitHub's billing page, read ")]), 1, lines)
+
     def test_G7_12_the_tell_block_carries_only_what_the_person_must_hear_within_a_bound(self):
         # Seen 2026-11-23 (row R104): the smallest model kept all nine lines in meaning but reworded seven and lost
         # three clauses, each only good to know. What is only good to know lives in the README; the block is bound.
@@ -3666,8 +3680,8 @@ class P1a(unittest.TestCase):
                                               dirs={"/sys/class/power_supply": ["BAT0"]})):
             tells = tells_of(look(StandIn(load("look-recent-runs.jsonl")), host)[1])
             self.assertLessEqual(len(tells), 10, tells)
-            rest = [x for x in tells if not x.startswith("GitHub's billing page, read ")]  # G7.1 holds its words
-            self.assertEqual(len(rest), len(tells) - 1, "the cost sentence is one line of the block")
+            rest = [x for x in tells if x != M.COST_POINTER]  # G7.13 holds its words
+            self.assertEqual(len(rest), len(tells) - 1, "the cost pointer is one line of the block")
             self.assertLessEqual(max(len(x) for x in rest), 420, rest)
             self.assertLessEqual(sum(len(x) for x in rest), 1700, rest)
             said = " ".join(tells)

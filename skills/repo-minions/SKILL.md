@@ -134,9 +134,9 @@ before setup. These are what they carry; if one is missing, say it in these word
 
 ## Cost
 
-Say only the cost sentence look printed, with the date it was read, word for word. If look printed "I could not
-read GitHub's rule today", say: "I could not read GitHub's page today." Never add a price, an amount, a promise
-that something costs nothing, or that the person spends less: the tool did not read that.
+Say the block's cost line word for word: what GitHub charges is GitHub's to say, with the page's address. If look
+printed "I could not read GitHub's rule today", say: "I could not read GitHub's page today." Never add a price, an
+amount, a promise that something costs nothing, or that the person spends less: the tool did not read that.
 
 ## Safety rules
 
