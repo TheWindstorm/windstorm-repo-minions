@@ -1016,6 +1016,20 @@
    "issue": 135,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R73",
+   "seen": "2026-11-23, read in the code and shown against the test stand-ins: resume (when the service must start) and drain --stop ran sudo -n without asking first, so in a terminal with no sudo permission open, resume sent the person back to the terminal where the password was typed, where none had been asked.",
+   "promise": "resume and drain --stop ask for the admin password themselves, once, before their first admin step; where no terminal can ask, they say to run sudo -v and the same command.",
+   "codon": "G2.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked",
+   "proven": "",
+   "issue": 137,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

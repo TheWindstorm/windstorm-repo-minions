@@ -883,6 +883,29 @@ class G2(unittest.TestCase):
         self.assertEqual(code, M.EXIT_STOP, lines)
         self.assertIn("run the same command again from the terminal where you typed the password", lines[-1])
         self.assertIn("never done twice", lines[-1])
+        # R73: `resume` and `drain --stop` ask for the password themselves before their admin step, never sending
+        # the person back to a terminal where nothing was asked.
+        host = setup_host(runs={("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner."): (1, ""),
+                                ("systemctl", "is-active", UNIT): (3, "inactive\n")})[0]
+        held_state(host)
+        host.runs[("sudo", "-n", "true")] = (1, "sudo: a password is required\n")
+        for run, cmd in ((lambda **k: M.resume(REPO, host=host, gh=DrainGH(busy=(False,)), **k), f"`resume {REPO}`"),
+                         (lambda **k: M.drain(REPO, stop=True, host=host, gh=DrainGH(busy=(False,)), **k),
+                          f"`drain {REPO} --stop`")):
+            host.ran.clear()
+            out = io.StringIO()
+            self.assertEqual(run(out=out, interactive=False), M.EXIT_NEED, out.getvalue())
+            last = out.getvalue().splitlines()[-1]
+            self.assertEqual(last, f"need you: this needs this computer's admin password once: run `sudo -v` in your "
+                                   f"terminal, then run {cmd} again from that same terminal")
+            self.assertFalse([a for a in host.ran if "systemctl" in a and ("start" in a or "stop" in a)], host.ran)
+        # Asked in this terminal: the password once, then the service started.
+        host.ran.clear()
+        out = io.StringIO()
+        self.assertEqual(M.resume(REPO, host=host, gh=DrainGH(busy=(False,)), out=out, interactive=True), M.EXIT_OK,
+                         out.getvalue())
+        self.assertEqual(host.validated, 1)
+        self.assertIn(("sudo", "-n", "systemctl", "start", UNIT), [tuple(a[:5]) for a in host.ran])
 
     def test_G2_6_a_runner_serves_only_chosen_private_repositories(self):
         host, sha = setup_host()
