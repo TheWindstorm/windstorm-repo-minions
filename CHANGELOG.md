@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `uninstall` keeps your record of what the tool did on your computer: the journal of every step and each job's
+  start and end move into one plain-text folder you own, `~/repo-minions-record`, and the census names it last.
+  Nothing of the tool is left installed or running. `uninstall --all --delete-record` deletes the record too, once
+  you type delete at your own terminal. Before, `uninstall --all` deleted that record (G6.10, INV6, row R99).
 - `doctor` and `status` say when the watch runs a different version of the tool than the one you run, which is
   older, and the one step that puts this version's copy in place. After an update of the skill, the watch went on
   running the old copy with nothing said (G4.10, row R101).
