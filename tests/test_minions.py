@@ -256,6 +256,22 @@ class G1(unittest.TestCase):
                          {"gist", "read:org", "repo", "workflow"})
         _, lines = look(StandIn(self.recent), linux_host(runs={("gh", "auth", "status"): (0, bare)}))
         self.assertIn("ok your login has the `workflow` scope (needed to change workflow files)", lines)
+        # R97: gh 2.4.0 (Ubuntu 22.04's) prints no scopes; GitHub's own header on one answer gives them.
+        old_gh = "github.com\n  ✓ Logged in to github.com as example-person (/home/x/.config/gh/hosts.yml)\n" \
+                 "  ✓ Token: *******************\n"
+        header = "HTTP/2.0 200 OK\r\nX-Oauth-Scopes: gist, read:org, repo, workflow\r\nX-Github-Media-Type: github.v3\r\n\r\n{}"
+        host = linux_host(runs={("gh", "auth", "status"): (0, old_gh), ("gh", "api", "-i", "user"): (0, header)})
+        self.assertEqual(M.token_scopes(host), {"gist", "read:org", "repo", "workflow"})
+        _, lines = look(StandIn(self.recent), host)
+        self.assertIn("ok your login has the `workflow` scope (needed to change workflow files)", lines)
+        # No such header (a fine-grained token): still said as not read, never guessed.
+        host = linux_host(runs={("gh", "auth", "status"): (0, old_gh),
+                                ("gh", "api", "-i", "user"): (0, "HTTP/2.0 200 OK\r\n\r\n{}")})
+        self.assertIsNone(M.token_scopes(host))
+        # A body that names the header is never read as one.
+        host = linux_host(runs={("gh", "auth", "status"): (0, old_gh),
+                                ("gh", "api", "-i", "user"): (0, "HTTP/2.0 200 OK\r\n\r\nX-Oauth-Scopes: workflow")})
+        self.assertIsNone(M.token_scopes(host))
 
     def test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure(self):
         # 1. The recorded real start test: jobs start; the run and the branch are deleted and read back gone.

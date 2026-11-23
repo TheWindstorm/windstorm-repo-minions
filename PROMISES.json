@@ -1352,6 +1352,20 @@
    "issue": 211,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R97",
+   "seen": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine with its own gh (2.4.0): `look` said `warn could not read the token's scopes; the `workflow` scope is needed to change workflow files` for a login that had `workflow`: that gh's `auth status` prints no scopes.",
+   "promise": "The login's scopes are read on every gh `look` meets: from `gh auth status` where it prints them, otherwise from GitHub's own X-OAuth-Scopes header, the names only; a login with no scopes to read is said as not read, never guessed.",
+   "codon": "G1.3",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_3_look_names_missing_token_rights",
+   "proven": "",
+   "issue": 219,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

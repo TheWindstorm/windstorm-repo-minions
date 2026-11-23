@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `look` reads the login's scopes from GitHub's own answer where the GitHub CLI does not print them (gh 2.4.0,
+  Ubuntu 22.04's); it said it could not read them (G1.3, row R97).
 - Below Python 3.10 every command stops before any step, saying the version found and that this version runs on
   Ubuntu 22.04 or newer and Debian 12 or newer. On Ubuntu 20.04 (Python 3.8) there was no check: `setup` made and
   started the runner, then failed (G8.15, row R95).
