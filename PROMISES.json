@@ -1459,7 +1459,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G7_12_the_tell_block_carries_only_what_the_person_must_hear_within_a_bound",
    "proven": "",
    "issue": 233,
    "moved_why": "",
