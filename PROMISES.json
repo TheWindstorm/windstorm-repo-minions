@@ -1646,6 +1646,20 @@
    "issue": 279,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R118",
+   "seen": "2026-11-23, run K on a stock Ubuntu 24.04 virtual machine: status named a job stopped at the memory cap only as 'j' and its run, and the agent could not say which of the person's workflows it was.",
+   "promise": "status names a stopped job (killed at the cap, cut, or refused) by its workflow file and its own name as well as the run, read once from GitHub and kept; when the workflow cannot be read, it says so.",
+   "codon": "G5.18",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_18_a_stopped_job_is_named_by_its_workflow_file",
+   "proven": "",
+   "issue": 284,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
