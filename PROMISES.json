@@ -186,7 +186,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_2_idle_only_when_both_sides_agree",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, on the fix of row R84: during a real job, the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, from 10:15:12Z to 10:17:27Z (UTC), as a stalled process is held; the tool's files were not touched. While GitHub said offline and busy and a job process ran here, status said `warn the two sides disagree`, with both sides; idle was said only after the signal to go on (SIGCONT), once both sides agreed (`ok idle`), and the job passed. Steered: the listener's hold. Unsteered, the two sides were never caught apart (status read every 2 to 3 seconds through a job).",
    "issue": 19,
    "moved_why": "",
    "moved_by_person": ""
@@ -1180,7 +1180,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_2_idle_only_when_both_sides_agree",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: during a real job, the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, from 10:15:12Z to 10:17:27Z (UTC), the tool's files not touched; status said `warn the two sides disagree. GitHub says offline, busy \u2026; this computer: service active, a job process runs`, never `busy` while GitHub said offline, then `ok idle` once both sides agreed after the signal to go on (SIGCONT); the job passed. Steered: the listener's hold. Unsteered, the two sides were never caught apart.",
    "issue": 166,
    "moved_why": "",
    "moved_by_person": ""
