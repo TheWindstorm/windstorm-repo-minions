@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `resume` (when it has to start the runner's service) and `drain --stop` now ask for the admin password
+  themselves, once, before their admin step. Before, in a terminal where none was asked, `resume` stopped and sent
+  the person back to "the terminal where you typed the password" (G2.12, row R73).
 - `setup` now asks before it runs jobs on a computer that serves something live, as `look` said it would: it
   names what look found and changes nothing until the person says yes in words (`setup OWNER/NAME
   --beside-live-too`) or chooses another computer. Any port open to the network counts, except the computer's

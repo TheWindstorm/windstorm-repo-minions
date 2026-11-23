@@ -2334,7 +2334,8 @@ def wait_idle(gh: GitHub, host: Host, repo: str, mine: dict, wait_s: int, poll_s
 
 
 def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
-          host: Host | None = None, gh: GitHub | None = None, out=None, restart: bool = False) -> int:
+          host: Host | None = None, gh: GitHub | None = None, out=None, restart: bool = False,
+          interactive: bool | None = None) -> int:
     """G4.6, G5.6: hold by label, then wait until both sides say idle, with a deadline (G8.6); `--stop` stops the
     service only after that. G5.11: `--restart` does it for every runner here and says when a restart is safe."""
     host = host or Host()
@@ -2377,19 +2378,33 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
                "GitHub reads the runner online again (the watch does it)")
         return rep.code()
     if stop:
-        stop_runner(host, runners[repo]["unit"], runners[repo]["folder"], rep, drained=True)
+        # R73: stopping the service is an admin step: the password is asked here, once, never assumed.
+        if not ask_admin_once(host, rep, host.isatty() if interactive is None else interactive,
+                              f"`drain {repo} --stop`"):
+            return rep.code()
+        if not stop_runner(host, runners[repo]["unit"], runners[repo]["folder"], rep, drained=True):
+            return rep.code()
     rep.ok(f"`resume {repo}` lets jobs land here again")
     return rep.code()
 
 
 def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
-           private_again: bool = False, on_battery: str | None = None) -> int:
+           private_again: bool = False, on_battery: str | None = None, interactive: bool | None = None) -> int:
     """G4.6's other half: lift the hold (and start the service if a drain stopped it), never under the disk floor.
     G5.4: a runner stopped because its repository was no longer private resumes only once the repository is
     private again AND the person says so (`--private-again`)."""
     host = host or Host()
     gh = gh or GitHub(host)
     rep = Report(out)
+    asked: list[bool] = []
+
+    def admin() -> bool:
+        """R73: starting or enabling the service is an admin step: the password is asked here, once, never assumed."""
+        if not asked:
+            if not ask_admin_once(host, rep, host.isatty() if interactive is None else interactive, f"`resume {repo}`"):
+                return False
+            asked.append(True)
+        return True
     data = load_state(host)
     mine = (data.get("runners") or {}).get(repo)
     if not mine:
@@ -2414,6 +2429,8 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
             rep.need(f"run `setup {repo}`: it registers the runner again in place, with its folders and labels "
                      "(it asks for this computer's admin password once; this step is yours)")
             return rep.code()
+        if not admin():
+            return rep.code()
         journal(host, "enable", mine["unit"])
         sudo(host, systemctl("enable", mine["unit"]))
     if mine.get("gone_on_github"):
@@ -2430,6 +2447,8 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
     if power_source(host) == "battery" and not mine.get("jobs_on_battery"):
         rep.stop(f"this computer runs on battery, so the runner stays held (the default for a laptop): plug it in "
                  f"and the hold lifts by itself, or `resume {repo} --on-battery-too` to take jobs on battery")
+        return rep.code()
+    if host.run(systemctl("is-active", mine["unit"]))[1].strip() != "active" and not admin():
         return rep.code()
     if not start_runner(host, mine["unit"], mine["folder"], rep):
         return rep.code()
