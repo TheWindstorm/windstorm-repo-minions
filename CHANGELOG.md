@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The skill has evals, in the skill-creator layout (`skills/repo-minions/evals/evals.json`): the cold-start runs
+  written as cases, each with the sentence the agent is given, what the person must be told and what must not
+  happen (G9.9, row R103).
 - `uninstall` keeps your record of what the tool did on your computer: the journal of every step and each job's
   start and end move into one plain-text folder you own, `~/repo-minions-record`, and the census names it last.
   Nothing of the tool is left installed or running. `uninstall --all --delete-record` deletes the record too, once
