@@ -1198,6 +1198,20 @@
    "issue": 169,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R86",
+   "seen": "2026-11-23, a stock Ubuntu 22.04 virtual machine, the runner's listener paused (SIGSTOP) to hold one side back: status said GitHub had shown the runner offline since a time 22 minutes before, while status itself had read it online 1 minute earlier; the watch reads GitHub once a pass, and every pass in that span had happened to find it offline.",
+   "promise": "The line naming a runner GitHub shows offline says what was read: offline at every watch pass since the record began, and now; never that GitHub showed it offline for the whole span.",
+   "codon": "G11.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
+   "proven": "",
+   "issue": 171,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

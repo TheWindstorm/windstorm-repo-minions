@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The line naming a runner GitHub shows offline says what was read: offline at every watch pass since a time,
+  and now. It said GitHub had shown it offline the whole span, though the watch reads GitHub once a pass and the
+  runner may have been online between (G11.4, row R86).
 - The time GitHub has shown our runner offline is counted in waking time: just after a long sleep, `status` no
   longer says a runner that is still reconnecting "has not come back". setup's and resume's both-sides check ends
   an offline record written before the runner came online (G11.4, row R85).
