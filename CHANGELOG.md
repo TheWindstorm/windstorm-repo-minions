@@ -23,8 +23,9 @@
   where systemd's default stopped the whole service and the runner went offline (G2.9, row R88).
 - The idle-sleep hold of a job ends when the runner's service stops, or when the next job starts, as well as when the
   job ends: a service stopped mid-job left it for up to 6 hours (G4.4, row R89).
-- A job held at our memory limit is named. With the default limits a job that outgrows them is not killed: the
-  kernel holds it at the high mark and it barely moves, perhaps until GitHub's own time limit. The watch now reads
+- A job held at our memory limit is named. Under a high mark (this tool's default before row R94, so on runners set
+  up before it) a job that outgrows the limits is not killed: the kernel holds it at the high mark and it barely
+  moves, perhaps until GitHub's own time limit. The watch now reads
   the slice's own files each pass, and after two passes `status` names the job first, with the two ways out:
   cancel it, or give jobs more memory with `setup --limits` (G5.16, row R87).
 - The line naming a runner GitHub shows offline says what was read: offline at every watch pass since a time,
