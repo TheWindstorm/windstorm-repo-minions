@@ -1030,6 +1030,20 @@
    "issue": 137,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R74",
+   "seen": "2026-11-23, once each, in a stock Ubuntu 24.04 virtual machine: after a 3-minute network cut, a 3-minute suspend and a 12-minute suspend, the runner came back online by itself within 31 s, 30 s and 61-92 s of the link or the wake, with no restart. Not yet on a real laptop: it joins the laptop sitting. Not seen at all: a listener that stays running and never reconnects; if that is ever seen, this row reopens and a root unit that restarts it is on the table again.",
+   "promise": "After a wake or a network change the watch reads both sides within one interval; a runner whose service runs with no job process while GitHub shows it offline for more than two intervals is named first in status, as a warn with its way on (drain --stop, then resume). Nothing restarts it by itself.",
+   "codon": "G11.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
+   "proven": "",
+   "issue": 143,
+   "moved_why": "Made smaller by ruling, 2026-11-23, with the reason: the codon promised a restart, but the watch runs with no admin rights and cannot restart anything, a root unit that restarts after a wake would be a privileged moving part added for a case nobody has seen, and the runner was seen coming back by itself three times with no restart.",
+   "moved_by_person": ""
   }
  ],
  "declined": []

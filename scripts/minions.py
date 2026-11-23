@@ -2628,6 +2628,16 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         # The first word is the worst true thing (P2, 2026-11-23: `ok ...: not ready` while a job waited).
         rest.append(("ok" if word in ("idle", "busy") and not held else "warn",
                      f"{mine['name']} for {rp}: {word}. {sides}; {survey_words(data, rp)}{hold_words}"))
+        # G11.4 (R74): GitHub has shown it offline for more than two watch intervals while its service runs here.
+        since = parse_stamp(mine.get("offline_since"))
+        every = int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S)
+        if (since and r is not None and r.get("status") != "online" and active == "active" and not worker
+                and (now - since).total_seconds() > 2 * every):
+            first.append(("warn", f"{mine['name']} for {rp}: GitHub has shown it offline since {hms(since)} "
+                                  f"({minutes((now - since).total_seconds())}) while its service runs here, so no job "
+                                  "lands on it. A runner usually comes back by itself within a few minutes of a wake "
+                                  f"or of the network returning; this one has not. `drain {rp} --stop`, then "
+                                  f"`resume {rp}`, starts it fresh (each asks for the admin password once)"))
         # The queue (G5.1) and the jobs waiting behind our hold (G5.13).
         q = [j for j in queued_jobs(gh, rp) if set(j["labels"]) & set(mine.get("labels") or ["minions"])]
         blocked_by = ("our hold (" + (mine.get("held_for") or "a hold") + ")" if held else
@@ -2963,8 +2973,23 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
         return f"{repo}: GitHub no longer lists {mine['name']}", why
     if r is None:
         return f"{repo}: GitHub not read (HTTP {s}){': ' + why if why else ''}", why
+    offline_while_running(host, mine, r, data)
     return (f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}"
             + disk_pass(gh, host, repo, data, rep) + battery_pass(gh, host, repo, data, rep)), why
+
+
+def offline_while_running(host: Host, mine: dict, r: dict, data: dict) -> None:
+    """G11.4 (R74): since when GitHub has shown our runner offline while its service runs here with no job process.
+    The watch only writes it down (it has no admin rights and restarts nothing); `status` names it first."""
+    rc, active = host.run(systemctl("is-active", mine.get("unit") or "none"))
+    stuck = (r.get("status") != "online" and active.strip() == "active"
+             and not runner_pids(host, mine.get("folder") or "", "Runner.Worker"))
+    if stuck and not mine.get("offline_since"):
+        mine["offline_since"] = stamp(host.now())
+        save_state(host, data)
+    elif not stuck and mine.get("offline_since"):
+        mine.pop("offline_since")
+        save_state(host, data)
 
 
 BATTERY_HOLD = "on battery"
