@@ -106,9 +106,13 @@ The one command that takes them off, in your own terminal:
 (and whose archive has no `gh`). The tool says the version it found and where this version runs.
 
 **Not seen yet:**
-- A laptop: on battery, a closed lid, a laptop's own sleep, a change of network. These are tested, and seen only
-  in a virtual machine.
-- An account whose GitHub Actions start no jobs. `look`'s check for it is tested, not seen on such an account.
+- A real laptop on battery: the runner held until mains power, and the laptop named before setup, are tested and
+  not seen, because a virtual machine has no battery.
+- A real laptop's closed lid, low battery or a sleep you ask for, none of which the tool holds off during a job:
+  tested, and not seen, because a virtual machine has no lid or battery.
+- A real laptop's own sleep and a change of its network: in a virtual machine the runner was seen coming back by
+  itself after a network cut and after a suspend, never yet on a real laptop.
+- An account whose GitHub Actions start no jobs: `look`'s check for it is tested, and not seen on such an account.
 - GitHub's own removal of a runner after 14 days offline. Seen only with the removal made by hand.
 - A repository really turned public with a runner on it. Seen only with the privacy read made to answer "public";
   turning a repository public with a runner on it is not done, by rule.
