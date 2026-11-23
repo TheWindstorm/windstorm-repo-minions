@@ -29,6 +29,10 @@ the cap (row R94).
   kept (G8.18, row R115), and never looks into your keys or saved logins (G8.17, row R110).
 - `status` names a job stopped at the memory cap, cut, or refused by its workflow file and its own name as well
   as the run; when it cannot read the workflow, it says so (G5.18, row R118).
+- In your home folder the skill uses only the places it names (the clone, the GitHub CLI's own login, `~/.minions`,
+  and after leaving, your record) and changes no other file of yours; before each release a stock machine's whole
+  home is listed before and after setup, a real job and uninstall, and any change outside those places stops the
+  release (G6.14, row R119).
 - Each line for you is said where it matters: before setup, before the merge, when status names a job the memory
   cap stopped (G7.14, row R111). The cost line points to GitHub's own page and claims nothing (G7.13, row R109).
 - Every system command the tool prints for you is one that was run exactly as printed on that kind of system; the
