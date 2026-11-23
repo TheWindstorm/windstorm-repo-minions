@@ -852,6 +852,22 @@ def sleep_delay_words(seconds: int | None) -> str:
     return f"about {seconds} seconds later (this computer's own delay)"
 
 
+def power_source(host: Host) -> str | None:
+    """G11.2: "battery" when this computer has a battery and no outside power is online, "mains" when outside power
+    is online or there is no battery, None when it could not be read (not Linux)."""
+    if host.system() != "Linux":
+        return None
+    battery, outside = False, False
+    for name in host.listdir("/sys/class/power_supply"):
+        kind = (host.read(f"/sys/class/power_supply/{name}/type") or "").strip()
+        if kind == "Battery":
+            battery = True
+        elif kind in ("Mains", "USB", "USB_C", "USB_PD") and \
+                (host.read(f"/sys/class/power_supply/{name}/online") or "").strip() == "1":
+            outside = True
+    return "battery" if battery and not outside else "mains"
+
+
 def has_lid(host: Host) -> bool | None:
     """G11.1: a lid switch the system knows of (Linux: ACPI lists it)."""
     if host.system() != "Linux":
@@ -2308,7 +2324,7 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
 
 
 def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
-           private_again: bool = False) -> int:
+           private_again: bool = False, on_battery: str | None = None) -> int:
     """G4.6's other half: lift the hold (and start the service if a drain stopped it), never under the disk floor.
     G5.4: a runner stopped because its repository was no longer private resumes only once the repository is
     private again AND the person says so (`--private-again`)."""
@@ -2346,6 +2362,15 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
         return rep.code()
     free = host.disk_free(mine["folder"]) or host.disk_free(host.home())
     if not check_disk_floor(free[0] if free else None, rep, "the runner stays held"):
+        return rep.code()
+    if on_battery is not None:  # G11.2: the person's word, by name, kept until they change it
+        mine["jobs_on_battery"] = on_battery == "too"
+        save_state(host, data)
+        rep.ok("jobs land here on battery too, by your word; `resume " + repo + " --on-battery-held` undoes it"
+               if on_battery == "too" else "on battery the runner is held again, the default")
+    if power_source(host) == "battery" and not mine.get("jobs_on_battery"):
+        rep.stop(f"this computer runs on battery, so the runner stays held (the default for a laptop): plug it in "
+                 f"and the hold lifts by itself, or `resume {repo} --on-battery-too` to take jobs on battery")
         return rep.code()
     if not start_runner(host, mine["unit"], mine["folder"], rep):
         return rep.code()
@@ -2849,8 +2874,28 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
         return f"{repo}: GitHub no longer lists {mine['name']}", why
     if r is None:
         return f"{repo}: GitHub not read (HTTP {s}){': ' + why if why else ''}", why
-    return f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}" + disk_pass(gh, host, repo, data,
-                                                                                            rep), why
+    return (f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}"
+            + disk_pass(gh, host, repo, data, rep) + battery_pass(gh, host, repo, data, rep)), why
+
+
+BATTERY_HOLD = "on battery"
+
+
+def battery_pass(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> str:
+    """G11.2 (R19): on battery our runner is held, by default; the hold lifts on mains power. The person switches it
+    off by name (`resume <repo> --on-battery-too`). A runner held for another reason is left as it is."""
+    mine = data["runners"][repo]
+    src, held = power_source(host), mine.get("held_for")
+    if held == BATTERY_HOLD and (src == "mains" or mine.get("jobs_on_battery")):
+        if lift_hold(gh, host, repo, data, rep, tries=1):
+            return "; the hold on battery lifted: " + ("on mains power" if src == "mains" else "jobs on battery, "
+                                                                                              "by your word")
+        return "; the hold on battery could not be lifted yet (the next pass tries again)"
+    if src == "battery" and not held and not mine.get("jobs_on_battery"):
+        if hold_runner(gh, host, repo, data, rep, BATTERY_HOLD) is None:
+            return "; on battery: the hold could not be taken yet (the next pass tries again)"
+        return "; held: on battery"
+    return "; held on battery" if held == BATTERY_HOLD else ""
 
 
 DISK_HOLD = "low disk"
@@ -3871,7 +3916,8 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
 
 
 LONG_SLEEP_MIN = 10  # G7.9: GitHub failed a job about 10 minutes after the computer fell asleep (seen 2026-11-22)
-LAPTOP_WORDS = "a laptop takes jobs only while it is awake, on the network and (by default) on mains power"
+LAPTOP_WORDS = ("a laptop takes jobs only while it is awake, on the network and (by default) on mains power; "
+                "`resume <owner/repo> --on-battery-too` lets it take jobs on battery as well")
 
 
 def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
@@ -3932,6 +3978,10 @@ def parser() -> Parser:
     rs.add_argument("repo", help="owner/name")
     rs.add_argument("--private-again", action="store_true",
                     help="your word that a repository that was not private is private again")
+    rs.add_argument("--on-battery-too", dest="on_battery", action="store_const", const="too",
+                    help="a laptop takes jobs on battery too (by default it is held on battery)")
+    rs.add_argument("--on-battery-held", dest="on_battery", action="store_const", const="held",
+                    help="back to the default: held on battery")
     dr = sub.add_parser("drain", help="hold the runner and wait until no job runs here; nothing is cut")
     dr.add_argument("repo", nargs="?", help="owner/name (with --restart: default every runner here)")
     dr.add_argument("--restart", action="store_true", help="before a planned restart: hold every runner here, wait")
@@ -3961,7 +4011,7 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: 
                 parser().error("drain needs owner/name, or --restart")
             return drain(a.repo, stop=a.stop, wait_s=max(0, a.wait_minutes) * 60, host=host, restart=a.restart)
         if a.cmd == "resume":
-            return resume(a.repo, host=host, private_again=a.private_again)
+            return resume(a.repo, host=host, private_again=a.private_again, on_battery=a.on_battery)
         if a.cmd == "status":
             return status(a.repo, host=host, wait_warn_s=max(0, a.wait_warn_minutes) * 60, rerun=a.rerun)
         if a.cmd == "watch":

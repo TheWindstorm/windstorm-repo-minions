@@ -344,7 +344,7 @@ instead of pretending to hold it.
 | Codon | Claim | Test |
 |---|---|---|
 | G11.1 | `look` says the computer is a laptop when it has a battery or a lid, and the skill tells the person before `setup`: a laptop takes jobs only while it is awake, on the network and (by default) on mains power. | `test_G11_1_a_laptop_is_named_and_its_limits_said_before_setup` |
-| G11.2 | On battery the runners are held (G5.5), by default; the hold lifts on mains power. The person can switch this off by name. | planned: test_G11_2_on_battery_the_runners_are_held |
+| G11.2 | On battery the runners are held by the watch, by default; the hold lifts on mains power by itself. The person switches this off by name, `resume <owner/repo> --on-battery-too`, and back with `--on-battery-held`; `resume` on battery without that word says so and holds. A runner held for another reason is left as it is. | `test_G11_2_on_battery_the_runners_are_held` |
 | G11.3 | A sleep asked while a job runs is put off for as long as the OS allows (Linux: a delay lock; macOS: what Part 7 C12 finds), and the skill names what cannot be put off (for example a lid closed on battery). | planned: test_G11_3_sleep_is_put_off_during_a_job_where_the_os_allows |
 | G11.4 | After a wake or a network change, `watch` reads both sides within one interval; a runner the service shows running but GitHub shows offline for more than two intervals is restarted, only when no job process runs. | planned: test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back |
 | G11.5 | After a wake, `status` names a job that was cut by the sleep and offers to run it again once (as G5.7). | planned: test_G11_5_a_job_cut_by_sleep_is_named_and_offered_again |
