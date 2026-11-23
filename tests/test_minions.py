@@ -1911,6 +1911,39 @@ class G5(unittest.TestCase):
         self.assertFalse(any("safe to restart" in x for x in lines))
         self.assertIn("Next: `drain --restart` again", lines[-1])
 
+    def test_G4_3_below_the_floor_the_watch_holds_and_lifts_by_itself(self):
+        # P4 (seen 2026-11-23: 4 GB free and the watch said only "online, not busy"): held before the disk fills.
+        host, clock = g5_host()
+        refuse_sudo(host)  # the watch has no admin rights; the hold is GitHub's labels, taken with the person's login
+        gh = StatusGH()
+        host.free = (4 * 1024 ** 3, 30 * 1024 ** 3)
+        self.assertEqual(run_cmd(M.watch, host=host, gh=gh)[0], M.EXIT_OK)
+        self.assertEqual(gh.puts, [(REPO, ["minions-held"])])
+        mine = M.load_state(host)["runners"][REPO]
+        self.assertEqual(mine["held_for"], "low disk")
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            j = f.read()
+        self.assertIn("held: 4.0 GB free, under the 5.0 GB floor", j)
+        self.assertIn("held for low disk since", run_cmd(M.status, REPO, host=host, gh=gh)[1][0])
+        # Just above the floor: still held (no flapping); a pass takes no second hold.
+        host.free = (int(5.5 * 1024 ** 3), 30 * 1024 ** 3)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.puts), 1)
+        # Space back: lifted by itself, the labels as they were.
+        host.free = (20 * 1024 ** 3, 30 * 1024 ** 3)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(gh.puts[-1], (REPO, ["minions", "minions-medium"]))
+        self.assertNotIn("held_for", M.load_state(host)["runners"][REPO])
+        # A hold for another reason (a drain) is never lifted by space coming back.
+        data = M.load_state(host)
+        data["runners"][REPO].update(held_for="drain", labels_before_hold=["minions", "minions-medium"])
+        M.save_state(host, data)
+        gh.r[REPO]["labels"] = ["minions-held"]
+        n = len(gh.puts)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.puts), n)
+        self.assertFalse([a for a in host.ran if a[:1] == ("sudo",)], "the watch asks for no admin rights")
+
     def test_G5_12_a_runner_github_removed_is_named_and_registered_again(self):
         host, clock = g5_host()
         refuse_sudo(host)  # G9.7: the watch is a system timer run as the person, with no sudo ticket

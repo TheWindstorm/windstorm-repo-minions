@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Below 5 GB free for the work folders, the watch holds our runner before the disk fills, and lifts the hold by
+  itself once 6 GB are free; until now only `setup` and `resume` checked the floor (G4.3, row R66).
 - `look` reads the delay this computer gives a sleep during a job (logind's own setting, no admin rights) and
   the words for the person name it, or say it could not be read, instead of "a little later" (G4.9, row R48).
 - `setup` says this version serves one repository per computer, and holds it: a second repository's `setup`
