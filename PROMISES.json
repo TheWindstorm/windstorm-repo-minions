@@ -1310,6 +1310,20 @@
    "issue": 202,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R94",
+   "seen": "2026-11-23, one stock Ubuntu 24.04.5 virtual machine with a swap file, the person's own work timed throughout (the figures are in the plan's G4.2): under the default two marks, a job that outgrew the high mark was pushed through swap and finished slowly, while the person's disk was slowed for as long as it ran; under the cap alone with no swap for jobs, it was killed when it reached the cap and named, and the person's work was as with no job.",
+   "promise": "By default jobs get a memory cap with no high mark and no swap: a job that needs more fails when it reaches its cap, by name, with the command that raises it, instead of running slowly; the swap cap is read back from the running slice, and said kept only where it is held.",
+   "codon": "G4.2",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G4_2_the_runner_runs_low_and_capped",
+   "proven": "",
+   "issue": 207,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
