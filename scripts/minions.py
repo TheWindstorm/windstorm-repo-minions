@@ -4772,7 +4772,7 @@ def remove_slice(host: Host, rep: Report) -> bool:
 
 
 def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report,
-           state_left: bool | None = None) -> None:
+           state_left: bool | None = None, skill_folder: str | None = None) -> None:
     """G6.3, INV6: what is left, each "none" or named. With --all every line should read none."""
     unread: list[str] = []
 
@@ -4840,6 +4840,8 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     if state_left is not None:
         line("this tool's state folder", [host.state_dir()] if state_left else [],
              "kept: its journal could not be moved to your record (said above)" if state_left else "")
+    if everything:  # G6.13 (R117, rule 8): the folder the skill was downloaded into is named, so nobody guesses at it
+        skill_folder_census(host, skill_folder, rep)
     # G6.10, INV6: last, the person's record, kept: theirs.
     n = host.record_count()
     if n is None:
@@ -4848,6 +4850,27 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         rep.ok(f"census: your record of what this tool did: {host.record_dir()}, {plural(n[1], 'line')} in "
                f"{plural(n[0], 'file')}, kept: it is yours. Delete it whenever you like, or run `uninstall --all "
                "--delete-record` in your own terminal")
+
+
+def skill_folder_census(host: Host, root: str | None, rep: Report) -> None:
+    """G6.13 (R117): after `uninstall --all` the census names the folder the skill was downloaded into: still there and
+    where, and whose it is to delete; or gone; or not known here. An agent fills a silence (run J: it offered to delete
+    the clone, a step the tool never printed), so nothing of the skill's is left unnamed."""
+    if not root:
+        rep.warn("census: the folder this skill was downloaded into: not known on this computer (setup did not "
+                 "write it down)")
+        return
+    there = host.there(root)
+    if there is None:
+        rep.warn(f"census: the folder this skill was downloaded into ({root}): not read")
+    elif not there:
+        rep.ok(f"census: the folder this skill was downloaded into ({root}): gone")
+    elif "/.claude/plugins/" in root:
+        rep.ok(f"census: the folder this skill was downloaded into: {root}, still there; it is Claude Code's plugin "
+               "folder, and Claude Code's own `plugin uninstall` takes it; this tool does not touch it")
+    else:
+        rep.ok(f"census: the folder this skill was downloaded into: {root}, still there; it is yours to keep or "
+               "delete, and this tool does not touch it")
 
 
 def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
@@ -4894,7 +4917,8 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
         if delete_record:
             delete_record_if_typed(host, rep)
         # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
-        census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()))
+        census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()),
+               skill_folder=data.get("skill_folder"))
         return rep.code()
     if delete_record:
         delete_record_if_typed(host, rep)
