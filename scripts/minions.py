@@ -1706,7 +1706,7 @@ PROGRAMS = {
 DARWIN_ONLY = {"launchctl", "pmset", "diskutil", "sw_vers", "sysctl", "netstat"}  # macOS; resolved there, later
 # The programs the two job hooks run (as the runner user, which cannot enter your home folder).
 HOOK_PROGRAMS = ("awk", "date", "cat", "dirname", "mkdir", "chmod", "env", "setsid", "systemd-inhibit", "sleep",
-                 "pgrep", "seq", "kill", "rm", "realpath", "find", "df", "tail", "tr")
+                 "pgrep", "seq", "kill", "rm", "realpath", "find", "df", "tail", "tr", "python3")
 MEMORY_EVENTS = f"/sys/fs/cgroup/{SLICE}/memory.events"  # its oom_kill count: a kill by OUR memory limit
 DRAIN_WAIT_S = 1800
 # G4.4 and G4.9: exactly two locks while a job runs, both nested in one process group the hooks start and end.
@@ -1746,6 +1746,14 @@ def record_line(kind: str, records: str) -> str:
             '"${GITHUB_RUN_ID:-?}" "${GITHUB_RUN_ATTEMPT:-?}" "${oom:-?}" "${GITHUB_JOB:-?}" >> "$REC"\n')
 
 
+# G5.15: read in the job-start hook. "public", "private", or "none" when the event's record names no repository.
+EVENT_PY = ('import json,os\n'
+            'try: r = json.load(open(os.environ["GITHUB_EVENT_PATH"])).get("repository") or dict()\n'
+            'except Exception: r = dict()\n'
+            'print("public" if r.get("private") is False or r.get("visibility") == "public" else '
+            '"private" if r.get("private") is True else "none")')
+
+
 def seen_path(folder: str) -> str:
     return f"{SEEN_ROOT}/{os.path.basename(folder.rstrip('/'))}"
 
@@ -1759,6 +1767,7 @@ def job_started_script(folder: str, records: str | None = None, path: str | None
     """G4.4, G5.15: written by setup, owned by root, read-only to the runner user; runs as the runner user at each
     job's start, before any step of the job."""
     fresh_s = SEEN_PASSES * every_s
+    recs = records or records_dir_of(folder)
     return f"""#!/bin/bash
 # Windstorm Repo Minions, job started (G4.4, G4.9, G5.7, G5.15). Written by setup; owned by root.
 # It refuses the job unless the watch read this repository private in the last {fresh_s // 60} minutes. Then it holds
@@ -1767,21 +1776,29 @@ def job_started_script(folder: str, records: str | None = None, path: str | None
 STATE="$FOLDER/_minions"
 SEEN={sh_quote([seen or seen_path(folder)])}
 mkdir -p "$STATE" && chmod 700 "$STATE"
-{record_line("start", records or records_dir_of(folder))}seen_ok() {{
+{record_line("start", recs)}seen_ok() {{
   v="$(cat "$SEEN" 2>/dev/null)"
   case "$v" in ''|*[!0-9]*) return 1 ;; esac
-  [ $(( $(date +%s) - v )) -le {fresh_s} ]
+  now="$(date +%s)"
+  [ "$v" -le $(( now + 60 )) ] && [ $(( now - v )) -le {fresh_s} ]  # a time in the future is not fresh
 }}
+# GitHub's own record of the event that started this job names the repository and whether it is private (push,
+# pull_request and workflow_dispatch seen; a schedule's record has no repository, and then the watch's time decides).
+event="$(python3 -I -c '{EVENT_PY}' 2>/dev/null)"
+if [ "$event" = public ]; then
+{record_line("refused-public", recs)}  echo "::error::Windstorm Repo Minions refused this job before any of its steps: GitHub's own record of this event says the repository is not private, and this computer takes no job of a repository that is not private. On that computer, \\`status\\` says what to do."
+  exit 1
+fi
 if [ "$(cat "$SEEN" 2>/dev/null)" != public ] && ! seen_ok; then
   echo "minions: the watch has not read this repository private in the last {fresh_s // 60} minutes; waiting up to {hold_wait_s // 60} minutes for it to"
   for _ in $(seq {hold_wait_s // 10}); do sleep 10; seen_ok && break; [ "$(cat "$SEEN" 2>/dev/null)" = public ] && break; done
 fi
 if [ "$(cat "$SEEN" 2>/dev/null)" = public ]; then
-  echo "::error::Windstorm Repo Minions refused this job before any of its steps: the repository is no longer private, and this computer takes no job of a repository that is not private. On that computer, \\`status\\` says what to do."
+{record_line("refused-public", recs)}  echo "::error::Windstorm Repo Minions refused this job before any of its steps: the repository is no longer private, and this computer takes no job of a repository that is not private. On that computer, \\`status\\` says what to do."
   exit 1
 fi
 if ! seen_ok; then
-  echo "::error::Windstorm Repo Minions refused this job before any of its steps: the watch on that computer has not read the repository private in the last {fresh_s // 60} minutes, so it may not be private now. On that computer, \\`status\\` says why and what to do."
+{record_line("refused-stale", recs)}  echo "::error::Windstorm Repo Minions refused this job before any of its steps: the watch on that computer has not read the repository private in the last {fresh_s // 60} minutes, so it may not be private now. On that computer, \\`status\\` says why and what to do."
   exit 1
 fi
 if command -v systemd-inhibit >/dev/null 2>&1; then
@@ -2333,13 +2350,16 @@ def read_records(host: Host, folder: str) -> list[dict]:
     jobs: list[dict] = []
     for line in (host.read(records_dir_of(folder) + "/jobs.log") or "").splitlines()[-4 * RECORDS_KEPT:]:
         parts = line.split(" ", 5)
-        if len(parts) < 6 or parts[0] not in ("start", "end") or not parts[1].isdigit():
+        if len(parts) < 6 or parts[0] not in ("start", "end", "refused-public", "refused-stale") or \
+                not parts[1].isdigit():
             continue
         kind, t, run, attempt, oom, name = parts
         rec = {"t": int(t), "run": run, "attempt": attempt, "oom": int(oom) if oom.isdigit() else None, "job": name}
         if kind == "start":
             jobs.append({"start": rec, "end": None})
         else:
+            if kind.startswith("refused-"):
+                rec["refused"] = kind[len("refused-"):]  # G5.15: the hook refused it; its end hook never ran
             for j in reversed(jobs):
                 if j["end"] is None and (j["start"]["run"], j["start"]["attempt"]) == (run, attempt):
                     j["end"] = rec
@@ -2405,6 +2425,10 @@ def judge_cut(job: dict, notes: list[str], start: dict, end: dict | None, until:
     stopped or restarted, or the computer booted or slept, during it. A job that came through a sleep is not cut."""
     if job.get("conclusion") != "failure":
         return None
+    if end is not None and end.get("refused"):  # G5.15: both sides: this computer's record, and GitHub's failure
+        return "refused", ("GitHub's own record of the event, or the watch, saying the repository is not private"
+                           if end["refused"] == "public" else
+                           f"the watch not having read the repository private in the last {SEEN_PASSES * WATCH_EVERY_S // 60} minutes")
     t0 = start["t"]
     if start["oom"] is not None and oom_after is not None and oom_after > start["oom"]:
         return "killed", "this computer's memory limit"
@@ -2460,7 +2484,11 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
         done = int(g["id"]) in (data.get("reruns") or [])
         again = (" It was run again once already." if done else
                  f" To run it again, once: `status {repo} --rerun {g['id']}`.")
-        if verdict[0] == "killed":
+        if verdict[0] == "refused":
+            lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was refused before "
+                                  f"its first step by this computer's guard: {verdict[1]}. No step of it ran here; "
+                                  f"GitHub shows it as failed, not a failing test of yours.{again}"))
+        elif verdict[0] == "killed":
             lim = (mine.get("limits") or {}).get("MemoryMax")
             lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was stopped by "
                                   f"this computer's memory limit{' (' + gb(int(lim)) + ')' if lim else ''}, not by your "

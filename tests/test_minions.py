@@ -2322,15 +2322,24 @@ class BlindGH(StatusGH):
         return 0, {"message": self.blind_why}
 
 
-def hook_run(folder, seen_value, wait_s=0):
-    """Runs the job-started hook for real, with a stand-in for its sleep locks; returns (exit, its output)."""
+def hook_run(folder, seen_value, wait_s=0, event=None):
+    """Runs the job-started hook for real, with a stand-in for its sleep locks; returns (exit, its output).
+    `event`: GitHub's record of the event, as the runner gives it to the job (None: none given)."""
     seen = fresh_seen(folder, seen_value)
-    text = M.job_started_script(folder, seen=seen, hold_wait_s=wait_s).replace("command -v systemd-inhibit", "false")
+    recs = os.path.join(folder, "records")
+    os.makedirs(recs, exist_ok=True)
+    text = M.job_started_script(folder, recs, seen=seen, hold_wait_s=wait_s).replace("command -v systemd-inhibit",
+                                                                                     "false")
     path = os.path.join(folder, "start.sh")
     with open(path, "w") as f:
         f.write(text)
-    r = subprocess.run(["bash", path], env=dict(os.environ, PATH="/usr/bin:/bin"), capture_output=True, text=True,
-                       timeout=60)
+    env = dict(os.environ, PATH="/usr/bin:/bin", GITHUB_RUN_ID="77", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="j")
+    env.pop("GITHUB_EVENT_PATH", None)
+    if event is not None:
+        env["GITHUB_EVENT_PATH"] = os.path.join(folder, "event.json")
+        with open(env["GITHUB_EVENT_PATH"], "w") as f:
+            json.dump(event, f)
+    r = subprocess.run(["bash", path], env=env, capture_output=True, text=True, timeout=60)
     return r.returncode, r.stdout + r.stderr
 
 
@@ -2422,6 +2431,21 @@ class P1a(unittest.TestCase):
                 self.assertEqual(code, 1, value)
                 self.assertIn("::error::Windstorm Repo Minions refused this job before any of its steps", out)
             self.assertIn("no longer private", hook_run(folder, "public")[1])
+            self.assertEqual(hook_run(folder, str(now + 3600))[0], 1)  # a time in the future is not fresh
+            # GitHub's own record of the event: "not private" refuses at once, even with a fresh read.
+            private = {"repository": {"full_name": REPO, "private": True, "visibility": "private"}}
+            public = {"repository": {"full_name": REPO, "private": False, "visibility": "public"}}
+            self.assertEqual(hook_run(folder, str(now), event=private)[0], 0)
+            code, out = hook_run(folder, str(now), event=public)
+            self.assertEqual(code, 1)
+            self.assertIn("GitHub's own record of this event says the repository is not private", out)
+            self.assertEqual(hook_run(folder, str(now), event={"schedule": "0 * * * *"})[0], 0)  # no repository named
+            self.assertEqual(hook_run(folder, str(now - 3600), event={"schedule": "0 * * * *"})[0], 1)
+            # Each refusal is written down, so status can name it (both sides, with GitHub's failure).
+            with open(os.path.join(folder, "records", "jobs.log")) as f:
+                kinds = [x.split()[0] for x in f.read().splitlines()]
+            self.assertIn("refused-public", kinds)
+            self.assertIn("refused-stale", kinds)
             # Stale, then made fresh while the hook waits: the job goes on.
             seen = fresh_seen(folder, str(now - 3600))
             text = M.job_started_script(folder, seen=seen, hold_wait_s=20).replace("command -v systemd-inhibit", "false")
@@ -2436,7 +2460,28 @@ class P1a(unittest.TestCase):
             self.assertIn("has not read this repository private in the last 15 minutes; waiting up to", out)
         # It is checked before anything else the hook starts (the sleep locks), so no step of the job runs first.
         script = M.job_started_script(FOLDER)
-        self.assertLess(script.index("if ! seen_ok; then\n  echo \"::error::"), script.index("setsid"))
+        for check in ("event=\"$(python3", "refused-public", "refused-stale"):
+            self.assertLess(script.index(check), script.index("setsid"), check)
+
+    def test_G5_15_status_names_a_refused_job_as_refused(self):
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        failed = {"conclusion": "failure", "steps": [{"name": "Set up job", "conclusion": "failure"}]}
+        note = ["Windstorm Repo Minions refused this job before any of its steps: the watch on that computer has not "
+                "read the repository private in the last 15 minutes"]
+        for kind, why in (("stale", "the watch not having read the repository private in the last 15 minutes"),
+                          ("public", "GitHub's own record of the event, or the watch, saying the repository is not "
+                                     "private")):
+            host, gh, _ = G5._named(self, f"start {t0} 555 1 0 check\nrefused-{kind} {t0 + 360} 555 1 0 check\n",
+                                    failed, notes=note)
+            lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+            named = [x for x in lines if x.startswith("warn job 'check'")]
+            self.assertEqual(named, [f"warn job 'check' (run 555, started 22:40:00Z) was refused before its first step "
+                                     f"by this computer's guard: {why}. No step of it ran here; GitHub shows it as "
+                                     f"failed, not a failing test of yours. To run it again, once: `status {REPO} "
+                                     "--rerun 9001`."])
+        # Without this computer's record of a refusal, a failed job is the person's own: never named.
+        host, gh, _ = G5._named(self, f"start {t0} 555 1 0 check\nend {t0 + 60} 555 1 0 check\n", failed, notes=note)
+        self.assertFalse(any(x.startswith("warn job") for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
 
     def test_G5_15_setup_reads_back_one_real_watch_pass(self):
         host, sha = setup_host()
@@ -2496,6 +2541,7 @@ class P1a(unittest.TestCase):
         for script in (M.job_started_script(FOLDER, path="/usr/bin:/bin"), M.job_completed_script(FOLDER, path="/usr/bin:/bin")):
             self.assertIn("\nexport PATH='/usr/bin:/bin'\n", script)
             words = set()
+            script = script.replace(M.EVENT_PY, "")  # the event reader is Python, run by python3 (listed)
             for line in script.splitlines():
                 line = line.strip()
                 if not line or line.startswith(("#", "echo ")):
