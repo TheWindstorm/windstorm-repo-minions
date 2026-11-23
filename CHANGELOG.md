@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Below Python 3.10 every command stops before any step, saying the version found and that this version runs on
+  Ubuntu 22.04 or newer and Debian 12 or newer. On Ubuntu 20.04 (Python 3.8) there was no check: `setup` made and
+  started the runner, then failed (G8.15, row R95).
+- A runner whose setup was cut before its service was recorded is stopped by the name in its own folder; the
+  removal said "the service is Failed to mangle name" (G6.9, row R96).
 - Memory: a job that needs more than its cap now fails when it reaches the cap, by name, instead of running
   slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises the cap. Jobs get no high mark and are kept
   out of swap, where this computer holds that: `setup` reads it back from the running slice and says kept, not
