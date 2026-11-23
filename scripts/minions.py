@@ -351,6 +351,7 @@ class GitHub:
 
 
 WATCH_CALLS_PER_HOUR = 24  # G8.14: one pass reads the repository and its runners (2 calls), every 5 minutes
+WATCH_CALLS_PER_JOB = 2  # R90: and each job that ends here is read once (its record, and its notes if it failed)
 
 
 def rate_limited_until(raw: str, status: int, data: object, now: dt.datetime) -> dt.datetime | None:
@@ -375,7 +376,7 @@ def rate_limited_until(raw: str, status: int, data: object, now: dt.datetime) ->
 def limit_words(until: dt.datetime) -> str:
     return (f"GitHub's API limit for this login is spent until {until.strftime('%H:%MZ')}, and it comes back by itself "
             "then. Every program logged in as this account shares that limit; this tool's watch uses about "
-            f"{WATCH_CALLS_PER_HOUR} calls an hour of it")
+            f"{WATCH_CALLS_PER_HOUR} calls an hour of it, and at most {WATCH_CALLS_PER_JOB} more for each job that ends here")
 
 
 def parse_include(raw: str) -> tuple[int, object]:
@@ -2906,6 +2907,9 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
     here = computer_record(host, mine["unit"])
     now = int(host.now().timestamp())
     named = {}
+    keys = {f"{j['start']['run']}/{j['start']['attempt']}/{j['start']['t']}" for j in recs}
+    settled = {k: v for k, v in ((mine.get("settled_jobs") or {}).items()) if k in keys}
+    fresh_settled = len(settled) != len(mine.get("settled_jobs") or {})
     for i, j in enumerate(recs):
         nxt = recs[i + 1]["start"] if i + 1 < len(recs) else None
         until = nxt["t"] if nxt else now
@@ -2915,13 +2919,26 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
             oom_after = nxt["oom"] if nxt else here.get("oom")
         if j["end"] is None and nxt is None and runner_pids(host, mine["folder"], "Runner.Worker"):
             continue  # still running
-        g = github_job(gh, repo, j["start"], mine["name"])
-        if g is None or g.get("conclusion") != "failure":
-            continue
-        s, notes = gh.api("GET", f"repos/{repo}/check-runs/{g['id']}/annotations")
-        msgs = [n.get("message") or "" for n in (notes if s == 200 and isinstance(notes, list) else [])]
-        verdict = judge_cut(g, msgs, j["start"], j["end"], until, here, oom_after)
-        kept = (data.get("named") or {}).get(str(g["id"]))
+        key = f"{j['start']['run']}/{j['start']['attempt']}/{j['start']['t']}"
+        done_ = settled.get(key)
+        if done_ is not None:  # R90: a finished job is read from GitHub once, then judged from what was kept
+            if not done_.get("verdict"):
+                continue
+            g, verdict, kept = {"id": done_["id"], "name": done_.get("name")}, tuple(done_["verdict"]), True
+        else:
+            g = github_job(gh, repo, j["start"], mine["name"])
+            if g is None or g.get("status") not in (None, "completed") or g.get("conclusion") is None:
+                continue  # not on GitHub yet, or not finished there: read again next time
+            verdict = None
+            if g.get("conclusion") == "failure":
+                s, notes = gh.api("GET", f"repos/{repo}/check-runs/{g['id']}/annotations")
+                msgs = [n.get("message") or "" for n in (notes if s == 200 and isinstance(notes, list) else [])]
+                verdict = judge_cut(g, msgs, j["start"], j["end"], until, here, oom_after)
+            kept = (data.get("named") or {}).get(str(g["id"]))
+            if verdict is None and kept:
+                verdict = (kept["kind"], kept["why"])  # named once, while this computer still had its record
+            settled[key] = {"id": g["id"], "name": g.get("name"), "verdict": list(verdict) if verdict else None}
+            fresh_settled = True
         if verdict is None and kept:
             verdict = (kept["kind"], kept["why"])  # named once, while this computer still had its record
         if verdict is None:
@@ -2949,6 +2966,12 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
         else:
             lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was cut by "
                                   f"{verdict[1]}, not a failing test of yours; GitHub shows it as failed.{again}"))
+    if fresh_settled:
+        fresh = load_state(host)  # never write back an older copy of what other steps saved meanwhile
+        if repo in (fresh.get("runners") or {}):
+            fresh["runners"][repo]["settled_jobs"] = settled
+            save_state(host, fresh)
+        mine["settled_jobs"] = settled
     if rerun is not None:
         lines.append(rerun_once(gh, host, repo, rerun, named, data))
     return lines
