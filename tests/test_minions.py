@@ -506,16 +506,21 @@ jobs:
     def test_G1_10_no_github_cli_or_login_is_the_first_need_you(self):
         gh = StandIn(self.recent)
         code, lines = look(gh, linux_host(which=("sudo",)))
-        self.assertEqual(lines, ["need you: install the GitHub CLI: sudo apt update && sudo apt install gh"])
+        self.assertEqual(lines, ["need you: install the GitHub CLI: sudo apt update && sudo apt install gh. " + M.GH_ONLY])
         self.assertEqual(code, M.EXIT_NEED)
         self.assertEqual(gh.calls, [])
         host = linux_host(runs={("gh", "auth", "status"): (1, "You are not logged into any GitHub hosts.")})
         code, lines = look(StandIn(self.recent), host)
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].startswith("need you: log in to GitHub: run `gh auth login`"), lines)
+        self.assertTrue(lines[0].endswith(M.GH_ONLY), lines)
         mac = FakeHost(system="Darwin", which=())
         _, lines = look(StandIn(self.recent), mac)
-        self.assertEqual(lines, ["need you: install the GitHub CLI: brew install gh"])
+        self.assertEqual(lines, ["need you: install the GitHub CLI: brew install gh. " + M.GH_ONLY])
+        # R77: the line itself says GitHub is reached only through gh, no key or other saved login is looked
+        # for, and the step is the person's
+        self.assertIn("no SSH key and no other saved login on this computer is used or looked for", M.GH_ONLY)
+        self.assertIn("This step is yours", M.GH_ONLY)
 
     def test_G1_11_no_admin_rights_on_the_computer_stops_before_anything(self):
         gh = StandIn(self.recent)

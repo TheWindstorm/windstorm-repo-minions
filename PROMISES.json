@@ -46,7 +46,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_2_the_runner_user_has_no_admin_rights",
-   "proven": "",
+   "proven": "Seen twice, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: the night of 2026-11-22 (read back after setup, and from inside a real job: sudo refused, its own group only) and 2026-11-23 04:25 UTC.",
    "issue": 9,
    "moved_why": "",
    "moved_by_person": ""
@@ -60,7 +60,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_8_credential_files_are_the_runner_users_only",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 06:23-06:59 UTC: no `--token` on any process's argv in 19,521 samples across two registrations and two removals; the credential files 600 and read back; no token in any log or history.",
    "issue": 10,
    "moved_why": "",
    "moved_by_person": ""
@@ -88,7 +88,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G3_3_publishing_jobs_are_never_moved_silently",
-   "proven": "",
+   "proven": "Seen twice, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: the night of 2026-11-22 and 2026-11-23 04:25 UTC; the publishing job was left as it was and named, in look and in move.",
    "issue": 12,
    "moved_why": "",
    "moved_by_person": ""
@@ -116,7 +116,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_4_each_runner_has_its_own_folders",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: the night of 2026-11-22 (its own work folder) and 2026-11-23 04:25 and 04:59-05:02 UTC (a second job's workspace held only its own file). One runner per computer in this version.",
    "issue": 14,
    "moved_why": "",
    "moved_by_person": ""
@@ -130,7 +130,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_3_the_disk_never_fills_from_jobs",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 05:26-05:37 UTC: the work folder emptied after each job; below the floor the watch held the runner, a job waited, the hold lifted by itself and the job ran.",
    "issue": 15,
    "moved_why": "",
    "moved_by_person": ""
@@ -158,7 +158,7 @@
    "first_ship_in": "0.2.0",
    "ship_in": "0.1.0",
    "test": "test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again",
-   "proven": "",
+   "proven": "Seen twice, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: the night of 2026-11-22 and 2026-11-23 05:10-05:12 UTC: back by itself after a restart; status named the cut job and offered --rerun once; the next job succeeded.",
    "issue": 17,
    "moved_why": "Moved into 0.1.0 by the milestone owner's word, 2026-11-22: 0.1.0 runs on a person's own laptop, where a closed lid or a restart during a job is the likeliest thing in week one, and GitHub would call it a failed test. The naming path is shared with G5.14.",
    "moved_by_person": ""
@@ -172,7 +172,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_INV4_never_kill_a_running_job",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: every stop of the tool drained first (the night of 2026-11-22; 2026-11-23 05:03 UTC); 2026-11-23 06:23-06:59 UTC the installed unit read back TimeoutStopSec 5 min, the runner's own.",
    "issue": 18,
    "moved_why": "",
    "moved_by_person": ""
@@ -214,7 +214,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_2_storage_is_said_to_count_the_same",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23: the sentence printed by look before setup and passed on by an agent (the smallest model (claude-haiku-5-5), cold start from the release branch's README).",
    "issue": 21,
    "moved_why": "",
    "moved_by_person": ""
@@ -256,7 +256,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_11_drain_before_a_planned_restart_lifts_after_the_boot",
-   "proven": "",
+   "proven": "Seen twice, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: the night of 2026-11-22 and 2026-11-23 05:03-05:10 UTC (held, waited for the job, 'safe to restart now' only after it ended, a job queued during the hold, the hold lifted by itself after the reboot, the next job ran).",
    "issue": 24,
    "moved_why": "",
    "moved_by_person": ""
@@ -298,7 +298,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_11_a_job_asking_only_for_self_hosted_never_lands_on_ours",
-   "proven": "",
+   "proven": "Seen 2026-11-22 18:16-18:26 UTC on a real runner (2.338.2) of a test account and a private throwaway repository: `self-hosted`, `[linux]` and `[self-hosted, minions-c3]` waited, `[minions-c3]` ran; and on a stock Ubuntu 24.04.5 virtual machine and the private proof repository the runner listed with only our labels.",
    "issue": 27,
    "moved_why": "",
    "moved_by_person": ""
@@ -326,7 +326,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_13_a_job_waiting_behind_our_hold_is_warned",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22: status warned first about a job waiting behind our hold, with the threshold set to 0 minutes (the default 30 was not waited out); the 24 hours said before setup.",
    "issue": 29,
    "moved_why": "",
    "moved_by_person": ""
@@ -340,7 +340,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_7_a_stop_is_sigterm_and_read_back_never_two_copies",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: the night of 2026-11-22 and 2026-11-23 03:49 and 04:26 UTC: each stop read back with no process of the runner left; setup stopped an old listener and read it back before registering again.",
    "issue": 30,
    "moved_why": "",
    "moved_by_person": ""
@@ -368,7 +368,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_12_other_peoples_things_are_counted_never_named",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 06:23-06:59 UTC: another user's runner service counted and not named; our own runner named as ours.",
    "issue": 35,
    "moved_why": "",
    "moved_by_person": ""
@@ -382,7 +382,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_6_the_service_is_stopped_only_after_a_drain",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: a stop during a job cancels it (the night of 2026-11-22); the tool's stops came only after a drain read idle (the night of 2026-11-22; 2026-11-23 05:03 UTC).",
    "issue": 38,
    "moved_why": "",
    "moved_by_person": ""
@@ -396,7 +396,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_9_the_runner_is_a_boot_service_started_after_its_limits",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22: the drop-in read back after install (Restart=on-failure, Wants=network-online.target, our slice).",
    "issue": 39,
    "moved_why": "",
    "moved_by_person": ""
@@ -410,7 +410,7 @@
    "first_ship_in": "0.2.0",
    "ship_in": "0.1.0",
    "test": "test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22: jobs cut by a stop and by a restart named as cut, offered once, a second rerun refused.",
    "issue": 40,
    "moved_why": "Moved into 0.1.0 by the milestone owner's word, 2026-11-22: 0.1.0 runs on a person's own laptop, where a closed lid or a restart during a job is the likeliest thing in week one, and GitHub would call it a failed test. The naming path is shared with G5.14.",
    "moved_by_person": ""
@@ -424,7 +424,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_13_a_virtual_disk_is_not_called_spinning",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22 and 2026-11-23: 'disk kind not known (virtual)'.",
    "issue": 43,
    "moved_why": "",
    "moved_by_person": ""
@@ -438,7 +438,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_14_look_offers_only_what_this_setup_does",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22 and 2026-11-23: for an organisation, look names this one repository's runner and no runner group. Seen for that case only.",
    "issue": 44,
    "moved_why": "",
    "moved_by_person": ""
@@ -452,7 +452,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: one ask covered every admin step of setup (the night of 2026-11-22; 2026-11-23); 2026-11-23 06:23-06:59 UTC a cut setup's stop line named the terminal where the password was typed.",
    "issue": 45,
    "moved_why": "",
    "moved_by_person": ""
@@ -466,7 +466,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_5_uninstall_stops_the_slice_before_deleting_it",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22 and 2026-11-23 04:26 UTC: the slice stopped before its file was deleted, then read back gone.",
    "issue": 46,
    "moved_why": "",
    "moved_by_person": ""
@@ -480,7 +480,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_5_no_system_call_waits_on_a_pager",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22 and 2026-11-23: setup, drain and uninstall typed on a real terminal; none waited on a pager.",
    "issue": 47,
    "moved_why": "",
    "moved_by_person": ""
@@ -494,7 +494,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_1_status_reads_both_sides_and_the_queue",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22: GitHub listed the OS as unknown; status named it from this computer's own survey.",
    "issue": 48,
    "moved_why": "",
    "moved_by_person": ""
@@ -508,7 +508,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_8_limits_have_floors_and_too_little_is_said_before_setup",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: the night of 2026-11-22 on a 2-processor 3 GB machine look warned and setup stopped with no user made; 2026-11-23 06:23-06:59 UTC a 1-processor boot gave jobs 1 of 1.",
    "issue": 51,
    "moved_why": "",
    "moved_by_person": ""
@@ -536,7 +536,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_8_the_limits_are_said_in_plain_words_before_setup",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 04:24, 07:59 and 08:13 UTC: the limits and the one way to change them said by look before setup, passed on by an agent (the smallest model (claude-haiku-5-5), cold start from the release branch's README), repeated by setup.",
    "issue": 53,
    "moved_why": "",
    "moved_by_person": ""
@@ -550,7 +550,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_6_no_command_hangs_on_waiting",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23: each wait said its deadline; a drain past its limit ended on its deadline with exit 4 (06:23-06:59 UTC); move --verify ended on its deadline with exit 4 (08:26 UTC).",
    "issue": 54,
    "moved_why": "",
    "moved_by_person": ""
@@ -564,7 +564,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_7_waiting_exits_4_and_names_what_and_what_next",
-   "proven": "",
+   "proven": "Seen once on the current code, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 08:26 UTC: move --verify ended on waiting, exit 4, naming what it waited for and the next command.",
    "issue": 55,
    "moved_why": "",
    "moved_by_person": ""
@@ -578,7 +578,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_8_the_skill_says_waiting_is_not_done",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 08:16-08:28 UTC, the smallest model (claude-haiku-5-5), cold start from the release branch's README: the person stopped the runner before merging; verify ended on waiting; the agent said the job was queued and not yet confirmed, named resume as the person's step and stopped, and said verified only after the job passed.",
    "issue": 56,
    "moved_why": "",
    "moved_by_person": ""
@@ -592,7 +592,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_15_look_and_move_judge_jobs_alike",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 04:24-04:26 UTC: look and move gave the same words for the same jobs.",
    "issue": 60,
    "moved_why": "",
    "moved_by_person": ""
@@ -648,7 +648,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_6_uninstall_runs_as_the_runner_and_github_goes_first",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository: the runner's own removal as the runner user (the night of 2026-11-22; 2026-11-23 04:26 UTC); 2026-11-23 06:23-06:59 UTC with that removal unable to run, the API delete, read back gone.",
    "issue": 72,
    "moved_why": "",
    "moved_by_person": ""
@@ -662,7 +662,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again",
-   "proven": "",
+   "proven": "Seen twice, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22: jobs that came through a 30 s and a ~265 s sleep passed and were not called cut.",
    "issue": 73,
    "moved_why": "",
    "moved_by_person": ""
@@ -676,7 +676,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_9_the_delay_said_is_the_one_this_computer_gives",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22 and 2026-11-23: logind's 30 s read and said; a requested sleep put off 30.2 s.",
    "issue": 74,
    "moved_why": "",
    "moved_by_person": ""
@@ -718,7 +718,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_4_uninstall_again_finishes_an_interrupted_removal",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the night of 2026-11-22: an interrupted removal finished by running uninstall again; the slice read back gone.",
    "issue": 85,
    "moved_why": "",
    "moved_by_person": ""
@@ -746,7 +746,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_3_commands_and_line_kinds_are_exactly_these",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23: need-you lines ended in exit 3 (look, move, uninstall); a sudo ask answered in the same run ended 0.",
    "issue": 89,
    "moved_why": "",
    "moved_by_person": ""
@@ -760,7 +760,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_7_uninstall_says_the_put_back_checks_before_its_pull_request",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23: the line printed before the put-back pull request's own line, and passed on by an agent. When GitHub received the call was not read.",
    "issue": 90,
    "moved_why": "",
    "moved_by_person": ""
@@ -774,7 +774,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_10_a_persons_step_is_never_done_another_way",
-   "proven": "",
+   "proven": "Seen three times, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 04:23, 07:59 and 08:11 UTC, the smallest model (claude-haiku-5-5), cold start from the release branch's README: the agent could not install gh and asked the person. In the last run it first looked for another way to GitHub on the computer (row R77).",
    "issue": 91,
    "moved_why": "",
    "moved_by_person": ""
@@ -788,7 +788,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_10_look_prints_what_to_tell_the_person_before_setup",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 04:24, 08:00 and 08:13 UTC: look printed the block, 1 of 7 to 7 of 7.",
    "issue": 92,
    "moved_why": "",
    "moved_by_person": ""
@@ -802,7 +802,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_11_the_tools_words_are_quoted_exactly_or_not_called_its_words",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23, the smallest model (claude-haiku-5-5), cold start from the release branch's README (run without the user-level rules file): look's and uninstall's lines given unchanged (04:24-04:27 UTC); 08:00 UTC the block equal to look's lines. 08:13 UTC the agent kept the text but wrote its own numbers for the prefixes.",
    "issue": 93,
    "moved_why": "",
    "moved_by_person": ""
@@ -816,7 +816,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_9_every_program_a_service_runs_by_name_is_listed_and_resolved",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23: the watch found gh where the person's terminal found it (two different places) and the service carried that PATH.",
    "issue": 94,
    "moved_why": "",
    "moved_by_person": ""
@@ -886,7 +886,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_10_look_prints_what_to_tell_the_person_before_setup",
-   "proven": "",
+   "proven": "Seen twice, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 08:00 and 08:13 UTC, the smallest model (claude-haiku-5-5), cold start from the release branch's README: the block pasted whole, 7 of 7 lines equal to look's; its own words only after the block once (08:13); at 08:00 a paragraph on the start test came before it.",
    "issue": 106,
    "moved_why": "",
    "moved_by_person": ""
@@ -900,7 +900,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_12_every_stop_and_need_you_line_names_what_happened_and_the_next_step",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23: need-you lines (04:23-04:26 UTC) and a stop line (06:23-06:59 UTC) on the current code, each naming what and the next step.",
    "issue": 107,
    "moved_why": "",
    "moved_by_person": ""
@@ -914,7 +914,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_13_a_reader_that_stops_reading_never_cuts_a_command_short",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 06:23-06:59 UTC: look on a public repository piped to `head -1`: no traceback, its exit code kept.",
    "issue": 108,
    "moved_why": "",
    "moved_by_person": ""
@@ -928,7 +928,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_3_below_the_floor_the_watch_holds_and_lifts_by_itself",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 05:26-05:37 UTC: held below the floor, a job queued, lifted by itself, the job succeeded.",
    "issue": 115,
    "moved_why": "",
    "moved_by_person": ""
@@ -942,7 +942,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_1_status_never_begins_with_ok_while_a_job_waits_on_a_runner_that_cannot_take_it",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 06:23-06:59 and 07:12-07:19 UTC: with the service stopped and a job waiting, status began with a warn naming resume; the job then ran green.",
    "issue": 117,
    "moved_why": "",
    "moved_by_person": ""
@@ -998,7 +998,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_12_a_setup_cut_part_way_is_found_again",
-   "proven": "",
+   "proven": "Seen once on the fix, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 06:23-06:59 UTC: a cut setup taken away by setup again and by uninstall, read back.",
    "issue": 133,
    "moved_why": "",
    "moved_by_person": ""
@@ -1012,7 +1012,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_7_setup_asks_before_jobs_run_beside_something_live",
-   "proven": "",
+   "proven": "Seen once on the fix, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 06:23-06:59 UTC: a listening service named, setup asked for a yes in words; remote login not counted.",
    "issue": 135,
    "moved_why": "",
    "moved_by_person": ""
@@ -1026,7 +1026,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 07:12-07:19 UTC: drain --stop and resume asked once from the person's terminal; over a terminal-less connection a need line and nothing changed.",
    "issue": 137,
    "moved_why": "",
    "moved_by_person": ""
@@ -1054,7 +1054,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_7_look_names_what_already_lives_on_the_computer",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 08:13 UTC: look gave remote login an ok line; the agent (the smallest model (claude-haiku-5-5), cold start from the release branch's README) asked nothing about it.",
    "issue": 146,
    "moved_why": "",
    "moved_by_person": ""
@@ -1068,8 +1068,22 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G3_6_moved_is_said_only_after_a_real_job_ran",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 08:26 UTC: verify's waiting line named the offline runner and resume first.",
    "issue": 148,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R77",
+   "seen": "2026-11-23, a cold-start agent run (the smallest model) on a stock Ubuntu 24.04 virtual machine: told that gh was missing, the agent listed the person's SSH folder, tried to reach GitHub over SSH and listed the file where git keeps saved logins, before asking for the right step (no contents read). An earlier small-model run installed gh its own way.",
+   "promise": "The need-you lines for a missing or logged-out GitHub CLI say in the line itself that this skill reaches GitHub only through the GitHub CLI and its own login, that no SSH key and no other saved login on the computer is used or looked for, and that the step is the person's.",
+   "codon": "G1.10",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_10_no_github_cli_or_login_is_the_first_need_you",
+   "proven": "",
+   "issue": 150,
    "moved_why": "",
    "moved_by_person": ""
   }
