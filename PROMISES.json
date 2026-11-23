@@ -1268,6 +1268,20 @@
    "issue": 192,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R91",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: `uninstall --all` stopped with \"processes of minions-runner still run (three PIDs): the user is not deleted\", exit 2, and no way out. The three were our own job's sleep hold (two `systemd-inhibit` and their `sleep`), left by a service stopped mid-job before row R89's fix.",
+   "promise": "`uninstall --all` ends our own leftover sleep holds by exact PID and finishes; any other process of the runner user is named with its name and never ended by the tool, and the line says how to finish.",
+   "codon": "G6.8",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_8_uninstall_all_ends_our_leftover_sleep_holds_and_names_anything_else",
+   "proven": "",
+   "issue": 196,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
