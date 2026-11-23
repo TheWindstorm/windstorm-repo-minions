@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `status` judges the watch's heartbeat by waking time. The watch's timer counts only time the computer is awake,
+  so after a sleep of more than about 10 minutes `status` began with a false stop ("the watch is not running").
+  Each pass now records how long the computer has slept, and `status` says it slept and that the next pass comes
+  within one interval of waking time (G5.3, row R83).
 - The start test's read-back asks GitHub up to three times. It says a run or branch is left only when GitHub
   still answers with it, and says GitHub gave no clear answer when it never did. Before, any answer but "not
   found" (a 504, or a deletion still finishing) was called left (G1.4, row R82).

@@ -257,6 +257,14 @@ class Host:
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
 
+    def slept_s(self) -> float | None:
+        """R83: seconds this computer has been suspended since boot (boot time minus monotonic time, the clock the
+        watch's timer counts by); None where it cannot be read."""
+        try:
+            return max(0.0, time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC))
+        except (AttributeError, OSError):
+            return None
+
     def isatty(self) -> bool:
         return sys.stdin.isatty()
 
@@ -2607,14 +2615,22 @@ def queued_jobs(gh: GitHub, repo: str) -> list[dict]:
     return out
 
 
-def watch_heartbeat(data: dict, now: dt.datetime) -> tuple[bool, str]:
-    """G5.3: a heartbeat older than three intervals is "the watch is not running"."""
+def watch_heartbeat(data: dict, now: dt.datetime, slept_now: float | None = None) -> tuple[bool, str]:
+    """G5.3: a heartbeat older than three intervals of waking time is "the watch is not running". R83: the watch's
+    timer counts only waking time, so time this computer slept since the last pass is not counted against it."""
     w = data.get("watch") or {}
     every = int(w.get("every_s") or WATCH_EVERY_S)
     last = parse_stamp(w.get("time"))
     if last is None:
         return False, "the watch is not running: it has never written a heartbeat"
     age = (now - last).total_seconds()
+    slept_then = w.get("slept_s")
+    slept = (max(0.0, slept_now - slept_then)
+             if isinstance(slept_now, (int, float)) and isinstance(slept_then, (int, float)) else 0.0)
+    if age > 3 * every and age - slept <= 3 * every:
+        return True, (f"the watch ran {minutes(age)} ago, at {hms(last)}; this computer slept {minutes(slept)} since, "
+                      f"and the watch's timer counts only waking time: its next pass comes within {minutes(every)} "
+                      "of waking time")
     if age > 3 * every:
         return False, (f"the watch is not running: its last heartbeat was {minutes(age)} ago, at {hms(last)} "
                        f"(it runs every {minutes(every)})")
@@ -2701,7 +2717,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                                              "move the job back")))
         first.extend(summary)
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
-    ok_, words = watch_heartbeat(data, now)
+    ok_, words = watch_heartbeat(data, now, host.slept_s())
     rest.append(("ok" if ok_ else "warn", words))
     w = data.get("watch") or {}
     every = int(w.get("every_s") or WATCH_EVERY_S)
@@ -2932,7 +2948,8 @@ def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
     lift_after_restart(gh, host, data, rep)
     data = load_state(host)
     old = (data.get("watch") or {}).get("blind") or {}
-    w = {"time": stamp(host.now()), "every_s": int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S)}
+    w = {"time": stamp(host.now()), "every_s": int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S),
+         "slept_s": host.slept_s()}
     if blind:  # G5.15: counted, kept with its reason, and said: a blind pass ends `failed`, never in silence
         w["blind"] = {rp: {"why": why, "passes": (old.get(rp) or {}).get("passes", 0) + 1,
                            "since": (old.get(rp) or {}).get("since") or stamp(host.now())} for rp, why in blind.items()}

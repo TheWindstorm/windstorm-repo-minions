@@ -704,7 +704,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again",
-   "proven": "",
+   "proven": "Seen once, 2026-11-23, a stock Ubuntu 22.04.5 virtual machine (systemd 249) and the private proof repository: a job cut by a 12-minute sleep was named as cut by this computer going to sleep, read from the older wording \"Entering sleep state\", and a rerun offered once. The newer wording was seen on Ubuntu 24.04.5 (the night of 2026-11-22).",
    "issue": 84,
    "moved_why": "",
    "moved_by_person": ""
@@ -1154,6 +1154,20 @@
    "test": "test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure",
    "proven": "",
    "issue": 160,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R83",
+   "seen": "2026-11-23, a stock Ubuntu 22.04 virtual machine: 2 minutes after waking from a 12-minute sleep, status began with a stop saying the watch was not running and every job would be refused, while the watch's timer was active and due 3 minutes after the wake (the timer counts only waking time).",
+   "promise": "status judges the watch's heartbeat by waking time: time the computer slept since the last pass is not counted against it, and the line says so; a watch that misses three intervals of waking time is still called stopped.",
+   "codon": "G5.3",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_3_the_watch_runs_and_its_silence_is_noticed",
+   "proven": "",
+   "issue": 163,
    "moved_why": "",
    "moved_by_person": ""
   }
