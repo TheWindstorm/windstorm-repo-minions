@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `setup` says this version serves one repository per computer, and holds it: a second repository's `setup`
+  changes nothing, names the repository already served and says to uninstall it first (G7.6).
 - The skill names where to clone: the person's home folder. Seen once, over a restart: nothing that `setup`
   installs ran from a clone under `/tmp`; the watch, the job hooks and the runner came back, and the clone was gone.
 - `look` prints the words for the person as one numbered block (`tell the person 1 of 7:` to `7 of 7:`), and the

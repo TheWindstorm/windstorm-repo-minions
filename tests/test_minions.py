@@ -641,6 +641,29 @@ def admin_steps(host):
 
 
 class G2(unittest.TestCase):
+    def test_G7_6_version_0_1_says_one_repository_and_more_next(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(f"ok this version serves one repository per computer: here, {REPO}; more come in the next "
+                      "version", lines)
+        # A second repository: stopped before anything is touched, the one served named, and the way on.
+        host, sha = setup_host()
+        fresh_look(host)
+        data = M.load_state(host)
+        data["runners"] = {"example-org/other-repo": {"name": "minions-box-1"}}
+        M.save_state(host, data)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual((code, len(lines)), (M.EXIT_STOP, 2), lines)
+        self.assertTrue(lines[-1].startswith("stop this computer already serves example-org/other-repo"), lines)
+        self.assertIn("nothing was changed", lines[-1])
+        self.assertIn(f"run `uninstall example-org/other-repo` first, then `setup {REPO}` again", lines[-1])
+        self.assertIn("more repositories per computer come in the next version", lines[-1])
+        self.assertEqual(admin_steps(host), [], "nothing is touched for a second repository")
+        skill = open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")).read()
+        self.assertIn("This version serves one repository per computer; more come in the next version.", skill)
+
     def test_G2_1_setup_needs_a_fresh_clean_look(self):
         host, sha = setup_host()
         code, lines = run_setup(setup_gh(sha), host)
