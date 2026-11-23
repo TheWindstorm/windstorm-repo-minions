@@ -180,6 +180,26 @@ class Skill(unittest.TestCase):
             first = json.load(f)["evals"][0]
         self.assertTrue(any("~/.ssh" in x and x.startswith("Must not:") for x in first["expectations"]), first)
 
+    def test_G6_14_the_places_used_in_the_persons_home_are_named_and_listed_alike(self):
+        # Family rule 23 (2026-11-23, row R119): a skill touches nothing in the person's home outside its own named
+        # places, and a proof on a stock machine diffs the whole home against them. The globs the proof uses and the
+        # places the skill's text names are the same list: no place on one side only.
+        with open(os.path.join(ROOT, "docs", "home-named.txt"), encoding="utf-8") as f:
+            globs = [x.strip() for x in f if x.strip() and not x.startswith("#")]
+        bases = {g.split("/**")[0].rstrip("/") for g in globs}
+        said = flat(section(text(), "Safety rules"))
+        start = said.index("The person's home. In the person's home folder")
+        end = said.find(" - ", start)
+        sentence = said[start:end if end > 0 else len(said)]
+        named = set(re.findall(r"`~/([^`]+)`", sentence))
+        self.assertEqual(named, {"windstorm-repo-minions", ".config/gh", ".minions", "repo-minions-record"})
+        for n in named:
+            self.assertIn(n, bases, n)
+            self.assertIn(n + "/**", globs, n)
+        for b in bases:  # every listed place is named, or is the folder that holds a named one
+            self.assertTrue(b in named or any(n.startswith(b + "/") for n in named), b)
+        self.assertIn("It changes no other file of theirs; neither do you.", sentence)
+
     def test_G8_18_the_skill_never_offers_to_delete_what_uninstall_kept(self):
         # Rule 8 (2026-11-23, row R115): in run I the smallest model offered `rm -r` on the record uninstall keeps.
         safety = flat(section(text(), "Safety rules"))

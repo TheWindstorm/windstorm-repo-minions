@@ -1,0 +1,12 @@
+# Family rule 23 (G6.14, row R119): the only places in the person's home this skill and the programs it starts may
+# touch, as globs relative to the home, for `home_snapshot.py diff --named`. The skill's own text names each one
+# (SKILL.md, "The person's home"; the release README). Any difference outside them is a finding.
+windstorm-repo-minions/
+windstorm-repo-minions/**
+.config/
+.config/gh/
+.config/gh/**
+.minions/
+.minions/**
+repo-minions-record/
+repo-minions-record/**
