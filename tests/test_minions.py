@@ -3008,8 +3008,11 @@ class G6(unittest.TestCase):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host, everything=True)
         census = [x for x in lines if "census:" in x]
-        self.assertEqual(len(census), 5, census)
+        self.assertEqual(len(census), 6, census)
         self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census), census)
+        # Rule 8: the census is the last thing printed, and it names this tool's state folder.
+        self.assertIn("ok census: this tool's state folder: none", census)
+        self.assertTrue(lines[-1].startswith("ok census:"), lines[-3:])
         # Something left is named as a `warn`, never "none".
         gh, world, host = remove_setup()
         gh.runner = dict(gh.runner, name="someone-elses-runner")

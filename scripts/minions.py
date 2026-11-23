@@ -4408,7 +4408,8 @@ def remove_slice(host: Host, rep: Report) -> bool:
     return True
 
 
-def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report) -> None:
+def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report,
+           state_left: bool | None = None) -> None:
     """G6.3, INV6: what is left, each "none" or named. With --all every line should read none."""
     unread: list[str] = []
 
@@ -4467,6 +4468,8 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     mark = len(unread)
     folders = [x for x in (HOOKS_ROOT, RECORDS_ROOT, f"/home/{RUNNER_USER}") if there(x)]
     line("folders", folders, "" if everything else "kept; `uninstall --all` takes them", mark)
+    if state_left is not None:
+        line("this tool's state folder", [host.state_dir()] if state_left else [])
 
 
 def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
@@ -4501,14 +4504,12 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
             return rep.code()
         for rp in sorted(data.get("moves") or {}):
             put_back(gh, host, rp, data, rep)
-        census(gh, host, known, True, rep)
         journal(host, "delete", f"{host.state_dir()} (the last step)")
         shutil.rmtree(host.state_dir(), ignore_errors=True)
+        # Rule 8: the census is the last thing printed; it names this tool's state folder too.
+        census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()))
         if os.path.isdir(host.state_dir()):
             rep.stop(f"could not delete {host.state_dir()}. Run the same command again: it finishes a removal that was not finished")
-        else:
-            rep.ok(f"this tool's state ({host.state_dir()}) is deleted: nothing of Windstorm Repo Minions is left "
-                   "on this computer")
         return rep.code()
     census(gh, host, known, False, rep)
     return rep.code()
