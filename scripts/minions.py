@@ -1484,7 +1484,12 @@ def slice_text(limits: dict) -> str:
 def sudo(host: Host, argv: list[str], input: str | None = None, timeout: int = 600) -> tuple[int, str]:
     """An admin step: always `sudo -n` (the password was asked once, before the first step)."""
     full = ["sudo", "-n"] + argv
-    return host.run_in(full, input, timeout) if input is not None else host.run(full, timeout)
+    rc, out = host.run_in(full, input, timeout) if input is not None else host.run(full, timeout)
+    if rc != 0 and "a password is required" in out:  # G2.12: the permission ran out, or this is another terminal
+        out = out.rstrip("\n") + ("\nsudo's permission ran out or belongs to another terminal: run the same command "
+                                  "again from the terminal where you typed the password (what was done is read back, "
+                                  "never done twice)")
+    return rc, out
 
 
 def as_runner(host: Host, argv: list[str], input: str | None = None, timeout: int = 600) -> tuple[int, str]:

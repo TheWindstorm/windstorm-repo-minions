@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- When sudo's permission runs out part-way, or the command runs in another terminal, the stop now says to run
+  it again from the terminal where the password was typed, and that nothing is done twice (G2.12, row R32).
 - On battery a laptop's runner is held by the watch, by default, and the hold lifts on mains power; the laptop
   sentence said this already, and now it is so. `resume OWNER/NAME --on-battery-too` takes jobs on battery,
   `--on-battery-held` goes back (G11.2, row R19).

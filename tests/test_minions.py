@@ -815,6 +815,25 @@ class G2(unittest.TestCase):
             with open(os.path.join(host.state_dir(), name), errors="replace") as f:
                 self.assertNotIn(TOKEN, f.read(), name)
 
+    def test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked(self):
+        # Asked once, in this terminal; every admin step after it is `sudo -n` (it never asks again by itself).
+        host, sha = setup_host()
+        fresh_look(host)
+        host.runs[("sudo", "-n", "true")] = (1, "sudo: a password is required\n")
+        code, lines = run_setup(setup_gh(sha), host, interactive=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertEqual(host.validated, 1)
+        self.assertFalse([a for a in host.ran if a[:1] == ("sudo",) and a[1:2] != ("-n",)], "only sudo -n")
+        # Cut part-way (the permission ran out, or another terminal): the stop says to run it again from the same
+        # terminal, and that nothing is done twice.
+        host, sha = setup_host()
+        fresh_look(host)
+        host.runs[("sudo", "-n", "useradd")] = (1, "sudo: a password is required\n")
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn("run the same command again from the terminal where you typed the password", lines[-1])
+        self.assertIn("never done twice", lines[-1])
+
     def test_G2_6_a_runner_serves_only_chosen_private_repositories(self):
         host, sha = setup_host()
         fresh_look(host)

@@ -212,7 +212,7 @@ nothing.
 | G2.9 | The runner runs as a boot service that starts again by itself after a restart, ordered after the network and after our limits are in place. The unit the runner's own script writes has `Restart=no` and orders after the network without asking for it (seen, Part 7 C7), so our drop-in adds `Wants=network-online.target`, `Restart=on-failure` and our slice. | `test_G2_9_the_runner_is_a_boot_service_started_after_its_limits` |
 | G2.10 | `setup` ends with both sides read: GitHub lists the runner online and idle, and the service is running. Until both are seen, the line is `waiting`, never `ok`. | `test_G2_10_setup_ends_with_both_sides_read` |
 | G2.11 | A job that asks for `self-hosted` alone, or for an OS or architecture label alone, never lands on our runner: it waits for another runner. Seen on a real runner (Part 7 C3) before any G5 code is written, because every hold rests on it. | `test_G2_11_a_job_asking_only_for_self_hosted_never_lands_on_ours` |
-| G2.12 | The admin password is asked once and every admin step runs from that same terminal; sudo's permission belongs to one terminal, and a second one is asked again. A `setup` cut part-way says to run it again from the same terminal. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked |
+| G2.12 | The admin password is asked once and every admin step runs from that same terminal; sudo's permission belongs to one terminal, and a second one is asked again. A `setup` cut part-way says to run it again from the same terminal. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | `test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked` |
 
 ### G3 Move the chores
 

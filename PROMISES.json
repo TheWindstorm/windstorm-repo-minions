@@ -451,7 +451,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G2_12_admin_steps_stay_on_the_terminal_that_was_asked",
    "proven": "",
    "issue": 45,
    "moved_why": "",
