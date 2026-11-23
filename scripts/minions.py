@@ -804,7 +804,9 @@ def what_lives_here(host: Host, rep: Report) -> dict:
     """G1.7: what a job could disturb or be disturbed by. On a shared computer other users' things are counted,
     never named: only what is the person's own is named (their rootless containers, runner services that run as
     them). Port numbers are named; they say nothing of whose they are."""
-    out = {"ports": set(), "containers": [], "shared_containers": 0, "runners": [], "others_runners": 0}
+    out = {"ports": set(), "containers": [], "shared_containers": 0, "runners": [], "others_runners": 0, "ours": []}
+    # Our own runner, after setup, is neither "other" nor the person's own: it runs as minions-runner (P1a).
+    ours = {r.get("unit") for r in (load_state(host).get("runners") or {}).values()}
     if host.system() == "Linux":
         for f in ("/proc/net/tcp", "/proc/net/tcp6"):
             out["ports"] |= listening_ports(host.read(f) or "")
@@ -831,6 +833,9 @@ def what_lives_here(host: Host, rep: Report) -> dict:
         if rc == 0:
             me = host.user()
             for unit in [x.split()[0] for x in text.splitlines() if x.strip()]:
+                if unit in ours:
+                    out["ours"].append(unit)
+                    continue
                 urc, owner = host.run(systemctl("show", "-p", "User", "--value", unit))
                 if urc == 0 and owner.strip() == me:
                     out["runners"].append(unit)
@@ -851,6 +856,8 @@ def what_lives_here(host: Host, rep: Report) -> dict:
     if out["shared_containers"]:
         rep.warn(f"{out['shared_containers']} container(s) running on this computer's shared container service "
                  "(not named: they may be another person's)")
+    if out["ours"]:
+        rep.ok(f"this tool's own runner here: {', '.join(out['ours'])}")
     if out["runners"]:
         rep.warn(f"{len(out['runners'])} other runner service(s) of yours here: {', '.join(out['runners'][:10])}")
     if out["others_runners"]:
