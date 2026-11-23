@@ -84,6 +84,10 @@ folder).
   user and its boot service. Say: "Setup will ask for this computer's admin password once. Please type it where
   sudo asks, in your own terminal. I never see it." Run setup in that same terminal: the permission belongs to one
   terminal, and another one asks again.
+- **A yes beside something live.** If setup says `need you: this computer serves something live`, say what it
+  names (ports open to the network, containers) and that jobs here would share its processors, memory and disk.
+  Ask whether to use another computer or to run jobs here anyway. Only on their yes in words, run
+  `setup <owner/repo> --beside-live-too`.
 - **The start test's yes.** Before `--start-test`, say what it does, in look's own words: one temporary branch
   with one workflow file, a job that runs on no machine, then the run and the branch are deleted and read back gone.
   Run it only after the person says yes.

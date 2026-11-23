@@ -912,6 +912,9 @@ def sleep_setting(host: Host) -> str | None:
 
 # ------------------------------------------------------------------------------------------------------------ G1.7
 
+UPKEEP_PORTS = {22, 53, 67, 68, 123, 5353}
+
+
 def listening_ports(tcp_text: str) -> set[int]:
     """Ports in LISTEN state (0A) on an address other than loopback, from /proc/net/tcp or tcp6."""
     ports = set()
@@ -920,7 +923,10 @@ def listening_ports(tcp_text: str) -> set[int]:
         if len(f) < 4 or f[3] != "0A":
             continue
         addr, port = f[1].rsplit(":", 1)
-        if addr in ("0100007F", "00000000000000000000000001000000"):
+        # Loopback is all of 127.0.0.0/8 (a stock Ubuntu's own name service listens on 127.0.0.53), ::1, and
+        # 127.x mapped into IPv6; the first byte of an IPv4 address is the last pair of hex digits here.
+        if (len(addr) == 8 and addr.endswith("7F")) or addr == "00000000000000000000000001000000" or (
+                len(addr) == 32 and addr.startswith("0000000000000000FFFF0000") and addr.endswith("7F")):
             continue
         ports.add(int(port, 16))
     return ports
@@ -988,9 +994,15 @@ def what_lives_here(host: Host, rep: Report) -> dict:
         rep.warn(f"{len(out['runners'])} other runner service(s) of yours here: {', '.join(out['runners'][:10])}")
     if out["others_runners"]:
         rep.warn(f"{out['others_runners']} other runner service(s) here that do not run as you (not named)")
-    serves = (bool(set(ports) & {80, 443, 5432, 3306, 6379, 27017}) or bool(out["containers"])
-              or bool(out["shared_containers"]))
-    out["serves"] = serves
+    # R72: any port open to the network counts, but the computer's own upkeep (remote login, name service, address
+    # and time service, local name discovery); a container counts too.
+    live = [p for p in ports if p not in UPKEEP_PORTS]
+    what = ([f"port(s) open to the network: {', '.join(map(str, live[:10]))}{' ...' if len(live) > 10 else ''}"]
+            if live else [])
+    if out["containers"] or out["shared_containers"]:
+        what.append(f"{len(out['containers']) + out['shared_containers']} container(s) running")
+    serves = bool(what)
+    out["serves"], out["serves_what"] = serves, "; ".join(what)
     if serves:
         rep.warn("this computer looks like it serves something live: setup will ask you to choose another "
                  "computer or to say yes in words")
@@ -1385,7 +1397,8 @@ def journal(host: Host, step: str, detail: str = "") -> None:
 def record_look(host: Host, repo: str, rep: Report, s: dict | None) -> None:
     data = load_state(host)
     keep = {k: v for k, v in (s or {}).items() if k in ("system", "machine", "cores", "mem", "disk", "free",
-                                                          "battery", "lid", "os", "sleep_delay")}
+                                                          "battery", "lid", "os", "sleep_delay", "serves",
+                                                          "serves_what")}
     data.setdefault("looks", {})[repo] = {"time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
                                           "stopped": rep.stopped, "survey": keep}
     save_state(host, data)
@@ -1529,6 +1542,26 @@ def check_fresh_look(host: Host, repo: str, rep: Report) -> dict | None:
         return None
     rep.ok(f"a look of {repo} {int(age // 60)} minute(s) ago, with no stop")
     return entry
+
+
+def check_beside_live(survey_: dict, repo: str, yes: bool, rep: Report) -> bool:
+    """G1.7, R72: a computer that serves something live is named at setup too, and setup goes on only on the person's
+    yes in words; otherwise nothing is touched."""
+    if "serves" not in survey_:
+        rep.stop(f"the last look of {repo} did not say whether this computer serves something live (an older version "
+                 f"of this tool made it): run `look {repo}` again")
+        return False
+    if not survey_["serves"]:
+        return True
+    what = survey_.get("serves_what") or "something live"
+    if yes:
+        rep.ok(f"this computer serves something live ({what}); you said yes to jobs beside it, and they get only the "
+               "limits below")
+        return True
+    rep.need(f"this computer serves something live ({what}), and a job here would share its processors, memory and "
+             f"disk. Nothing was changed. Choose another computer, or, if you want jobs here anyway, say yes in words: "
+             f"`setup {repo} --beside-live-too`")
+    return False
 
 
 def ask_admin_once(host: Host, rep: Report, interactive: bool, cmd: str = "setup") -> bool:
@@ -1814,7 +1847,7 @@ def one_repository_here(host: Host, repo: str, rep: Report) -> bool:
 
 
 def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
-          interactive: bool | None = None, limits: tuple[int, int] | None = None) -> int:
+          interactive: bool | None = None, limits: tuple[int, int] | None = None, beside_live: bool = False) -> int:
     host = host or Host()
     gh = gh or GitHub(host)
     rep = Report(out)
@@ -1831,6 +1864,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if not one_repository_here(host, repo, rep):
         return rep.code()
     survey_ = entry.get("survey") or {}
+    if not check_beside_live(survey_, repo, beside_live, rep):
+        return rep.code()
     lim = slice_limits(survey_, limits)
     floor = memory_floor_line(repo, lim)
     if floor:
@@ -3973,7 +4008,8 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
     lim = slice_limits(s)
     floor = memory_floor_line(repo, lim)
     (rep.warn if floor else rep.ok)(floor or limits_in_words(lim))
-    what_lives_here(host, rep)
+    lives = what_lives_here(host, rep)
+    s["serves"], s["serves_what"] = lives["serves"], lives["serves_what"]  # R72: setup reads it
     check_workflows(gh, repo, s, rep)
     before_setup_words(repo, s, lim, floor, rep)
     check_cost_rule(host, rep)
@@ -4028,6 +4064,8 @@ def parser() -> Parser:
     st.add_argument("repo", help="owner/name; needs a look of it on this computer under an hour old")
     st.add_argument("--limits", type=parse_limits, metavar="PROCESSORS,MEMORY%",
                     help="what jobs here may use (default: half the processors and 60 %% of the memory)")
+    st.add_argument("--beside-live-too", dest="beside_live", action="store_true",
+                    help="your word to run jobs on a computer that serves something live")
     mv = sub.add_parser("move", help="open a pull request that moves the jobs this computer can take; never merges")
     mv.add_argument("repo", help="owner/name; needs a fresh look and a runner of ours online")
     mv.add_argument("--verify", action="store_true", help="after your merge: see one real run finish here")
@@ -4070,7 +4108,7 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: 
         if a.cmd == "look":
             return look(a.repo, a.start_test, host=host)
         if a.cmd == "setup":
-            return setup(a.repo, host=host, limits=a.limits)
+            return setup(a.repo, host=host, limits=a.limits, beside_live=a.beside_live)
         if a.cmd == "drain":
             if not a.repo and not a.restart:
                 parser().error("drain needs owner/name, or --restart")

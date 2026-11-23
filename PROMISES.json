@@ -1002,6 +1002,20 @@
    "issue": 133,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R72",
+   "seen": "2026-11-23, on a stock Ubuntu 24.04 virtual machine with a web server on port 8088: look listed the port but named only six ports as live, and setup never read look's finding, so it went on without asking. look also counted port 53 on 127.0.0.53 as open to the network.",
+   "promise": "setup asks before it runs jobs on a computer that serves something live: it names what look found and changes nothing until the person says yes in words or chooses another computer. Any port open to the network counts but the computer's own upkeep; a container counts; loopback is never counted.",
+   "codon": "G1.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_7_setup_asks_before_jobs_run_beside_something_live",
+   "proven": "",
+   "issue": 135,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
