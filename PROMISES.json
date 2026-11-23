@@ -620,7 +620,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G9_6_the_gate_counts_only_tests_that_ran",
-   "proven": "",
+   "proven": "2026-11-23, this repository's CI on GitHub's standard runners (run 45170232160, the push of main at 943d551, Python 3.10 and 3.13): `test_G9_6_the_gate_counts_only_tests_that_ran (__main__.Strand\u2026) The gate's self-test: it plants every way a test can look present and not run, and must refuse each. ... ok` on both Pythons.",
    "issue": 63,
    "moved_why": "",
    "moved_by_person": ""
@@ -858,7 +858,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G9_7_a_stand_in_grants_nothing_a_real_machine_refuses",
-   "proven": "",
+   "proven": "2026-11-23, this repository's CI on GitHub's standard runners (run 45170232160, the push of main at 943d551, Python 3.10 and 3.13): `test_G9_7_a_stand_in_grants_nothing_a_real_machine_refuses (__main__.G9\u2026) ... ok` on both Pythons.",
    "issue": 98,
    "moved_why": "",
    "moved_by_person": ""
@@ -970,7 +970,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G9_4_fixtures_hold_no_token_no_email_no_real_names",
-   "proven": "",
+   "proven": "2026-11-23, this repository's CI on GitHub's standard runners (run 45170232160, the push of main at 943d551, Python 3.10 and 3.13): `test_G9_4_fixtures_hold_no_token_no_email_no_real_names (__main__.Helpers\u2026) ... ok` on both Pythons, over the recorded answers committed at that commit.",
    "issue": 123,
    "moved_why": "",
    "moved_by_person": ""
@@ -1152,7 +1152,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure",
-   "proven": "",
+   "proven": "By the owner's word, not held for the tag: the fault was met once on a real machine before the fix (2026-11-23, a stock Ubuntu 22.04.5 virtual machine: the start test said its run was left though GitHub answered 404 for it, with a 504 on a read moments later); the fix (three tries, \"left\" only when GitHub still answers with it, \"no clear answer\" otherwise) is tested and not seen on a machine, since GitHub giving no clear answer cannot be caused honestly.",
    "issue": 160,
    "moved_why": "",
    "moved_by_person": ""
