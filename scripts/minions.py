@@ -39,7 +39,7 @@ VERSION = "0.0.0"
 # G8.3: every way a command can end. The worst line decides among 0, 2, 3 and 4.
 EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 64, 130
 LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting")
-COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain")  # built so far, in G8.3's order
+COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain", "uninstall")  # built so far, in G8.3's order
 RUNNER_USER = "minions-runner"
 SLICE = "minions.slice"
 DROPIN = "50-minions.conf"
@@ -1324,7 +1324,7 @@ def check_fresh_look(host: Host, repo: str, rep: Report) -> dict | None:
     return entry
 
 
-def ask_admin_once(host: Host, rep: Report, interactive: bool) -> bool:
+def ask_admin_once(host: Host, rep: Report, interactive: bool, cmd: str = "setup") -> bool:
     """G2.2: the admin password is the person's step, asked once (sudo -v); every later step is `sudo -n`."""
     rc, _ = host.run(["sudo", "-n", "true"])
     if rc == 0:
@@ -1338,7 +1338,7 @@ def ask_admin_once(host: Host, rep: Report, interactive: bool) -> bool:
             return True
         rep.stop("sudo did not accept the password: nothing was touched")
         return False
-    rep.need("this needs this computer's admin password once: run `sudo -v` in your terminal, then run setup again "
+    rep.need(f"this needs this computer's admin password once: run `sudo -v` in your terminal, then run {cmd} again "
              "from that same terminal")
     return False
 
@@ -2635,9 +2635,15 @@ def our_runner_online(gh: GitHub, host: Host, repo: str, rep: Report) -> dict | 
     return mine
 
 
+MOVE_PR = {"prefix": MOVE_BRANCH_PREFIX, "title": "Run these jobs on your own computer",
+           "message": "Run these jobs on your own computer (Windstorm Repo Minions)\n\nOnly `runs-on` lines change."}
+
+
 def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str, str], body: str,
-                 rep: Report) -> dict | None:
-    """G3.1: one branch made through the API, one commit, one pull request. Nothing of the person's is checked out."""
+                 rep: Report, kind: dict | None = None) -> dict | None:
+    """G3.1 (and G6.2's put-back): one branch made through the API, one commit, one pull request. Nothing of the
+    person's is checked out."""
+    kind = kind or MOVE_PR
     s, ref = gh.api("GET", f"repos/{repo}/git/ref/heads/{base}")
     head_sha = ((ref or {}).get("object") or {}).get("sha") if s == 200 else None
     s2, com = gh.api("GET", f"repos/{repo}/git/commits/{head_sha}") if head_sha else (0, None)
@@ -2654,12 +2660,11 @@ def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str
         entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
     ts, tree = gh.api("POST", f"repos/{repo}/git/trees", {"base_tree": base_tree, "tree": entries})
     cs, commit = gh.api("POST", f"repos/{repo}/git/commits", {
-        "message": "Run these jobs on your own computer (Windstorm Repo Minions)\n\nOnly `runs-on` lines change.",
-        "tree": (tree or {}).get("sha"), "parents": [head_sha]}) if ts == 201 else (ts, None)
+        "message": kind["message"], "tree": (tree or {}).get("sha"), "parents": [head_sha]}) if ts == 201 else (ts, None)
     if cs != 201:
         rep.stop(f"GitHub refused the commit (HTTP {ts}/{cs})")
         return None
-    branch = MOVE_BRANCH_PREFIX + secrets.token_hex(4)
+    branch = kind["prefix"] + secrets.token_hex(4)
     journal(host, "move-branch", f"{repo} {branch}")
     rs, _ = gh.api("POST", f"repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
     if rs != 201:
@@ -2669,7 +2674,7 @@ def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str
         return None
     journal(host, "move-pr", f"{repo} {branch}")
     ps, pr = gh.api("POST", f"repos/{repo}/pulls", {
-        "title": "Run these jobs on your own computer", "head": branch, "base": base, "body": body})
+        "title": kind["title"], "head": branch, "base": base, "body": body})
     if ps != 201:
         gh.api("DELETE", f"repos/{repo}/git/refs/heads/{branch}")
         rep.stop(f"GitHub refused the pull request (HTTP {ps}); the branch was deleted again")
@@ -2748,7 +2753,9 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
             {"move": moved, "left": left, "publish": publish, "here": here}[kind].append(row)
             if kind == "move":
                 edits.append((job["runs_on_at"], labels))
-                plan.setdefault(path, []).append({"id": job["id"], "name": job["name"] or job["id"]})
+                start, end = job["runs_on_at"]
+                plan.setdefault(path, []).append({"id": job["id"], "name": job["name"] or job["id"],
+                                                  "runs_on": "".join(text.splitlines(keepends=True)[start:end])})
             (rep.ok if kind in ("move", "here") else rep.warn)(
                 f"{path} job {job['id']}: " + {"move": "moves, ", "left": "stays: ", "publish": "stays, it "
                                                 "publishes or deploys: ", "here": ""}[kind] + words)
@@ -2881,6 +2888,340 @@ def find_or_start_run(gh: GitHub, host: Host, repo: str, path: str, base: str, m
 
 # ------------------------------------------------------------------------------------------------------------- look
 
+# ---------------------------------------------------------------------------------------------------------- G6 uninstall
+
+PUT_BACK_PREFIX = "minions-put-back-"
+PUT_BACK_PR = {"prefix": PUT_BACK_PREFIX, "title": "Run these jobs where they ran before",
+               "message": "Put runs-on back as it was before Windstorm Repo Minions moved it\n\n"
+                          "Only `runs-on` lines change."}
+RUNNERS_HOME = f"/home/{RUNNER_USER}/runners/"
+
+
+def exists_as_root(host: Host, path: str) -> bool:
+    """Read as root: the runner user's home is closed to the person (G2.2), so the person's own checks cannot see in."""
+    return sudo(host, ["test", "-e", path])[0] == 0
+
+
+def unit_path(unit: str) -> str:
+    return f"/etc/systemd/system/{unit}"
+
+
+def unit_gone(host: Host, unit: str) -> bool:
+    """A unit is gone when systemd no longer has it loaded and nothing of it is active (G6.5's lesson)."""
+    rc, out = host.run(systemctl("show", unit, "-p", "LoadState", "-p", "ActiveState"))
+    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    return got.get("LoadState") in ("not-found", None) and got.get("ActiveState") in ("inactive", None)
+
+
+def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> bool:
+    """G6.1, G6.6: the GitHub side goes first. The runner's own removal runs as the runner user, the removal token on
+    standard input (INV2); never by entering the runner's home as the person. If it cannot run: GitHub's API deletes
+    the runner. Either way, read back that GitHub no longer lists it."""
+    r = listed_runner(gh, repo, mine["name"])
+    if r is None:
+        rep.ok(f"GitHub no longer lists {mine['name']} for {repo}")
+        return True
+    folder = mine.get("folder") or ""
+    own = False
+    if folder and exists_as_root(host, f"{folder}/.runner"):
+        s, d = gh.api("POST", f"repos/{repo}/actions/runners/remove-token")
+        token = (d or {}).get("token") if s in (200, 201) else None
+        if token:
+            journal(host, "config.sh remove", f"{repo} {mine['name']} (as {RUNNER_USER}, token by standard input)")
+            rc, out = as_runner(host, ["bash", "-c", REMOVE_SCRIPT, "minions-remove", folder], input=token + "\n")
+            out = mask(out, token)
+            token = None  # dropped (INV2)
+            own = rc == 0
+            if not own:
+                rep.warn(f"the runner's own removal did not finish ({tail(out)}); GitHub's API removes it instead")
+    if not own:
+        journal(host, "DELETE runner", f"{repo} {mine['name']} id {r.get('id')}")
+        s, _ = gh.api("DELETE", f"repos/{repo}/actions/runners/{r['id']}")
+        if s not in (204, 404):
+            rep.stop(f"GitHub did not remove {mine['name']} (HTTP {s}): nothing on this computer is deleted yet")
+            return False
+    if listed_runner(gh, repo, mine["name"]) is not None:
+        rep.stop(f"GitHub still lists {mine['name']} for {repo}: nothing on this computer is deleted yet")
+        return False
+    rep.ok(f"GitHub no longer lists {mine['name']} for {repo} (" +
+           ("the runner's own removal, as the runner user" if own else "removed through GitHub's API") + "), read back")
+    return True
+
+
+def remove_service(host: Host, mine: dict, rep: Report) -> bool:
+    """The runner's own unit, through its own svc.sh run as root; our drop-in; read back gone. Safe to run again."""
+    unit, folder = mine.get("unit") or "", mine.get("folder") or ""
+    if folder and exists_as_root(host, f"{folder}/.service"):
+        journal(host, "svc.sh uninstall", folder)
+        rc, out = sudo(host, ["bash", "-c", 'cd "$1" && ./svc.sh uninstall', "minions-svc", folder])
+        if rc != 0:
+            rep.warn(f"the runner's own service uninstall did not finish ({tail(out)}); its unit is removed directly")
+    if unit:
+        if exists_as_root(host, unit_path(unit)):
+            journal(host, "remove unit", unit)
+            sudo(host, systemctl("disable", unit))
+            sudo(host, ["rm", "-f", unit_path(unit)])
+        if exists_as_root(host, unit_path(unit) + ".d"):
+            journal(host, "remove drop-in", f"{unit_path(unit)}.d")
+            sudo(host, ["rm", "-rf", unit_path(unit) + ".d"])
+        sudo(host, systemctl("daemon-reload"))
+        if not unit_gone(host, unit):
+            rep.stop(f"the runner's service {unit} is still there after its removal")
+            return False
+    rep.ok("the runner's service and our drop-in are gone, read back")
+    return True
+
+
+def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
+    """The runner's own folders (only under the runner user's runners folder), its hooks and its jobs' records."""
+    folder = mine.get("folder") or ""
+    paths = [x for x in (folder if folder.startswith(RUNNERS_HOME) and "/.." not in folder else "",
+                         hook_dir(repo), records_dir_of(folder) if folder else "") if x]
+    for path in paths:
+        if exists_as_root(host, path):
+            journal(host, "delete", path)
+            sudo(host, ["rm", "-rf", "--one-file-system", path])
+    left = [x for x in paths if exists_as_root(host, x)]
+    if left:
+        rep.stop(f"could not delete {', '.join(left)}")
+        return False
+    rep.ok("the runner's folders, its hooks and its jobs' records are deleted, read back")
+    return True
+
+
+def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_s: int, poll_s: float,
+               next_cmd: str) -> bool:
+    """G6.1: drain, the GitHub side first (G6.6), then the service, then the folders. Each step is journaled before it
+    runs and is safe to run again (G6.4): a removal cut part-way is finished by running uninstall again."""
+    mine = data["runners"][repo]
+    if not mine.get("removing"):
+        journal(host, "uninstall", f"{repo} {mine.get('name')}")
+        mine["removing"] = host.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        save_state(host, data)
+    folder = mine.get("folder") or ""
+    if listed_runner(gh, repo, mine["name"]) is not None:
+        if hold_runner(gh, host, repo, data, rep, "removal") is None:
+            return False
+        state = wait_idle(gh, host, repo, mine, wait_s, poll_s, rep, next_cmd)
+        if state == "running":
+            return False
+        rep.ok(f"drained: no job runs on {mine['name']}")
+    elif folder and runner_pids(host, folder, "Runner.Worker"):
+        rep.wait(f"a job process of this runner still runs here, while GitHub no longer lists it; nothing is cut. "
+                 f"Next: `{next_cmd}` again")
+        return False
+    if runner_pids(host, folder) or host.run(systemctl("is-active", mine.get("unit") or "none"))[1].strip() == "active":
+        if not stop_runner(host, mine.get("unit") or "", folder, rep, drained=True):
+            return False
+    # The runner's own `config.sh remove` refuses while its service is installed, so svc.sh uninstall comes first;
+    # the GitHub side still goes before anything is deleted (G6.6).
+    if folder and exists_as_root(host, f"{folder}/.service"):
+        journal(host, "svc.sh uninstall", folder)
+        rc, out = sudo(host, ["bash", "-c", 'cd "$1" && ./svc.sh uninstall', "minions-svc", folder])
+        if rc != 0:
+            rep.warn(f"the runner's own service uninstall did not finish ({tail(out)}); its unit is removed directly")
+    if not remove_github_side(gh, host, repo, mine, rep):
+        return False
+    if not remove_service(host, mine, rep) or not remove_folders(host, repo, mine, rep):
+        return False
+    journal(host, "removed", f"{repo} {mine.get('name')}")
+    data["runners"].pop(repo, None)
+    save_state(host, data)
+    rep.ok(f"uninstalled: {repo} has no runner on this computer now")
+    return True
+
+
+def restore_runs_on(text: str, job_id: str, original: str) -> str | None:
+    """G6.2: put one job's runs-on back as it was before `move`, by line; None when the job no longer asks for ours."""
+    for job in read_workflow(text):
+        if job["id"] != job_id or not job.get("runs_on_at"):
+            continue
+        labels = job.get("runs_on") if isinstance(job.get("runs_on"), list) else []
+        if not any(x == "minions" or x.startswith("minions-") for x in labels):
+            return None
+        start, end = job["runs_on_at"]
+        lines = text.splitlines(keepends=True)
+        lines[start:end] = [original if original.endswith("\n") else original + "\n"]
+        return "".join(lines)
+    return None
+
+
+def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None:
+    """G6.2: one pull request that puts each moved runs-on back as it was before `move`. The tool never merges it."""
+    mv = (data.get("moves") or {}).get(repo)
+    if not mv:
+        rep.ok(f"no job of {repo} was moved by this tool: no pull request is needed")
+        return
+    s, d = gh.api("GET", f"repos/{repo}")
+    base = (d or {}).get("default_branch") if s == 200 else mv.get("base")
+    files = dict(read_workflow_files(gh, repo, None, rep) or [])
+    changed, back, unknown = {}, [], []
+    for path, jobs in sorted((mv.get("files") or {}).items()):
+        text = changed.get(path, files.get(path))
+        if text is None:
+            continue
+        for j in jobs:
+            if not j.get("runs_on"):
+                unknown.append(f"`{path}` job `{j['id']}`")
+                continue
+            new = restore_runs_on(text, j["id"], j["runs_on"])
+            if new is not None:
+                text = new
+                changed[path] = new
+                back.append(f"- `{path}` job `{j['id']}`: `{j['runs_on'].strip()}`")
+    if unknown:
+        rep.warn(f"the line before `move` was not recorded for {', '.join(unknown)}: put it back by hand")
+    if not changed:
+        rep.ok(f"no workflow of {repo} still asks for our runner: no pull request is needed")
+        return
+    body = ("This pull request puts each `runs-on` line back as it was before Windstorm Repo Minions moved it, "
+            "because its runner on your computer was removed. Nothing else changes. The tool that opened it never "
+            "merges it: you do. Until you merge it, those jobs wait for a runner.\n\n## Put back\n" +
+            "\n".join(back) + "\n")
+    journal(host, "put-back pull request", repo)
+    pr = open_move_pr(gh, host, repo, base, changed, body, rep, PUT_BACK_PR)
+    if pr is None:
+        return
+    mv["put_back_pr"] = pr["number"]
+    save_state(host, data)
+    rep.need(f"read and merge pull request #{pr['number']} yourself ({pr['url']}): it puts {len(back)} job(s) back "
+             "where they ran before; until then they wait for a runner")
+
+
+def remove_shared(host: Host, rep: Report) -> bool:
+    """G6.2: the watch, the slice (stopped first, G6.5), the tool's own folders, then the runner user."""
+    ok = True
+    for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):
+        if exists_as_root(host, unit_path(unit)):
+            journal(host, "remove", unit)
+            sudo(host, systemctl("disable", "--now", unit))
+            sudo(host, ["rm", "-f", unit_path(unit)])
+    sudo(host, systemctl("daemon-reload"))
+    for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):
+        if not unit_gone(host, unit):
+            rep.stop(f"{unit} is still there after its removal")
+            ok = False
+    if ok:
+        rep.ok("the watch's timer and service are gone, read back")
+    if not remove_slice(host, rep):
+        return False  # the user stays, so `uninstall --all` run again finishes from here (G6.4)
+    for path in (HOOKS_ROOT, RECORDS_ROOT):
+        if exists_as_root(host, path):
+            journal(host, "delete", path)
+            sudo(host, ["rm", "-rf", "--one-file-system", path])
+    if any(exists_as_root(host, x) for x in (HOOKS_ROOT, RECORDS_ROOT)):
+        rep.stop(f"could not delete {HOOKS_ROOT} or {RECORDS_ROOT}")
+        ok = False
+    else:
+        rep.ok(f"the tool's copy, the job hooks and the jobs' records are deleted ({HOOKS_ROOT}, {RECORDS_ROOT})")
+    if host.run(["id", RUNNER_USER])[0] == 0:
+        left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+        if left:
+            rep.stop(f"processes of {RUNNER_USER} still run ({', '.join(left)}): the user is not deleted")
+            return False
+        journal(host, "userdel", RUNNER_USER)
+        sudo(host, ["userdel", "-r", RUNNER_USER])
+    if host.run(["id", RUNNER_USER])[0] == 0 or exists_as_root(host, f"/home/{RUNNER_USER}"):
+        rep.stop(f"the user {RUNNER_USER} or its home is still there")
+        return False
+    rep.ok(f"the user {RUNNER_USER} and its home are deleted, read back")
+    return ok
+
+
+def remove_slice(host: Host, rep: Report) -> bool:
+    """G6.5: a slice whose file is deleted stays loaded and active after a reload until it is stopped; so stop it
+    first, then delete the file, reload, and read back that it is gone."""
+    path = unit_path(SLICE)
+    journal(host, "stop", SLICE)
+    sudo(host, systemctl("stop", SLICE))
+    if exists_as_root(host, path):
+        journal(host, "delete", path)
+        sudo(host, ["rm", "-f", path])
+    sudo(host, systemctl("daemon-reload"))
+    if not unit_gone(host, SLICE):
+        rep.stop(f"{SLICE} is still loaded or active after its removal")
+        return False
+    rep.ok(f"{SLICE} was stopped before its file was deleted, and is gone, read back")
+    return True
+
+
+def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report) -> None:
+    """G6.3, INV6: what is left, each "none" or named. With --all every line should read none."""
+    def line(what: str, found: list[str], kept_why: str = "") -> None:
+        if not found:
+            rep.ok(f"census: {what}: none")
+        elif kept_why:
+            rep.ok(f"census: {what}: {', '.join(found)} ({kept_why})")
+        else:
+            rep.warn(f"census: {what}: {', '.join(found)}")
+    for repo in repos:
+        s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
+        if s != 200:
+            rep.warn(f"census: runners on GitHub for {repo}: not read (HTTP {s})")
+        else:
+            names = [r.get("name") for r in d.get("runners", [])]
+            line(f"runners on GitHub for {repo}", [f"{n} (not ours)" if not n.startswith("minions-") else n
+                                                   for n in names])
+    rc, out = host.run(systemctl("list-units", "--all", "--plain", "--no-legend", "actions.runner.*", "minions*"))
+    units = sorted({x.split()[0] for x in out.splitlines() if x.strip() and not x.startswith("0 ")})
+    files = [u for u in ("minions.slice", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service")
+             if exists_as_root(host, unit_path(u))]
+    shared = {SLICE, f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"}
+    runner_units = [u for u in units if u.startswith("actions.runner.")]
+    line("runner services", runner_units)
+    line("the slice and the watch (scheduled checks)", sorted(set(u for u in units if u in shared) | set(files)),
+         "" if everything else "kept for the other runners here; `uninstall --all` takes them")
+    rc, _ = host.run(["id", RUNNER_USER])
+    line("the runner user", [RUNNER_USER] if rc == 0 else [],
+         "" if everything else "kept; `uninstall --all` takes it")
+    folders = [x for x in (HOOKS_ROOT, RECORDS_ROOT, f"/home/{RUNNER_USER}") if exists_as_root(host, x)]
+    line("folders", folders, "" if everything else "kept; `uninstall --all` takes them")
+
+
+def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
+           host: Host | None = None, gh: GitHub | None = None, out=None, interactive: bool | None = None) -> int:
+    """G6: `uninstall <owner/repo>` takes one runner away on both sides; `uninstall --all` also takes the runner user, the
+    watch, the slice, the tool's folders and `~/.minions/`, and opens a pull request that puts moved jobs back."""
+    host = host or Host()
+    gh = gh or GitHub(host)
+    rep = Report(out)
+    if repo and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        rep.stop(f"not a repository name: {repo!r} (write owner/name)")
+        return rep.code()
+    data = load_state(host)
+    runners = data.get("runners") or {}
+    if repo and repo not in runners and not everything:
+        rep.ok(f"no runner of ours serves {repo} on this computer: nothing to uninstall")
+        census(gh, host, [repo], False, rep)
+        return rep.code()
+    if interactive is None:
+        interactive = host.isatty()
+    if not ask_admin_once(host, rep, interactive, "uninstall"):
+        return rep.code()
+    repos = [repo] if repo and not everything else sorted(runners)
+    known = sorted(set(repos) | set(data.get("moves") or {}) | ({repo} if repo else set()))
+    next_cmd = "uninstall --all" if everything else f"uninstall {repo}"
+    for rp in repos:
+        if not remove_one(gh, host, rp, data, rep, wait_s, poll_s, next_cmd):
+            return rep.code()
+    if everything:
+        if not remove_shared(host, rep):
+            return rep.code()
+        for rp in sorted(data.get("moves") or {}):
+            put_back(gh, host, rp, data, rep)
+        census(gh, host, known, True, rep)
+        journal(host, "delete", f"{host.state_dir()} (the last step)")
+        shutil.rmtree(host.state_dir(), ignore_errors=True)
+        if os.path.isdir(host.state_dir()):
+            rep.stop(f"could not delete {host.state_dir()}")
+        else:
+            rep.ok(f"this tool's state ({host.state_dir()}) is deleted: nothing of Windstorm Repo Minions is left "
+                   "on this computer")
+        return rep.code()
+    census(gh, host, known, False, rep)
+    return rep.code()
+
+
 def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
     host = host or Host()
     gh = gh or GitHub(host)
@@ -2967,10 +3308,16 @@ def parser() -> Parser:
     dr.add_argument("--restart", action="store_true", help="before a planned restart: hold every runner here, wait")
     dr.add_argument("--stop", action="store_true", help="then stop the runner's service (only after the drain)")
     dr.add_argument("--wait-minutes", type=int, default=DRAIN_WAIT_S // 60, help="how long to wait for a job to end")
+    rm = sub.add_parser("uninstall", help="take a runner away on both sides; --all leaves nothing of this tool here")
+    rm.add_argument("repo", nargs="?", help="owner/name (with --all: default every runner here)")
+    rm.add_argument("--all", dest="everything", action="store_true",
+                    help="also the runner user, the watch, the slice, the tool's folders and ~/.minions, and a pull "
+                         "request that puts moved jobs back")
+    rm.add_argument("--wait-minutes", type=int, default=DRAIN_WAIT_S // 60, help="how long to wait for a job to end")
     return ap
 
 
-def main(argv: list[str] | None = None, host: Host | None = None, out=None) -> int:
+def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: GitHub | None = None) -> int:
     """G8.3's table: the command's own code (0, 2, 3, 4); 64 typed wrong; 1 the tool failed; 130 interrupted."""
     a = parser().parse_args(argv)
     host = host or Host()
@@ -2992,6 +3339,11 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None) -> i
             return watch(host=host)
         if a.cmd == "move":
             return move(a.repo, verify=a.verify, include=a.include_job, host=host)
+        if a.cmd == "uninstall":
+            if not a.repo and not a.everything:
+                parser().error("uninstall needs owner/name, or --all")
+            return uninstall(a.repo, everything=a.everything, wait_s=max(0, a.wait_minutes) * 60, host=host, gh=gh,
+                          out=out)
         return EXIT_USAGE
     except KeyboardInterrupt:
         step = last_journal_step(host)

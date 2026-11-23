@@ -259,12 +259,12 @@ nothing.
 
 | Codon | Claim | Test |
 |---|---|---|
-| G6.1 | `uninstall <owner/repo>` drains, unregisters the runner on GitHub's side (removal token through standard input), stops and deletes the service, deletes the runner's folders, and records each step in the journal first. | planned: test_G6_1_uninstall_takes_a_runner_away_on_both_sides |
-| G6.2 | `uninstall --all` also deletes the runner user, the watch, and `~/.minions/`, and opens a pull request that puts each moved `runs-on` back as it was before `move`. | planned: test_G6_2_uninstall_all_leaves_nothing_and_offers_the_workflows_back |
-| G6.3 | `uninstall` ends with a census (INV6): runners on GitHub for the repository, services, folders, user, scheduled checks; each "none" or named. | planned: test_G6_3_uninstall_ends_with_a_census |
-| G6.4 | A removal interrupted part-way is finished by running `uninstall` again; it never fails on a step already done. | planned: test_G6_4_uninstall_again_finishes_an_interrupted_removal |
-| G6.5 | `uninstall` stops `minions.slice` before deleting its file and reads back that it is gone: a slice whose file is deleted stays loaded and active after a reload until it is stopped. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | planned: test_G6_5_uninstall_stops_the_slice_before_deleting_it |
-| G6.6 | `uninstall` runs the runner's own removal as root or as the runner user, never by entering the runner user's home as the person (that home is closed to the person, G2.2), and removes the GitHub side before it deletes the runner user. If the runner's own removal cannot run, it deletes the runner through the API and reads back that it is gone. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (G4's run). | planned: test_G6_6_uninstall_runs_as_the_runner_and_github_goes_first |
+| G6.1 | `uninstall <owner/repo>` drains, unregisters the runner on GitHub's side (removal token through standard input), stops and deletes the service, deletes the runner's folders, and records each step in the journal first. | `test_G6_1_uninstall_takes_a_runner_away_on_both_sides` |
+| G6.2 | `uninstall --all` also deletes the runner user, the watch, and `~/.minions/`, and opens a pull request that puts each moved `runs-on` back as it was before `move`. | `test_G6_2_uninstall_all_leaves_nothing_and_offers_the_workflows_back` |
+| G6.3 | `uninstall` ends with a census (INV6): runners on GitHub for the repository, services, folders, user, scheduled checks; each "none" or named. | `test_G6_3_uninstall_ends_with_a_census` |
+| G6.4 | A removal interrupted part-way is finished by running `uninstall` again; it never fails on a step already done. | `test_G6_4_uninstall_again_finishes_an_interrupted_removal` |
+| G6.5 | `uninstall` stops `minions.slice` before deleting its file and reads back that it is gone: a slice whose file is deleted stays loaded and active after a reload until it is stopped. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (Part 7 C7). | `test_G6_5_uninstall_stops_the_slice_before_deleting_it` |
+| G6.6 | `uninstall` runs the runner's own removal as root or as the runner user, never by entering the runner user's home as the person (that home is closed to the person, G2.2), and removes the GitHub side before it deletes the runner user. If the runner's own removal cannot run, it deletes the runner through the API and reads back that it is gone. Seen on a stock Ubuntu 24.04 virtual machine, 2026-11-22 (G4's run). | `test_G6_6_uninstall_runs_as_the_runner_and_github_goes_first` |
 
 ### G7 Words to the person
 
