@@ -55,7 +55,9 @@ jobs before their first step, and the check takes the runner off that repository
 
 **What it puts on your computer**
 - **GitHub's own runner program.** It is downloaded from GitHub, and its checksum is checked against the two places
-  GitHub publishes it. It lives in its own folder in the home of a new user, `minions-runner`.
+  GitHub publishes it. It lives in its own folder in the home of a new user, `minions-runner`. The runner keeps
+  its own logs there for 30 days (as its own source reads at the version `setup` installs), so that folder grows
+  with how busy your repository is.
 - **That user.** It has no admin rights, and it cannot open your home folder.
 - **A boot service** that runs the runner as that user. It is capped by default at half your processors and 60 % of
   your memory; on a computer with one processor that is all of it, and `look` says so plainly. `setup` tells you the real numbers before it installs, and `setup OWNER/NAME --limits PROCESSORS,MEMORY%` changes
