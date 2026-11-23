@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A job held at our memory limit is named. With the default limits a job that outgrows them is not killed: the
+  kernel holds it at the high mark and it barely moves, perhaps until GitHub's own time limit. The watch now reads
+  the slice's own files each pass, and after two passes `status` names the job first, with the two ways out:
+  cancel it, or give jobs more memory with `setup --limits` (G5.16, row R87).
 - The line naming a runner GitHub shows offline says what was read: offline at every watch pass since a time,
   and now. It said GitHub had shown it offline the whole span, though the watch reads GitHub once a pass and the
   runner may have been online between (G11.4, row R86).

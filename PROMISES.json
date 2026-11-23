@@ -1212,6 +1212,20 @@
    "issue": 171,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R87",
+   "seen": "2026-11-22, a stock Ubuntu 24.04.5 virtual machine, the default limits: a real job asking for about 3 GB, more than the memory limit for jobs, was not killed; the kernel held it at the high mark, slowed almost to a stop (uninterruptible sleep, about 1.8 of 2.5 GB) for minutes, and status said nothing of it.",
+   "promise": "A job held at our memory limit and barely moving is named first by status within two watch passes, with its run and the person's two ways out: cancel it, or give jobs more memory with `setup --limits`.",
+   "codon": "G5.16",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_16_a_job_held_at_our_memory_limit_is_named",
+   "proven": "",
+   "issue": 181,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
