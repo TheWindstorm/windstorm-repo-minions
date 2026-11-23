@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- On battery a laptop's runner is held by the watch, by default, and the hold lifts on mains power; the laptop
+  sentence said this already, and now it is so. `resume OWNER/NAME --on-battery-too` takes jobs on battery,
+  `--on-battery-held` goes back (G11.2, row R19).
 - `look` names a computer with a lid as a laptop too, not only one with a battery (G11.1).
 - Every wait says its deadline once it really waits: `setup`'s wait for the runner online, the start test and
   `resume` now say it too; every `waiting` line names the command to run next (G8.6, G8.7, rows R39, R40).

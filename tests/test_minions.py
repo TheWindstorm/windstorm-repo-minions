@@ -1597,7 +1597,53 @@ class G4(unittest.TestCase):
                 self.assertIn("ok no battery and no lid: not a laptop", lines)
                 self.assertFalse([x for x in tells if "laptop" in x])
         self.assertEqual(M.LAPTOP_WORDS, "a laptop takes jobs only while it is awake, on the network and (by default) "
-                                         "on mains power")
+                                         "on mains power; `resume <owner/repo> --on-battery-too` lets it take jobs "
+                                         "on battery as well")
+
+    def test_G11_2_on_battery_the_runners_are_held(self):
+        def laptop(host, plugged):
+            host.dirs["/sys/class/power_supply"] = ["AC", "BAT0"]
+            host.files["/sys/class/power_supply/AC/type"] = "Mains\n"
+            host.files["/sys/class/power_supply/AC/online"] = "1\n" if plugged else "0\n"
+            host.files["/sys/class/power_supply/BAT0/type"] = "Battery\n"
+        host, clock = g5_host()
+        refuse_sudo(host)
+        gh = StatusGH()
+        laptop(host, plugged=False)
+        self.assertEqual(M.power_source(host), "battery")
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(gh.puts, [(REPO, ["minions-held"])])
+        self.assertEqual(M.load_state(host)["runners"][REPO]["held_for"], "on battery")
+        self.assertTrue(any("held for on battery since" in x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
+        # resume on battery without the person's word: stays held, and says the two ways on.
+        code, lines = run_cmd(M.resume, REPO, host=host, gh=gh)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(f"`resume {REPO} --on-battery-too`", lines[-1])
+        # Plugged in: the next pass lifts it by itself.
+        laptop(host, plugged=True)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(gh.puts[-1], (REPO, ["minions", "minions-medium"]))
+        self.assertNotIn("held_for", M.load_state(host)["runners"][REPO])
+        # The person's word, by name: jobs on battery too; the watch then holds nothing on battery.
+        laptop(host, plugged=False)
+        code, lines = run_cmd(M.resume, REPO, host=host, gh=gh, on_battery="too")
+        self.assertTrue(any("jobs land here on battery too, by your word" in x for x in lines), lines)
+        n = len(gh.puts)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.puts), n)
+        # A hold for another reason (a drain) is left as it is, on battery or on mains.
+        data = M.load_state(host)
+        data["runners"][REPO].update(held_for="drain", jobs_on_battery=False)
+        M.save_state(host, data)
+        gh.r[REPO]["labels"] = ["minions-held"]
+        n = len(gh.puts)
+        for plugged in (False, True):
+            laptop(host, plugged)
+            run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(len(gh.puts), n)
+        # A computer with no battery is never held for it.
+        host, clock = g5_host()
+        self.assertEqual(M.power_source(host), "mains")
 
     def test_G4_8_limits_have_floors_and_too_little_is_said_before_setup(self):
         gib = 1024 ** 3

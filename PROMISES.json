@@ -269,7 +269,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G11_2_on_battery_the_runners_are_held",
    "proven": "",
    "issue": 25,
    "moved_why": "",
