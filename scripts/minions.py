@@ -1480,14 +1480,15 @@ MEMORY_PCT_MOST = 90  # --limits never gives jobs more than this share: somethin
 
 def slice_limits(survey_: dict, chosen: tuple[int, int] | None = None) -> dict:
     """G2.9 / G4.2 / G4.8: what all our runners together may use. Interim fixed defaults (G4.2 is not built): half
-    the processors, never less than one (G4.8), memory high at 50 % and max at 60 %. `setup --limits` (G7.8)
-    chooses other shares."""
+    the processors, never less than one (G4.8), and memory max at 60 % with no high mark and no swap for jobs
+    (run26: a job held at a high mark with swap to fall into crawls; at the max alone with no swap it fails at once,
+    by name). `setup --limits` (G7.8) chooses other shares."""
     total = survey_.get("cores") or 2
     mem = survey_.get("mem") or 4 * 1024 ** 3
     cores, pct = chosen if chosen else (total // 2, DEFAULT_MEMORY_PCT)
     cores = max(1, min(cores, total))
     pct = max(10, min(pct, MEMORY_PCT_MOST))
-    return {"CPUQuota": f"{cores * 100}%", "MemoryHigh": str(int(mem * (pct - 10) / 100)),
+    return {"CPUQuota": f"{cores * 100}%", "MemoryHigh": "infinity", "MemorySwapMax": "0",
             "MemoryMax": str(int(mem * pct / 100)), "cores": cores, "total_cores": total, "pct": pct, "mem": mem}
 
 
@@ -1551,7 +1552,8 @@ def dropin_text(folder: str = "") -> str:
 def slice_text(limits: dict) -> str:
     return ("# Windstorm Repo Minions: every runner of ours on this computer, together (G2.9, G4.2, G12.1).\n"
             "[Unit]\nDescription=Windstorm Repo Minions runners\nBefore=slices.target\n\n"
-            f"[Slice]\nCPUQuota={limits['CPUQuota']}\nMemoryHigh={limits['MemoryHigh']}\nMemoryMax={limits['MemoryMax']}\n")
+            f"[Slice]\nCPUQuota={limits['CPUQuota']}\nMemoryHigh={limits['MemoryHigh']}\nMemoryMax={limits['MemoryMax']}\n"
+            f"MemorySwapMax={limits.get('MemorySwapMax', 'infinity')}\n")
 
 
 def sudo(host: Host, argv: list[str], input: str | None = None, timeout: int = 600) -> tuple[int, str]:
@@ -2022,7 +2024,7 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     data.setdefault("runners", {})[repo] = {"name": runner_name, "folder": folder, "unit": unit, "labels": labels,
                                             "version": version, "hooks": hook_dir(repo),
                                             "limits": {k: lim[k] for k in ("cores", "pct", "CPUQuota", "MemoryHigh",
-                                                                           "MemoryMax")},
+                                                                           "MemoryMax", "MemorySwapMax")},
                                             "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
     (data.get("setting_up") or {}).pop(repo, None)
     if "setting_up" in data and not data["setting_up"]:
@@ -4147,10 +4149,13 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     else:
         rep.ok(f"{repo}: the boot service is enabled, in {SLICE}, nice 10, restarts on failure, after the network")
     lim = mine.get("limits") or {}
-    rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh"))
+    rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh",
+                                 "-p", "MemorySwapMax"))
     sl = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     want_l = {"CPUQuotaPerSecUSec": f"{lim.get('cores')}s", "MemoryHigh": str(lim.get("MemoryHigh")),
               "MemoryMax": str(lim.get("MemoryMax"))}
+    if "MemorySwapMax" in lim:  # set up before 0.1.0's no-swap default: not recorded, so not compared
+        want_l["MemorySwapMax"] = str(lim["MemorySwapMax"])
     off = [f"{k}={sl.get(k)!r}" for k, v in want_l.items() if sl.get(k) != v]
     if not lim:
         rep.warn(f"{repo}: the limits set up here: not recorded, so not compared")
