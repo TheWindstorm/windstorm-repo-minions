@@ -5,6 +5,9 @@
 - The skill says what keeps running after Claude Code's own `plugin uninstall` (the runner, the watch, the
   limits: they do your jobs) and the one command that takes them off, run from the copy setup installed. A test
   runs `uninstall --all` from that copy alone, to the end (G6.11, row R100).
+- `doctor` and `status` say when the watch runs a different version of the tool than the one you run, which is
+  older, and the one step that puts this version's copy in place. After an update of the skill, the watch went on
+  running the old copy with nothing said (G4.10, row R101).
 - `look`'s block for the person carries only what the person must hear: no promise about a later version, no
   "(seen)", and the tools line says only what to do. A test holds a bound on the block so it cannot grow back. In a
   cold start the smallest model kept every line in meaning but lost three such clauses (G7.12, row R104).
