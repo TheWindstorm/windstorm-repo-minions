@@ -3479,6 +3479,30 @@ class G6(unittest.TestCase):
         self.assertIn(code, (M.EXIT_OK, M.EXIT_NEED), lines)
 
 
+    def test_G5_19_a_watch_pass_in_the_same_second_as_the_last_is_still_seen(self):
+        # Seen in CI (2026-11-23): the watch's time is to the second, and a setup whose first pass fell in the same
+        # second as the pass before read as "the watch's first pass wrote nothing". On a real computer the timer's
+        # own pass can fall in that second too. Each pass is counted, and setup reads the count, never the time.
+        host, sha = setup_host()
+        t = M.dt.datetime.now(M.dt.timezone.utc).replace(microsecond=0)
+        host.now = lambda: t  # this clock does not move: every pass below falls in one second
+        fresh_look(host)
+        listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
+        token = ("POST", f"repos/{REPO}/actions/runners/registration-token")
+        gh = setup_gh(sha)
+        gh.overrides[listing] = lambda body: runners_answer() if token in gh.calls else (200, {"total_count": 0,
+                                                                                              "runners": []})
+        code, lines = run_setup(gh, host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        first = M.load_state(host)["watch"]
+        host.runs[("sudo", "-n", "test", "-e", FOLDER)] = (0, "")
+        code, lines = run_setup(setup_gh(sha), host)  # the same second, by the clock above
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertFalse([x for x in lines if "wrote nothing" in x], lines)
+        after = M.load_state(host)["watch"]
+        self.assertEqual(after["time"], first["time"])
+        self.assertEqual(after["pass"], first["pass"] + 1)
+
     def test_G2_12_a_setup_cut_part_way_is_found_again(self):
         # Seen on a stock VM (2026-11-23): sudo's permission ran out during the runner's configuration; `setup` again
         # stopped on the half-made folder and sent to `uninstall`, which said there was nothing to uninstall.
@@ -3525,13 +3549,8 @@ class G6(unittest.TestCase):
         self.assertNotIn("setting_up", state)
         self.assertEqual(state["runners"][REPO]["folder"], FOLDER)
         # A setup of a runner that is set up and whole is not taken away: it renews the watch's copy and touches
-        # nothing else (G4.10). The watch's last time is moved back first, so its first pass is seen to write a newer
-        # one whatever second this test runs in (the time is to the second: a pass in the same second as the last
-        # one read as "wrote nothing", and the result hung on the clock).
+        # nothing else (G4.10).
         host.runs[("sudo", "-n", "test", "-e", FOLDER)] = (0, "")
-        st = M.load_state(host)
-        st["watch"]["time"] = "2026-01-01T00:00:00Z"
-        M.save_state(host, st)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_OK, lines)
         self.assertTrue(lines[-1].endswith("the runner, its service, its limits and a running job were not touched"),
