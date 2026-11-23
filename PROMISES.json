@@ -1417,7 +1417,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
-   "test": "",
+   "test": "test_G4_10_doctor_and_status_name_an_older_copy_running_the_watch",
    "proven": "",
    "issue": 230,
    "moved_why": "",
