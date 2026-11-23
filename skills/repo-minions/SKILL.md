@@ -148,6 +148,9 @@ that something costs nothing, or that the person spends less: the tool did not r
   argument, never on the screen, never in a file another user can read. Do not paste a token into a command.
 - **Other people's things.** On a computer other people also use, the tool counts their containers and runners
   and never names them. Say the counts; never go looking.
+- **The person's own other things.** look counts the person's own containers and other runner services and does
+  not name them (their names may be the person's projects). Run `look <owner/repo> --show-names` only when the
+  person asks to see them.
 - **Merge rules.** Never tell the person that required checks or branch protection hold their merges unless look
   printed that it read them.
 - **Nothing is cut.** Every stop, restart and removal drains before it acts. If the person wants the computer back now,
