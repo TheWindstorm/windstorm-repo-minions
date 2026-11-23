@@ -70,8 +70,15 @@ jobs before their first step, and the check takes the runner off that repository
 - **A folder of notes**, `~/.minions`.
 
 The admin password is used to make the user, install the service, its limits, the two scripts and the check. It is
-typed into your computer's own password prompt, and the tool never sees or keeps it. `uninstall --all` takes
-everything away and shows that nothing is left.
+typed into your computer's own password prompt, and the tool never sees or keeps it.
+
+**Leaving.** After `uninstall --all`, nothing of this tool is left installed or running; your record of what it did
+is kept in one folder you own, and uninstall tells you where (`~/repo-minions-record`: every step it took and each
+job's start and end, plain text, nothing secret). `uninstall --all --delete-record` deletes that record too, once you
+type delete at your own terminal. If you remove the skill with Claude Code's own `plugin uninstall`, only the skill
+leaves Claude Code: the runner, its service, the check and the limits stay and go on taking your repository's jobs.
+The one command that takes them off, in your own terminal:
+`python3 -I /usr/local/lib/windstorm-repo-minions/minions.py uninstall --all`.
 
 **What to expect**
 - While your computer is off, asleep or held, your checks wait.

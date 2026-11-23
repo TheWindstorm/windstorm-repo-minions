@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- The skill has evals, in the skill-creator layout (`skills/repo-minions/evals/evals.json`): the cold-start runs
+  written as cases, each with the sentence the agent is given, what the person must be told and what must not
+  happen (G9.9, row R103).
+- `uninstall` keeps your record of what the tool did on your computer: the journal of every step and each job's
+  start and end move into one plain-text folder you own, `~/repo-minions-record`, and the census names it last.
+  Nothing of the tool is left installed or running. `uninstall --all --delete-record` deletes the record too, once
+  you type delete at your own terminal. Before, `uninstall --all` deleted that record (G6.10, INV6, row R99).
+- The skill says what keeps running after Claude Code's own `plugin uninstall` (the runner, the watch, the
+  limits: they do your jobs) and the one command that takes them off, run from the copy setup installed. A test
+  runs `uninstall --all` from that copy alone, to the end (G6.11, row R100).
+- `doctor` and `status` say when the watch runs a different version of the tool than the one you run, which is
+  older, and the one step that puts this version's copy in place. After an update of the skill, the watch went on
+  running the old copy with nothing said (G4.10, row R101).
+- `look`'s block for the person carries only what the person must hear: no promise about a later version, no
+  "(seen)", and the tools line says only what to do. A test holds a bound on the block so it cannot grow back. In a
+  cold start the smallest model kept every line in meaning but lost three such clauses (G7.12, row R104).
+- `uninstall --all` prints the census last, and the census names this tool's state folder.
 - `look`'s block for the person also says what a job too big for the memory cap does, and that a job has only the
   tools installed on this computer. In a cold start these were in the README only and did not reach the person
   (G7.10, row R98).
