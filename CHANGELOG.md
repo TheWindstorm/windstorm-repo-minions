@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Plan 1.12: the command that takes everything away is `uninstall` (was `remove`), the family's word; `remove`
+  stays free for taking one repository's runner off a computer that serves several. Codon numbers stay.
 - G5 Watch and hold, first part (Linux): `status` (both sides of each runner with the time each was read, "idle"
   only when both agree, the queue, the watch's heartbeat), `watch` (a system timer every 5 minutes, run as you),
   the guard for a repository no longer private (held, a 2-minute drain, stopped and kept stopped until you say it
