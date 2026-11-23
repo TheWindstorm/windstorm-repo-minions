@@ -2481,6 +2481,24 @@ class G5(unittest.TestCase):
                                    "returning; this one has not. `drain example-org/example-repo --stop`, then "
                                    "`resume example-org/example-repo`, starts it fresh (each asks for the admin "
                                    "password once)")
+        # R85 (seen on a stock machine): the same 11 minutes, 8 of them asleep, is 3 minutes awake: not named; a
+        # runner is still reconnecting just after a wake.
+        host.slept = 8 * 60
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline"))[1]
+        self.assertFalse([x for x in lines if "has shown it offline since" in x], lines)
+        clock.sleep(8 * 60)  # 19 min, 11 of them awake: named, with the awake part said
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline"))[1]
+        self.assertTrue(lines[0].startswith("warn minions-box-1 for example-org/example-repo: GitHub has shown it "
+                                            "offline since 23:00:00Z (19 min, 11 min of it awake)"), lines[0])
+        host.slept = 0
+        # R85: setup's (and resume's) both-sides check, once GitHub lists it online, ends an offline record written
+        # before it came online (seen: setup's own first watch pass ran before GitHub listed the new runner).
+        d = M.load_state(host)
+        unit = d["runners"][REPO]["unit"]
+        self.assertTrue(M.both_sides(StatusGH(status="online"), host, REPO, "minions-box-1", unit,
+                                     ["minions", "minions-medium"], M.Report(io.StringIO()), wait_s=0))
+        self.assertNotIn("offline_since", M.load_state(host)["runners"][REPO])
+        run_cmd(M.watch, host=host, gh=StatusGH(status="offline"))  # offline again, for the lines below
         # Back online: cleared, and not named.
         run_cmd(M.watch, host=host, gh=StatusGH(status="online"))
         self.assertNotIn("offline_since", M.load_state(host)["runners"][REPO])
