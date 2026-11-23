@@ -32,7 +32,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_INV1_never_a_runner_on_a_public_repository",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: unsteered, `look` of a really public repository said `stop \u2026 is public: Repo Minions never puts a runner on a repository that is not private \u2026`, exit 2, nothing changed. Steered, the same steer as row R62: the watch's one privacy read was answered public by a wrapper put in front of gh (from 03:20:34Z to 03:29:27Z UTC, and three shorter times), everything else real: the watch's first pass held the runner and took it off the repository on GitHub's side once idle, status began with a stop saying every job is refused, a real job asking for our labels was refused, and `resume --private-again` then setup brought it back. Not seen: a repository really turned public with a runner on it, which is not done, by rule.",
    "issue": 8,
    "moved_why": "",
    "moved_by_person": ""
@@ -102,7 +102,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G3_2_jobs_that_cannot_move_are_left_and_named",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen in two runs: the move pull request named the jobs no computer of ours can take (GitHub's macOS, labels of runners not ours) and left them as they were (`1 job(s) to move, 8 left as they are and named in it`); look named the same jobs on a stock Debian 12 virtual machine.",
    "issue": 13,
    "moved_why": "2026-11-23, split by the owner's word: the lint that names jobs no runner can take before they wait is G3.5, due 0.2.0; it is row R70 (issue #124). The sentence promised both under one version.",
    "moved_by_person": ""
@@ -284,7 +284,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_12_a_runner_github_removed_is_named_and_registered_again",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once. Steered: the runner's registration was removed by our own call to GitHub's API (02:57:30Z UTC), standing in for GitHub's removal after 14 days offline. The runner's answer was GitHub's own (\"registration has been deleted\"); its listener retried once, then stopped the service with no retry (NRestarts 0); the watch said `GitHub no longer lists` the runner; setup registered it again in place, folders and labels kept, both sides online. Learned later: how soon an old listener stops itself is not fixed, so setup now stops what is left first. Not seen: GitHub's own 14-day removal.",
    "issue": 26,
    "moved_why": "",
    "moved_by_person": ""
@@ -522,7 +522,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_14_a_job_killed_by_our_limit_is_named_as_such",
-   "proven": "",
+   "proven": "2026-11-22, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word for what was seen, once: when the kernel killed a job at our memory max inside minions.slice, status said `stopped by this computer's memory limit (2.3 GB), not by your code failing`. Steered: the slice's memory high mark was lifted at runtime so the max could be reached. With the defaults (both marks) that kill was NOT seen: the same job was held at the high mark, slowed almost to a stop, for minutes; that is a fault in the defaults and has its own row.",
    "issue": 52,
    "moved_why": "",
    "moved_by_person": ""
@@ -830,7 +830,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_15_a_blind_watch_says_so_and_holds_after_three_passes",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once. Steered: gh was moved out of the watch's PATH by hand (02:33Z UTC), the fault a real install showed. Three passes in a row journaled `GitHub not read (HTTP 0): the GitHub CLI (gh) could not be found \u2026`; status said `stop the watch could not read whether \u2026 is still private, 3 pass(es) in a row \u2026`; a real job was refused by the job-start hook after its 6-minute wait (`refused-stale`), its folder emptied; with gh back, the watch read the repository private again. Not seen unsteered.",
    "issue": 95,
    "moved_why": "",
    "moved_by_person": ""
