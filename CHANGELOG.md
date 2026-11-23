@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `setup <owner/repo>` on a runner already set up here puts this version's copy of the tool in place for the watch
+  and touches nothing else. It stopped with "exists already", so the step `doctor` and `status` name for an older
+  copy did nothing (G4.10, row R101).
 - `status` says when GitHub last handed this runner a job, or that it has not yet, and that a job GitHub does not
   hand over (a schedule there can be late, or not come) is on GitHub's side (G5.17, row R105).
 - The skill has evals, in the skill-creator layout (`skills/repo-minions/evals/evals.json`): the cold-start runs
