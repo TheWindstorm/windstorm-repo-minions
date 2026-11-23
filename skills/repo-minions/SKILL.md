@@ -1,6 +1,6 @@
 ---
 name: repo-minions
-description: 'Windstorm Repo Minions: your own computers do your repo''s chores. It sets up a GitHub Actions runner on a computer the person owns, for one private repository, moves the jobs that computer can take onto it through a pull request the person merges, and keeps it ready, watched and capped so the computer stays theirs. Use when the user says "repo minions", "minions look", "minions setup", "minions status", "minions drain" or "minions resume"; asks to run their GitHub Actions jobs on their own computer, laptop or server; wants a self-hosted runner set up, checked, held or removed for a private repository; or asks why a job on their own runner is waiting, was cut or stopped. Linux with systemd in this version. Never for a public repository.'
+description: 'Windstorm Repo Minions: your own computers do your repo''s chores. It sets up a GitHub Actions runner on a computer the person owns, for one private repository, moves the jobs that computer can take onto it through a pull request the person merges, and keeps it ready, watched and capped so the computer stays theirs. Use when the user says "repo minions", "minions look", "minions setup", "minions status", "minions drain" or "minions resume"; asks to run their GitHub Actions jobs on their own computer, laptop or server; wants a self-hosted runner set up, checked, held or uninstalled for a private repository; or asks why a job on their own runner is waiting, was cut or stopped. Linux with systemd in this version. Never for a public repository.'
 license: Apache-2.0
 ---
 
@@ -132,4 +132,4 @@ that something costs nothing, or that the person spends less: the tool did not r
 | "My job is waiting" | `status`; read its lines; if the runner is held, `resume` |
 | "My test failed on my computer" | `status`; it names a job cut by a restart or stopped by this computer's memory limit; otherwise it is the job's own result |
 | "I need my computer now" | `drain`, wait for its `ok` |
-| "Take it off" | removal comes in a later step of this version; say so, and `drain --stop` meanwhile |
+| "Take it off" | `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this skill on the computer and opens a pull request that puts moved jobs back (theirs to merge) |

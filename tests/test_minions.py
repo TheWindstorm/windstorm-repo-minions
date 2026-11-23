@@ -1830,6 +1830,11 @@ class G5(unittest.TestCase):
                  (0, "%d.5 box-1 systemd-sleep[9]: Entering sleep state 'suspend'...\n" % (t0 + 40))}
         host, gh, _ = self._named(start + f"end {t0 + 900} 555 1 0 check\n", cut, sleep)
         self.assertTrue(any("was cut by this computer going to sleep" in x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
+        # systemd 255 (Ubuntu 24.04) writes the same moment in other words (seen on a stock virtual machine).
+        sleep255 = {("journalctl", "-u", "systemd-suspend.service"):
+                    (0, "%d.8 box-1 systemd-sleep[9]: Performing sleep operation 'suspend'...\n" % (t0 + 40))}
+        host, gh, _ = self._named(start + f"end {t0 + 900} 555 1 0 check\n", cut, sleep255)
+        self.assertTrue(any("was cut by this computer going to sleep" in x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
         # Not named: a job that came through a sleep (GitHub: success); the person's own failing test (no step
         # cancelled), even with a stop here; GitHub's cut with nothing on this computer's side.
         for job, runs, rec in (({"conclusion": "success", "steps": []}, sleep, start + f"end {t0 + 900} 555 1 0 check\n"),
@@ -1898,10 +1903,317 @@ class G5(unittest.TestCase):
                        f"{M.RECORDS_ROOT}/example-org-example-repo"), host.ran)
 
 
+# ------------------------------------------------------------------------------------------------------------ G6
+
+RM_TOKEN = "fake-" + "remove-" + "token-" + "2b8e"  # built from pieces: never a real token, never in any argv
+SLICE_FILE = f"/etc/systemd/system/{M.SLICE}"
+WATCH_FILES = (f"/etc/systemd/system/{M.WATCH_UNIT}.timer", f"/etc/systemd/system/{M.WATCH_UNIT}.service")
+
+
+class World:
+    """A computer with our runner on it, changed only by the commands the tool runs (through sudo and systemctl).
+    It behaves as seen on a real one: `config.sh remove` refuses while the service is installed, and a slice whose
+    file is deleted stays loaded and active after a reload until it is stopped (Part 7 C7)."""
+
+    def __init__(self, gh, own_removal_works=True, interrupt_on=None):
+        self.gh, self.own_removal_works, self.interrupt_on = gh, own_removal_works, interrupt_on
+        self.paths = {FOLDER, f"{FOLDER}/.runner", f"{FOLDER}/.service", f"/etc/systemd/system/{UNIT}",
+                      f"/etc/systemd/system/{UNIT}.d", SLICE_FILE, *WATCH_FILES, M.HOOKS_ROOT, M.hook_dir(REPO),
+                      M.RECORDS_ROOT, M.records_dir_of(FOLDER), "/home/minions-runner"}
+        self.active = {UNIT: "active", M.SLICE: "active", f"{M.WATCH_UNIT}.timer": "active"}
+        self.loaded = set(self.active) | {f"{M.WATCH_UNIT}.service"}
+        self.user, self.listener, self.worker, self.order = True, True, False, []
+
+    def gone(self, path):
+        self.paths = {p for p in self.paths if p != path and not p.startswith(path.rstrip("/") + "/")}
+
+    def answer(self, argv, input=None):
+        a = list(argv)
+        if self.interrupt_on and self.interrupt_on(a):
+            self.interrupt_on = None
+            raise KeyboardInterrupt
+        if a[:2] == ["sudo", "-n"]:
+            a = a[2:]
+            if a[:3] == ["-u", "minions-runner", "--"]:
+                self.order.append("config.sh remove")
+                if f"{FOLDER}/.service" in self.paths:
+                    return 1, "Uninstall service first"
+                if not self.own_removal_works or input != RM_TOKEN + "\n":
+                    return 1, "Failed: removing runner from the server"
+                self.gh.runner = None
+                self.gone(f"{FOLDER}/.runner")
+                return 0, "Runner removed successfully"
+        if a == ["true"] and argv[:2] == ("sudo", "-n") or list(argv[:3]) == ["sudo", "-n", "true"]:
+            return 0, ""
+        if a[:2] == ["test", "-e"]:
+            return (0 if a[2] in self.paths else 1), ""
+        if a[:1] == ["rm"]:
+            self.order.append(f"rm {a[-1]}")
+            self.gone(a[-1])
+            return 0, ""
+        if a[:2] == ["bash", "-c"] and "svc.sh uninstall" in a[2]:
+            self.order.append("svc.sh uninstall")
+            for p in (f"{FOLDER}/.service", f"/etc/systemd/system/{UNIT}"):
+                self.gone(p)
+            self.active.pop(UNIT, None)
+            return 0, ""
+        if a[:1] == ["userdel"]:
+            self.order.append("userdel")
+            self.user = False
+            self.gone("/home/minions-runner")
+            return 0, ""
+        if a[:1] == ["systemctl"] and argv[0] == "sudo":
+            verb, rest = a[1], [x for x in a[2:] if not x.startswith("--")]
+            if verb == "stop" or (verb == "disable" and "--now" in a):
+                for u in rest:
+                    self.order.append(f"stop {u}")
+                    self.active[u] = "inactive"
+                    if u == UNIT:
+                        self.listener = False
+            if verb == "daemon-reload":
+                for u in list(self.loaded):
+                    if f"/etc/systemd/system/{u}" not in self.paths and self.active.get(u) != "active":
+                        self.loaded.discard(u)
+            return 0, ""
+        if a[:2] == ["systemctl", "show"]:
+            u = a[2]
+            # As systemd 255 answers: a slice always reads "loaded" (systemd makes any slice from its name); what
+            # tells a loaded file is FragmentPath.
+            frag = f"/etc/systemd/system/{u}" if u in self.loaded else ""
+            return 0, (f"LoadState={'loaded' if u in self.loaded or u.endswith('.slice') else 'not-found'}\n"
+                       f"ActiveState={self.active.get(u, 'inactive') if u in self.loaded else 'inactive'}\n"
+                       f"FragmentPath={frag}\nDropInPaths=\n")
+        if a[:2] == ["systemctl", "is-active"]:
+            st = self.active.get(a[2], "inactive")
+            return (0 if st == "active" else 3), st + "\n"
+        if a[:2] == ["systemctl", "list-units"]:
+            return 0, "".join(f"{u} loaded {self.active.get(u, 'inactive')}\n" for u in sorted(self.loaded))
+        if a[:2] == ["pgrep", "-u"]:
+            if a[-1].endswith("Runner.Worker"):
+                return (0, "3333\n") if self.worker else (1, "")
+            return (0, "2222\n") if self.listener else (1, "")
+        if a[:1] == ["id"]:
+            return (0, "uid=1001(minions-runner)") if self.user else (1, "no such user")
+        if a == ["sudo", "-n", "true"]:
+            return 0, ""
+        return 1, ""
+
+
+class RemoveGH(MoveGH):
+    """GitHub for remove: our runner until it is removed, the removal token, DELETE, label PUTs, and (from MoveGH)
+    the workflow files and the Git Data API for the put-back pull request."""
+
+    def __init__(self, files=None, busy=(False,)):
+        super().__init__(files or {})
+        self.runner = {"id": 7, "name": OURS, "status": "online", "labels": [{"name": "minions"},
+                                                                           {"name": "minions-medium"}]}
+        self.busy = list(busy)
+
+    def api(self, method, path, body=None):
+        base = f"repos/{REPO}"
+        if method == "GET" and path == f"{base}/actions/runners?per_page=100":
+            self.calls.append((method, path))
+            if self.runner is None:
+                return 200, {"total_count": 0, "runners": []}
+            b = self.busy.pop(0) if len(self.busy) > 1 else self.busy[0]
+            return 200, {"total_count": 1, "runners": [dict(self.runner, busy=b)]}
+        if (method, path) == ("POST", f"{base}/actions/runners/remove-token"):
+            self.calls.append((method, path))
+            return 201, {"token": RM_TOKEN, "expires_at": "2026-11-23T01:00:00Z"}
+        if (method, path) == ("DELETE", f"{base}/actions/runners/7"):
+            self.calls.append((method, path))
+            self.writes.append((method, path, body))
+            self.runner = None
+            return 204, None
+        if (method, path) == ("PUT", f"{base}/actions/runners/7/labels"):
+            self.calls.append((method, path))
+            self.runner["labels"] = [{"name": x} for x in body["labels"]]
+            return 200, {"labels": self.runner["labels"]}
+        return super().api(method, path, body)
+
+
+MOVED_CI = CI_YML.replace("runs-on: ubuntu-latest   # the person's own comment",
+                          "runs-on: [minions]   # the person's own comment")
+
+
+def remove_setup(own_removal_works=True, interrupt_on=None, busy=(False,), moved=True):
+    gh = RemoveGH({".github/workflows/ci.yml": MOVED_CI}, busy=busy)
+    world = World(gh, own_removal_works, interrupt_on)
+    host = linux_host()
+    host._answer = world.answer
+    Clock(host)
+    data = {"runners": {REPO: {"name": OURS, "folder": FOLDER, "unit": UNIT, "labels": ["minions", "minions-medium"]}}}
+    if moved:
+        data["moves"] = {REPO: {"pr": 12, "branch": "minions-move-1", "base": "main", "files": {
+            ".github/workflows/ci.yml": [{"id": "test", "name": "Unit tests",
+                                          "runs_on": "    runs-on: ubuntu-latest   # the person's own comment\n"}]}}}
+    M.save_state(host, data)
+    return gh, world, host
+
+
+def run_uninstall(gh, host, repo=REPO, **kw):
+    out = io.StringIO()
+    code = M.uninstall(repo, host=host, gh=gh, out=out, interactive=False, **kw)
+    return code, out.getvalue().splitlines()
+
+
+class G6(unittest.TestCase):
+    def test_G6_1_uninstall_takes_a_runner_away_on_both_sides(self):
+        gh, world, host = remove_setup(busy=(True, True, True, False))
+        code, lines = run_uninstall(gh, host, wait_s=600, poll_s=10)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        # Drained first: held, waited for the running job, then nothing ran when the runner was stopped.
+        self.assertTrue(any(x.startswith("ok held:") for x in lines), lines)
+        self.assertTrue(any("a job is running" in x and "at the latest" in x for x in lines), lines)
+        self.assertIsNone(gh.runner)
+        for p in (FOLDER, f"/etc/systemd/system/{UNIT}", f"/etc/systemd/system/{UNIT}.d", M.hook_dir(REPO),
+                  M.records_dir_of(FOLDER)):
+            self.assertNotIn(p, world.paths)
+        self.assertNotIn(REPO, M.load_state(host).get("runners", {}))
+        # The token reached the runner's removal only on standard input; never on a command line or in the output.
+        self.assertFalse(any(RM_TOKEN in " ".join(a) for a in host.ran))
+        self.assertIn(RM_TOKEN + "\n", [i for a, i in host.fed if M.REMOVE_SCRIPT in a])
+        self.assertFalse(any(RM_TOKEN in x for x in lines))
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            j = f.read()
+        self.assertNotIn(RM_TOKEN, j)
+        for step in ("remove ", "hold ", "stop ", "svc.sh uninstall", "config.sh remove", "delete "):
+            self.assertIn(step, j)
+        # A job still running at the deadline: `waiting`, exit 4, the next command named, nothing taken away.
+        gh, world, host = remove_setup(busy=(True,))
+        code, lines = run_uninstall(gh, host, wait_s=60, poll_s=10)
+        self.assertEqual(code, M.EXIT_WAIT)
+        self.assertTrue(lines[-1].startswith("waiting") and "`uninstall example-org/example-repo` again" in lines[-1])
+        self.assertIsNotNone(gh.runner)
+        self.assertIn(FOLDER, world.paths)
+
+    def test_G6_6_uninstall_runs_as_the_runner_and_github_goes_first(self):
+        gh, world, host = remove_setup()
+        self.assertEqual(run_uninstall(gh, host, everything=True)[0], M.EXIT_NEED)  # the put-back PR is the person's
+        # The runner's own removal ran as the runner user, after svc.sh uninstall (it refuses while the service is
+        # installed) and before anything was deleted; the runner user went last.
+        o = world.order
+        self.assertLess(o.index("svc.sh uninstall"), o.index("config.sh remove"))
+        first_delete = min(i for i, x in enumerate(o) if x.startswith("rm "))
+        self.assertLess(o.index("config.sh remove"), first_delete)
+        self.assertEqual(o[-1], "userdel")
+        removal = next(a for a in host.ran if M.REMOVE_SCRIPT in a)
+        self.assertEqual(removal[:5], ("sudo", "-n", "-u", "minions-runner", "--"))
+        # Nothing the person runs enters the runner's home: every command that names it goes through sudo.
+        for a in host.ran:
+            if any("/home/minions-runner" in x for x in a):
+                self.assertIn(a[0], ("sudo", "pgrep"), a)  # pgrep only lists processes by their path
+        # The runner's own removal cannot run: GitHub's API deletes the runner, read back, before anything else.
+        gh, world, host = remove_setup(own_removal_works=False)
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(("DELETE", f"repos/{REPO}/actions/runners/7", None), gh.writes)
+        self.assertTrue(any("removed through GitHub's API" in x and "read back" in x for x in lines), lines)
+        # GitHub refuses both: nothing on this computer is deleted.
+        gh, world, host = remove_setup(own_removal_works=False)
+        gh.api_real = gh.api
+        gh.api = lambda m, p, b=None: (403, {"message": "no"}) if m == "DELETE" else gh.api_real(m, p, b)
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn("nothing on this computer is deleted yet", lines[-1])
+        self.assertIn(FOLDER, world.paths)
+        self.assertFalse(any(x.startswith("rm ") for x in world.order))
+
+    def test_G6_5_uninstall_stops_the_slice_before_deleting_it(self):
+        gh, world, host = remove_setup()
+        code, lines = run_uninstall(gh, host, everything=True)
+        o = world.order
+        self.assertLess(o.index(f"stop {M.SLICE}"), o.index(f"rm {SLICE_FILE}"))
+        self.assertNotIn(M.SLICE, world.loaded)
+        self.assertTrue(any("was stopped before its file was deleted, and is gone, read back" in x for x in lines))
+        # A slice still loaded from its file after its removal is a `stop`, never "gone".
+        gh, world, host = remove_setup()
+        host._answer = (lambda real: lambda a, i=None: (0, f"LoadState=loaded\nActiveState=inactive\nFragmentPath={SLICE_FILE}\n")
+                        if list(a[:3]) == ["systemctl", "show", M.SLICE] else real(a, i))(world.answer)
+        code, lines = run_uninstall(gh, host, everything=True)
+        self.assertEqual(code, M.EXIT_STOP)
+        # And one still active, too.
+        gh, world, host = remove_setup()
+        host._answer = (lambda real: lambda a, i=None: (0, "LoadState=loaded\nActiveState=active\n")
+                        if list(a[:3]) == ["systemctl", "show", M.SLICE] else real(a, i))(world.answer)
+        code, lines = run_uninstall(gh, host, everything=True)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertIn(f"{M.SLICE} is still loaded or active after its removal", lines[-1])
+
+    def test_G6_2_uninstall_all_leaves_nothing_and_offers_the_workflows_back(self):
+        gh, world, host = remove_setup()
+        state = host.state_dir()
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        self.assertEqual(world.paths, set())
+        self.assertFalse(world.user)
+        self.assertFalse(world.loaded)
+        self.assertFalse(os.path.exists(state))
+        # One pull request puts the moved line back exactly as it was, comment kept; the tool never merges it.
+        self.assertEqual(gh.blobs(), [CI_YML])
+        pr = next(b for m, p, b in gh.writes if p.endswith("/pulls"))
+        self.assertEqual(pr["title"], "Run these jobs where they ran before")
+        self.assertTrue(pr["head"].startswith(M.PUT_BACK_PREFIX))
+        self.assertIn("runs-on: ubuntu-latest   # the person's own comment", pr["body"])
+        self.assertFalse(any(p.endswith("/merge") for m, p, b in gh.writes))
+        self.assertTrue(any(x.startswith("need you: read and merge pull request #12 yourself") for x in lines), lines)
+        # A move recorded before its lines were kept: named, never guessed.
+        gh, world, host = remove_setup()
+        d = M.load_state(host)
+        d["moves"][REPO]["files"][".github/workflows/ci.yml"][0].pop("runs_on")
+        M.save_state(host, d)
+        code, lines = run_uninstall(gh, host, everything=True)
+        self.assertTrue(any("was not recorded" in x and "put it back by hand" in x for x in lines), lines)
+        self.assertEqual(gh.blobs(), [])
+
+    def test_G6_3_uninstall_ends_with_a_census(self):
+        gh, world, host = remove_setup()
+        code, lines = run_uninstall(gh, host)
+        census = [x for x in lines if "census:" in x]
+        self.assertIn(f"ok census: runners on GitHub for {REPO}: none", census)
+        self.assertIn("ok census: runner services: none", census)
+        self.assertTrue(any("the runner user: minions-runner (kept; `uninstall --all` takes it)" in x for x in census))
+        self.assertTrue(any(x.startswith("ok census: the slice and the watch") and "kept" in x for x in census))
+        gh, world, host = remove_setup()
+        code, lines = run_uninstall(gh, host, everything=True)
+        census = [x for x in lines if "census:" in x]
+        self.assertEqual(len(census), 5, census)
+        self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census), census)
+        # Something left is named as a `warn`, never "none".
+        gh, world, host = remove_setup()
+        gh.runner = dict(gh.runner, name="someone-elses-runner")
+        world.user = True
+        M.census(gh, host, [REPO], True, M.Report(io.StringIO()))
+        out = io.StringIO()
+        M.census(gh, host, [REPO], True, M.Report(out))
+        self.assertIn(f"warn census: runners on GitHub for {REPO}: someone-elses-runner (not ours)", out.getvalue())
+        self.assertIn("warn census: the runner user: minions-runner", out.getvalue())
+
+    def test_G6_4_uninstall_again_finishes_an_interrupted_removal(self):
+        # Cut right after the GitHub side was removed, at the first delete.
+        gh, world, host = remove_setup(interrupt_on=lambda a: a[:3] == ["sudo", "-n", "rm"])
+        code = M.main(["uninstall", "--all"], host=host, out=io.StringIO(), gh=gh)
+        self.assertEqual(code, M.EXIT_INTERRUPTED)
+        self.assertIsNone(gh.runner)
+        self.assertIn(REPO, M.load_state(host)["runners"])
+        before = list(world.order)
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        again = world.order[len(before):]
+        self.assertNotIn("config.sh remove", again)  # a step already done is not run again, and does not fail
+        self.assertNotIn("svc.sh uninstall", again)
+        self.assertTrue(any(f"GitHub no longer lists {OURS} for {REPO}" in x for x in lines), lines)
+        self.assertEqual(world.paths, set())
+        self.assertFalse(world.user)
+        # And once more, with nothing left: it still ends well.
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertIn(code, (M.EXIT_OK, M.EXIT_NEED), lines)
+
+
 class G8(unittest.TestCase):
     def test_G8_3_commands_and_line_kinds_are_exactly_these(self):
         # The commands built so far are the plan's own, in its order (a subsequence of it); more come with genes.
-        plan = ("look", "setup", "move", "lint", "status", "watch", "hold", "resume", "drain", "doctor", "remove",
+        plan = ("look", "setup", "move", "lint", "status", "watch", "hold", "resume", "drain", "doctor", "uninstall",
                 "self-update")
         sub = next(a for a in M.parser()._actions if isinstance(a, M.argparse._SubParsersAction))
         self.assertEqual(tuple(sub.choices), M.COMMANDS)
