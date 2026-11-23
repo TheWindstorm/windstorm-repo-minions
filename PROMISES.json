@@ -1222,7 +1222,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_16_a_job_held_at_our_memory_limit_is_named",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, the default limits (memory high 3.9 GB, max 4.7 GB), seen once, nothing steered: a real job asking for 6 GB was held at 4.3 to 4.6 GB, its tasks all stalled 92 to 98 % of each minute, and not killed in 14 minutes. At the second watch pass after it reached the mark, 11 minutes after it started, status began with `warn job 'j' (run 45171779990) has been held at this computer's memory limit for jobs (3.9 GB) since 12:15:30Z, 2 watch passes in a row \u2026 Your two ways out: cancel it (`gh run cancel \u2026`), or give jobs more memory: `setup \u2026 --limits \u2026``; the person's cancel ended the job about 2 minutes later.",
    "issue": 181,
    "moved_why": "",
    "moved_by_person": ""
