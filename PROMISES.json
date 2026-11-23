@@ -1072,6 +1072,20 @@
    "issue": 148,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R77",
+   "seen": "2026-11-23, a cold-start agent run (the smallest model) on a stock Ubuntu 24.04 virtual machine: told that gh was missing, the agent listed the person's SSH folder, tried to reach GitHub over SSH and listed the file where git keeps saved logins, before asking for the right step (no contents read). An earlier small-model run installed gh its own way.",
+   "promise": "The need-you lines for a missing or logged-out GitHub CLI say in the line itself that this skill reaches GitHub only through the GitHub CLI and its own login, that no SSH key and no other saved login on the computer is used or looked for, and that the step is the person's.",
+   "codon": "G1.10",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_10_no_github_cli_or_login_is_the_first_need_you",
+   "proven": "",
+   "issue": 150,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

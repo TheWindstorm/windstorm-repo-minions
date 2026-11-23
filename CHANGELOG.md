@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The `need you` lines for a missing or logged-out GitHub CLI now say, in the line itself, that this skill
+  reaches GitHub only through the GitHub CLI and its own login, that no SSH key and no other saved login on the
+  computer is used or looked for, and that the step is the person's, in their own terminal (G1.10, row R77).
 - `move --verify`, when its deadline passes while GitHub shows our runner offline, now says so and names
   `resume OWNER/NAME` first, then `move OWNER/NAME --verify` again. Before, it said to verify again after the
   next push, which the waiting run does not need (G3.6, row R76).
