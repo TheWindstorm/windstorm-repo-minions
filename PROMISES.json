@@ -830,7 +830,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_15_a_blind_watch_says_so_and_holds_after_three_passes",
-   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once. Steered: gh was moved out of the watch's PATH by hand (02:33Z UTC), the fault a real install showed. Three passes in a row journaled `GitHub not read (HTTP 0): the GitHub CLI (gh) could not be found \u2026`; status said `stop the watch could not read whether \u2026 is still private, 3 pass(es) in a row \u2026`; a real job was refused by the job-start hook after its 6-minute wait (`refused-stale`), its folder emptied; with gh back, the watch read the repository private again. Not seen unsteered.",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen twice. Unsteered (12:35 to 12:51Z UTC, a fresh machine): the computer's network link was cut for 16 minutes; three watch passes in a row journaled `GitHub not read (HTTP 0): GitHub gave no answer: error connecting to api.github.com \u2026`; status began with `stop the watch could not read whether \u2026 is still private, 3 pass(es) in a row since 12:40:29Z \u2026 So this computer takes no job of it now \u2026`; with the link back, a job dispatched before the next pass waited at the job-start hook (\"waiting up to 6 minutes\") until the watch read the repository private, then ran and passed. Earlier, by the owner's word: gh moved out of the watch's PATH by hand (02:33Z), the same stop line, and a real job refused by the hook after its 6-minute wait (`refused-stale`).",
    "issue": 95,
    "moved_why": "",
    "moved_by_person": ""
@@ -956,7 +956,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_14_a_spent_api_limit_is_named_and_never_polled_into",
-   "proven": "",
+   "proven": "By the owner's word, not held for the tag. Measured 2026-11-23 on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, on the fix of row R90, every GitHub call of a real watch pass counted: 2 calls a pass at rest (the repository and its runners), and each job that ended read once (the pass after 3 jobs: 5 calls; the next pass: 2); 12 passes an hour, so about 24 calls an hour at rest, as the tool says. The refusal on a spent allowance is tested against a recorded answer, not seen for real: that needs a test login of its own.",
    "issue": 119,
    "moved_why": "",
    "moved_by_person": ""
@@ -1264,7 +1264,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_14_a_spent_api_limit_is_named_and_never_polled_into",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, seen once on its fix, nothing steered: after three jobs ran here, one real watch pass with every GitHub call counted made 5 calls (the repository, its runners, and each finished job once), and the next pass 2.",
    "issue": 192,
    "moved_why": "",
    "moved_by_person": ""
