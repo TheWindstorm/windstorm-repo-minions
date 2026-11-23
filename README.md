@@ -28,7 +28,8 @@ The tool the skill runs is `scripts/minions.py`. It uses only Python's standard 
 
 **What you need**
 - A computer you own, running Linux with systemd. macOS comes in a later version.
-- Python 3.10 or newer, `git`, and the GitHub CLI (`gh`).
+- Python 3.10 or newer, `git`, and the GitHub CLI (`gh`). Ubuntu 22.04 or newer and Debian 12 or newer have a
+  Python that is new enough; with an older one the tool stops on its first command, before any step.
 - A **private** repository. This version serves one repository per computer.
 
 **Your steps.** Only these are yours, and your agent stops and asks for each one:
@@ -80,6 +81,9 @@ everything away and shows that nothing is left.
 - Ubuntu 22.04.5 LTS: Python 3.10.12, GitHub CLI 2.4.0, systemd 249.
 - Debian 12: Python 3.11.2, GitHub CLI 2.23.0 (git installed by the person first).
 - Claude Code 2.1.330 as the agent following the skill from a cold start. That is the only version tried.
+
+**Seen to stop before any step** (stock virtual machine, 2026-11-23): Ubuntu 20.04.6 LTS, whose Python is 3.8.10
+(and whose archive has no `gh`). The tool says the version it found and where this version runs.
 
 **Not seen yet:**
 - A laptop: on battery, a closed lid, a laptop's own sleep, a change of network. These are tested, and seen only

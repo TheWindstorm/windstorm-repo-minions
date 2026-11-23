@@ -2049,11 +2049,13 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
         return rep.code()
     swap_kept = say_swap_cap(host, rep)  # R94: read from the running slice; only "kept" is recorded as kept
     data = load_state(host)
+    if swap_kept:
+        lim = {**lim, "swap_kept": True}
     data.setdefault("runners", {})[repo] = {"name": runner_name, "folder": folder, "unit": unit, "labels": labels,
                                             "version": version, "hooks": hook_dir(repo),
                                             "limits": {k: lim[k] for k in ("cores", "pct", "CPUQuota", "MemoryHigh",
-                                                                           "MemoryMax", "MemorySwapMax")}
-                                                      | ({"swap_kept": True} if swap_kept else {}),
+                                                                           "MemoryMax", "MemorySwapMax",
+                                                                           "swap_kept") if k in lim},
                                             "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
     (data.get("setting_up") or {}).pop(repo, None)
     if "setting_up" in data and not data["setting_up"]:
@@ -2376,6 +2378,17 @@ def stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool) 
         rep.stop("the runner is stopped only after a drain (a stop cancels a running job within seconds): run "
                  "`drain <owner/repo>` first")
         return False
+    if not unit:  # R96: a setup cut before it recorded the unit; the runner's own file names it
+        rc, named = sudo(host, ["cat", f"{folder}/.service"])
+        unit = named.strip() if rc == 0 and re.fullmatch(r"actions\.runner\.[A-Za-z0-9_.@-]+\.service", named.strip()) else ""
+    if not unit:
+        left = runner_pids(host, folder)
+        if left:
+            rep.stop(f"the runner's service is not known here, and process(es) {', '.join(map(str, left))} of it run: "
+                     "end them (`sudo kill <pid>`), then run the same command again")
+            return False
+        rep.ok("the runner had no service here (its setup was cut before one was made), and no process of it is left")
+        return True
     journal(host, "stop", unit)
     sudo(host, systemctl("stop", unit))  # systemd sends SIGTERM to the runner's processes
     left = runner_pids(host, folder)
@@ -4626,11 +4639,23 @@ def parser() -> Parser:
     return ap
 
 
+PYTHON_FLOOR = (3, 10)
+
+
+def python_floor_line(v: tuple) -> str:
+    return (f"stop this tool needs Python {PYTHON_FLOOR[0]}.{PYTHON_FLOOR[1]} or newer, and this computer's python3 is "
+            f"{v[0]}.{v[1]}.{v[2]}; nothing was changed. This version runs where the system's own Python is new enough "
+            "(Ubuntu 22.04 or newer, Debian 12 or newer): use such a computer for its jobs")
+
+
 def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: GitHub | None = None) -> int:
     """G8.3's table: the command's own code (0, 2, 3, 4); 64 typed wrong; 1 the tool failed; 130 interrupted."""
     a = parser().parse_args(argv)
     host = host or Host()
     out = out or sys.stdout
+    if sys.version_info < PYTHON_FLOOR:  # R95: before any step, so nothing is made that this Python cannot finish
+        print(python_floor_line(sys.version_info), file=out)
+        return EXIT_STOP
     try:
         if a.cmd == "look":
             return look(a.repo, a.start_test, host=host)

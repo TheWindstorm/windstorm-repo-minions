@@ -1320,8 +1320,36 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_2_the_runner_runs_low_and_capped",
-   "proven": "",
+   "proven": "2026-11-23, one stock Ubuntu 24.04.5 virtual machine with a swap file and the private proof repository, seen once, nothing steered, on this change's code before its swap read-back was added: `setup` wrote the slice and systemd read `MemoryHigh=infinity`, `MemoryMax=4996160716`, `MemorySwapMax=0`. A job holding 6 GB of random bytes was killed when it reached the cap (the run started 13:48:51Z and was read failed at 13:49:28Z, UTC), and `status` said `warn job 'j' (run 45187630529, ...) was stopped by this computer's memory limit (4.7 GB), not by your code failing ...`; a 3 GB job passed. GitHub, read through its API (the job's steps and annotations, not the page in a browser), showed the job's run step as failed with the annotation `Process completed with exit code 137.` and nothing naming memory. Not seen: `setup`'s read-back of the swap cap from the running slice (tested only), and a computer that does not hold the cap.",
    "issue": 207,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R95",
+   "seen": "2026-11-23, a stock Ubuntu 20.04.6 virtual machine (Python 3.8.10, the older mixed control-group layout): the tool had no check of its Python floor. `look`'s first need-you said `sudo apt install gh`, which that release's archive cannot do (`E: Unable to locate package gh`); with gh installed from GitHub's own apt repository, `setup` registered and started the runner, then said `stop the tool itself failed: TypeError: unsupported operand type(s) for |: 'dict' and 'dict'`.",
+   "promise": "Below Python 3.10 every command stops before any step, saying the version found and where this version runs (Ubuntu 22.04 or newer, Debian 12 or newer); nothing is made that it cannot finish, and no step is asked of the person first.",
+   "codon": "G8.15",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_15_below_its_python_floor_the_tool_stops_before_any_step",
+   "proven": "",
+   "issue": 210,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R96",
+   "seen": "2026-11-23, a stock Ubuntu 20.04.6 virtual machine: `uninstall --all` after a setup cut before it recorded the runner's unit said `ok the runner is stopped: the service is Failed to mangle name: Invalid argument / Failed to expand names: Invalid argument, and no process of it is left`; the rest of the removal finished (census none, exit 0).",
+   "promise": "A runner whose unit was not recorded is stopped by the name its own folder gives, or said to have had no service; no systemctl command runs with an empty unit name.",
+   "codon": "G6.9",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_9_a_runner_whose_setup_was_cut_before_its_unit_was_recorded_is_stopped_by_name",
+   "proven": "",
+   "issue": 211,
    "moved_why": "",
    "moved_by_person": ""
   }
