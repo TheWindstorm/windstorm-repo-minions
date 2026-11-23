@@ -3,6 +3,7 @@
 Standard library only. Run: python tests/test_skill.py -v
 """
 import io
+import json
 import os
 import re
 import shutil
@@ -127,19 +128,19 @@ class Skill(unittest.TestCase):
     def test_G7_4_restart_and_waiting_limits_are_said(self):
         self.assertIn("A restart of this computer cancels the job running on it. A short sleep only delays it; a "
                       "sleep of more than about 10 minutes fails it on GitHub. A job waits at most 24 hours for a "
-                      "runner before GitHub cancels it.", flat(section(text(), "Before setup")))
+                      "runner before GitHub cancels it.", flat(section(text(), "Before the jobs move")))
 
     def test_G7_9_a_long_sleep_fails_the_job_and_is_said_before_setup(self):
-        # Said in the skill, and printed by look itself in its numbered block (a small model skips a list, G7.10).
-        self.assertIn("a sleep of more than about 10 minutes fails it on GitHub", flat(section(text(), "Before setup")))
+        # Said in the skill, and printed by the tool in move's numbered block, before the merge that moves jobs here
+        # (a small model skips a list, G7.10; each line where it matters, G7.14).
+        self.assertIn("a sleep of more than about 10 minutes fails it on GitHub", flat(section(text(), "Before the jobs move")))
         import importlib.util
         spec = importlib.util.spec_from_file_location("m", os.path.join(ROOT, "scripts", "minions.py"))
         M = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(M)
         out = io.StringIO()
         rep = M.Report(out)
-        M.before_setup_words("example-org/example-repo", {"battery": False},
-                             {"cores": 1, "total_cores": 2, "pct": 60, "MemoryMax": str(4 * 1024 ** 3)}, None, rep)
+        M.before_move_words({"battery": False}, rep)
         rep.code()  # the numbered block is printed when the command ends
         said = out.getvalue()
         self.assertIn("A short sleep only delays it; a sleep of more than about 10 minutes fails it on GitHub.",
@@ -153,7 +154,7 @@ class Skill(unittest.TestCase):
 
     def test_G7_7_waiting_checks_are_said_before_setup(self):
         self.assertIn("While your computer is held, asleep or off, your checks wait. GitHub cancels a check that "
-                      "waited 24 hours.", flat(section(text(), "Before setup")))
+                      "waited 24 hours.", flat(section(text(), "Before the jobs move")))
 
     def test_G7_8_the_limits_are_said_in_plain_words_before_setup(self):
         before = flat(section(text(), "Before setup"))
@@ -164,10 +165,28 @@ class Skill(unittest.TestCase):
                       "slow while a job runs: read that too, and let the person decide.", before)
 
     def test_the_skill_says_which_sleep_locks_are_taken_and_what_they_never_hold(self):
-        before = flat(section(text(), "Before setup"))
+        before = flat(section(text(), "Before the jobs move"))
         self.assertIn("A sleep you ask for, the lid, or a low battery still puts it to sleep", before)
         self.assertIn("It never holds the lid switch, the power or sleep keys, a shutdown, or a sleep someone asks "
                       "for.", before)
+
+    def test_G8_17_the_agent_never_looks_into_the_persons_keys_or_saved_logins(self):
+        # Row R110 (2026-11-23): a small-model cold start looked into the person's ~/.ssh and git's saved-login
+        # settings; the skill says, in plain words, that it does not, and reaches GitHub only as the tool does.
+        safety = flat(section(text(), "Safety rules"))
+        self.assertIn("Do not look into the person's keys, their `~/.ssh` folder, git's saved logins or any other "
+                      "saved login. Reach GitHub only as the tool does: through the GitHub CLI and its own login.", safety)
+        with open(os.path.join(ROOT, "skills", "repo-minions", "evals", "evals.json"), encoding="utf-8") as f:
+            first = json.load(f)["evals"][0]
+        self.assertTrue(any("~/.ssh" in x and x.startswith("Must not:") for x in first["expectations"]), first)
+
+    def test_G7_14_the_skill_says_each_block_where_it_is_printed(self):
+        moving = flat(section(text(), "Before the jobs move"))
+        self.assertIn("`move` ends with its own numbered `tell the person` block, just before it asks the person to "
+                      "merge.", moving)
+        self.assertIn("When `status` names a job this computer's memory limit stopped, it ends with one `tell the "
+                      "person` line: paste it.", moving)
+        self.assertIn("(5 on most computers, 6 on a laptop)", flat(section(text(), "Before setup")))
 
     def test_the_skill_carries_the_one_repository_sentence(self):
         self.assertIn("This version serves one repository per computer.", flat(text()))
