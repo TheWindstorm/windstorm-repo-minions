@@ -866,7 +866,7 @@
   {
    "id": "R62",
    "seen": "2026-11-22: G5.4 (a repository no longer private) had been held by its unit test only, on a stand-in that granted sudo.",
-   "promise": "G5.4 is seen on a real machine before the tag: every action real (labels through GitHub on the private proof repository, the watch's record, the hook refusing a real job, what the system answers), the one read steered and said; and the tool's real read of a public repository that has no runner.",
+   "promise": "G5.4 is seen on a real machine before the tag: every action real (labels through GitHub on the private proof repository, the watch's record, the hook refusing a real job, the runner taken off the repository on GitHub's side once idle and what GitHub answers while a job runs, the runner's service stopping itself, coming back by `resume --private-again` and `setup`), the one read steered and said; and the tool's real read of a public repository that has no runner.",
    "codon": "G5.4",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",

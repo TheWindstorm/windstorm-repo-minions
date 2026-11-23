@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Plan 2.0: INV1, INV4 and G5.4 corrected to the guard a real machine has (the job-start hook refuses every
-  later job; labels off when GitHub can be reached; the watch stops no service); G9.7; rows R60 to R62.
+  later job; labels off, and the runner taken off the repository on GitHub's side once idle, with the person's
+  own rights; the watch stops no service); G9.7; rows R60 to R62.
 - From two cold starts: `look` prints what the person must hear before setup as `tell the person` lines;
   every open `need you` is exit 3; the gh install line refreshes apt first; `uninstall` says the put-back pull
   request's checks first; every program a service runs is resolved at setup; this computer's guard (the job-start
