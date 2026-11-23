@@ -1520,6 +1520,20 @@
    "issue": 254,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R109",
+   "seen": "2026-11-23, a stock Ubuntu 24.04 virtual machine, a cold start with the smallest model on the release text: the numbered block carried GitHub's billing sentence word for word with its date; the agent relayed it as \"GitHub's billing page lists self-hosted runners as free\", dropping the date, the storage clause and the source.",
+   "promise": "The block's cost line is a pointer only (GitHub's to say, the page's address, no claim about cost); look prints the sentence read, with its date, as its own line; the README keeps the full text.",
+   "codon": "G7.13",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_13_the_block_points_to_githubs_page_for_cost_and_claims_none",
+   "proven": "",
+   "issue": 260,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

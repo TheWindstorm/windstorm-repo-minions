@@ -46,6 +46,8 @@ DROPIN = "50-minions.conf"
 LOOK_MAX_AGE_S = 3600
 ADMIN_LIKE_GROUPS = {"sudo", "admin", "wheel", "docker", "root", "lxd", "libvirt"}
 COST_URL = "https://docs.github.com/en/billing/concepts/product-billing/github-actions"
+# G7.13 (R109): the block's cost line is a pointer only; the sentence read, with its date, is look's own line.
+COST_POINTER = f"What GitHub charges for jobs that run on your own computers is GitHub's to say: read {COST_URL}"
 COST_LIST_HEAD = "The following usage remains free independently and does not reduce the included compute usage:"
 START_BRANCH_PREFIX = "minions-start-test-"
 START_FILE = ".github/workflows/minions-start-test.yml"
@@ -1399,8 +1401,9 @@ def read_cost_rule(page: str) -> list[str] | None:
     return items or None
 
 
-def check_cost_rule(host: Host, rep: Report) -> None:
-    """G1.9: GitHub's own sentence, with the date read; never a guess."""
+def check_cost_rule(host: Host, rep: Report) -> str:
+    """G1.9: GitHub's own sentence, with the date read, as look's own line; never a guess. Returns the block's line
+    (G7.13: a pointer only), said by the caller as the block's last line."""
     when = host.now().strftime("%Y-%m-%d %H:%M UTC")
     try:
         items = read_cost_rule(host.fetch(COST_URL))
@@ -1410,12 +1413,12 @@ def check_cost_rule(host: Host, rep: Report) -> None:
         keep_cost_read(host, items)  # G5.10: the watch compares against it once a week
     if not items or not any(x.startswith("Self-hosted runners") for x in items):
         rep.warn(f"I could not read GitHub's rule today ({when}): see {COST_URL}")
-        rep.tell("I could not read GitHub's page about charges today.")
-        return
-    rep.tell(f"GitHub's billing page, read {when}, lists \"Self-hosted runners\" among the uses that do not reduce "
+        return "I could not read GitHub's page about charges today."
+    rep.ok(f"GitHub's billing page, read {when}, lists \"Self-hosted runners\" among the uses that do not reduce "
            "the included usage (its words: \"" + COST_LIST_HEAD + " " + " ".join(items) + "\"). In December 2025 "
            "GitHub announced a charge for self-hosted runner use and postponed it. Artifact and cache storage "
            f"count the same whichever computer ran the job. Source: {COST_URL}")
+    return COST_POINTER
 
 
 COST_EVERY_S = 7 * 24 * 3600  # G5.10: the watch reads GitHub's cost rule again once a week
@@ -3110,7 +3113,7 @@ def last_job_line(host: Host, repo: str, mine: dict, now: dt.datetime) -> tuple[
                       "schedule there can be late, or not come) is on GitHub's side; the lines above show whether "
                       "this runner is connected and waiting")
     t = dt.datetime.fromtimestamp(int(starts[-1][1]), dt.timezone.utc)
-    return "ok", (f"the last job GitHub handed this runner started at {hms(t)} UTC, "
+    return "ok", (f"the last job GitHub handed this runner started at {hms(t)}, "
                   f"{minutes(max(0.0, (now - t).total_seconds()))} ago ('{starts[-1][5]}' of {repo})")
 
 
@@ -4835,8 +4838,9 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
     lives = what_lives_here(host, rep, show_names)
     s["serves"], s["serves_what"] = lives["serves"], lives["serves_what"]  # R72: setup reads it
     check_workflows(gh, repo, s, rep)
+    cost = check_cost_rule(host, rep)  # its own line first: a line of another kind would end the block
     before_setup_words(repo, s, lim, floor, rep)
-    check_cost_rule(host, rep)
+    rep.tell(cost)
     return rep.code()
 
 
