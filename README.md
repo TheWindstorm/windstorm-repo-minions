@@ -75,7 +75,8 @@ jobs before their first step, and the check takes the runner off that repository
 
 In your own home folder it uses only these: the clone you made in step 1 (`~/windstorm-repo-minions`), the GitHub
 CLI's own login (`~/.config/gh`, written when you run `gh auth login`), `~/.minions`, and, after leaving, your
-record. It changes no other file of yours.
+record. It changes no other file of yours. Installing the plugin is Claude Code's own act: it writes only Claude
+Code's plugin places. The skill itself makes nothing until you ask it to set runners up.
 
 The admin password is used to make the user, install the service, its limits, the two scripts and the check. It is
 typed into your computer's own password prompt, and the tool never sees or keeps it.
