@@ -19,7 +19,8 @@ Tell your coding agent:
 1. Clone this repository: `git clone https://github.com/TheWindstorm/windstorm-repo-minions`.
 2. Read `skills/repo-minions/SKILL.md` and follow it, in its order.
 3. Stop and ask the person at each step the skill marks as theirs.
-4. Do not invent steps. If the skill does not say what to do, ask the person.
+4. Do not invent steps. If the skill does not say what to do, ask the person. A step that is the person's is never
+   done another way: if you cannot do it as the tool's line says, tell the person what it printed and ask.
 
 The tool the skill runs is `scripts/minions.py`. It uses only Python's standard library and the GitHub CLI.
 
