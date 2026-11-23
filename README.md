@@ -70,8 +70,22 @@ everything away and shows that nothing is left.
 - GitHub cancels a check that has waited 24 hours.
 - A job cut by a restart or a sleep shows on GitHub as failed. `status` names it as cut, never as your test failing.
 
-**Seen to work:** Ubuntu 24.04.5 LTS, Python 3.12.3 and GitHub CLI 2.45.0 (the versions a stock Ubuntu 24.04 machine
-installs). Anything else is not seen yet.
+**Seen to work** (each on a stock virtual machine, with the versions it installs, against a private repository,
+2026-11-22 and 2026-11-23):
+- Ubuntu 24.04.5 LTS: Python 3.12.3, GitHub CLI 2.45.0, systemd 255.
+- Ubuntu 22.04.5 LTS: Python 3.10.12, GitHub CLI 2.4.0, systemd 249.
+- Debian 12: Python 3.11.2, GitHub CLI 2.23.0 (git installed by the person first).
+- Claude Code 2.1.330 as the agent following the skill from a cold start. That is the only version tried.
+
+**Not seen yet:**
+- A laptop: on battery, a closed lid, a laptop's own sleep, a change of network. These are tested, and seen only
+  in a virtual machine.
+- An account whose GitHub Actions start no jobs. `look`'s check for it is tested, not seen on such an account.
+- GitHub's own removal of a runner after 14 days offline. Seen only with the removal made by hand.
+- A repository really turned public with a runner on it. Seen only with the privacy read made to answer "public";
+  turning a repository public with a runner on it is not done, by rule.
+- GitHub's API limit running out while the tool works.
+- Other Linux distributions, macOS, Windows, other agents.
 
 ## What GitHub charges
 
