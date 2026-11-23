@@ -75,6 +75,9 @@ class Skill(unittest.TestCase):
                      "says yes", "never merges", "merge it yourself", "--include-job <file>:<job>",
                      "never press Agree or Accept"):
             self.assertIn(must, persons, must)
+        # R81: a computer without git (a stock Debian): installing it is the person's step, named with its command
+        self.assertIn("installing it is the person's step", flat(t))
+        self.assertIn("sudo apt update && sudo apt install git", flat(t))
 
     def test_G8_10_a_persons_step_is_never_done_another_way(self):
         persons = flat(section(text(), "The person's steps"))
