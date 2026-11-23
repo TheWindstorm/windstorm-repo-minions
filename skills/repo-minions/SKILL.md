@@ -125,19 +125,20 @@ their go before setup. These are what they carry; if one is missing, say it in t
 `move` ends with its own numbered `tell the person` block, just before it asks the person to merge. Paste it the
 same way, whole, before you ask for the merge. Each line is said where it matters, not all at the start. It carries:
 
-- **Restarts and sleep.** "A restart of this computer cancels the job running on it. A short sleep only delays it;
-  a sleep of more than about 10 minutes fails it on GitHub. A job waits at most 24 hours for a runner before GitHub
-  cancels it."
-- **Waiting checks.** "While your computer is held, asleep or off, your checks wait. GitHub cancels a check that
-  waited 24 hours."
+- **Waiting checks.** "While this computer is off, asleep or held, your checks wait, and GitHub cancels a check
+  that has waited 24 hours."
+- **Restarts and sleep.** "A restart of this computer cancels the job running on it, a short sleep only delays it,
+  and a sleep of more than about 10 minutes fails it on GitHub, which `status` names as cut, not as your test
+  failing; while a job runs, this computer does not fall asleep by itself, but a sleep you ask for, the lid or a low
+  battery still puts it to sleep, about N seconds later." Give the delay move's numbered block names for this
+  computer, not a number of your own. The tool takes two locks during a job: one that holds only the computer's own
+  idle sleep, and one that puts off a requested sleep by the short delay the system allows. It never holds the lid
+  switch, the power or sleep keys, a shutdown, or a sleep someone asks for.
 - **A job's tools.** "A job here has only the tools installed on this computer: a job that stops with "command not
   found" needs that tool installed here."
-- **Sleep.** "While a job runs, this computer does not fall asleep by itself. A sleep you ask for, the lid, or a
-  low battery still puts it to sleep, about N seconds later." Give the delay move's numbered block names for this
-  computer, not a number of your own. "A job cut that way is named as cut, not as your test failing." The tool takes
-  two locks during a job: one that holds only the computer's own idle sleep, and one that puts off a requested sleep
-  by the short delay the system allows. It never holds the lid switch, the power or sleep keys, a shutdown, or a
-  sleep someone asks for.
+
+The same lines open the move pull request's own description, so the person reads them again on the page where they
+decide to merge.
 
 When `status` names a job this computer's memory limit stopped, it ends with one `tell the person` line: paste it.
 ## Cost

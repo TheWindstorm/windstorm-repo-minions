@@ -1907,7 +1907,7 @@ class G4(unittest.TestCase):
         self.assertIn("--mode=delay", M.INHIBIT_SLEEP_DELAY)
         with open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")) as f:
             skill = re.sub(r"\s+", " ", f.read())
-        self.assertIn("A sleep you ask for, the lid, or a low battery still puts it to sleep, about N seconds later.",
+        self.assertIn("a sleep you ask for, the lid or a low battery still puts it to sleep, about N seconds later.",
                       skill)
         self.assertIn("one that puts off a requested sleep by the short delay the system allows", skill)
 
@@ -2156,7 +2156,7 @@ class G4(unittest.TestCase):
         # One processor (the owner's ruling, 2026-11-23): "1 of 1", said plainly, never refused.
         words = M.limits_in_words(M.slice_limits({"cores": 1, "mem": 8 * gib}))
         self.assertTrue(words.startswith("jobs here get at most 1 of this computer's 1 processor and 60 % "), words)
-        self.assertTrue(words.endswith(". This computer has one processor: while a job runs it uses all of it, at "
+        self.assertTrue(words.endswith("; this computer has one processor: while a job runs it uses all of it, at "
                                        "low priority, and everything else here will be slow"), words)
         self.assertNotIn("one processor", M.limits_in_words(M.slice_limits({"cores": 2, "mem": 8 * gib})))
 
@@ -3792,6 +3792,30 @@ class P1a(unittest.TestCase):
         self.assertEqual(M.uninstall(None, everything=True, host=host, gh=gh, out=out, interactive=False), M.EXIT_NEED)
         self.assertIn(f"run `python3 -I {M.tool_path()} uninstall --all` there", out.getvalue().splitlines()[-1])
 
+    def test_G7_15_each_line_on_the_persons_screen_is_one_sentence_and_the_count_is_bound(self):
+        # The owner's word (2026-11-23): twelve lines is a lot to read, so each is one plain sentence, and the count
+        # grows only with a row: eleven, twelve on a laptop.
+        lim = M.slice_limits({"cores": 1, "mem": 8 * 1024 ** 3})  # the longest limits line, one processor
+        for s, n in (({"battery": False}, 11), ({"battery": True}, 12), ({"lid": True}, 12)):
+            lines = M.setup_lines(REPO, {**s, "sleep_delay": 30}, lim)
+            self.assertEqual(len(lines), n, lines)
+            gh, world, host = remove_setup()
+            for every in (True, False):
+                lines += M.uninstall_lines(host, REPO, every, M.load_state(host))
+            for x in lines:
+                self.assertIsNone(re.search(r"[.!?] +[A-Z`(]", x), f"more than one sentence: {x}")
+
+    def test_G7_17_the_move_pull_request_opens_with_moves_lines(self):
+        # The owner's ruling (2026-11-23, row R116): the page the person reads when they decide carries move's own
+        # lines, word for word from one source, above anything else.
+        host, gh = move_host(), MoveGH(G3.FILES)
+        lines = run_move(gh, host)[1]
+        body = next(b for m, p, b in gh.writes if m == "POST" and p.endswith("/pulls"))["body"]
+        said = tells_of(lines)
+        self.assertEqual(len(said), 3, lines)
+        self.assertTrue(body.startswith("## Before you merge\n\n" + "".join(f"- {x}\n" for x in said)), body)
+        self.assertLess(body.index(said[-1]), body.index("This pull request changes only"))
+
     def test_G7_16_a_relayed_block_has_a_head_and_a_foot_line(self):
         # The owner's ruling (2026-11-23, row R113): the instruction travels in the tool's own output, at the head
         # and the foot of each block an agent relays, not only in the skill file.
@@ -3824,8 +3848,8 @@ class P1a(unittest.TestCase):
         tells = [x for x in lines if TELL.match(x)]
         self.assertEqual([TELL.match(x).groups() for x in tells], [("1", "3"), ("2", "3"), ("3", "3")], lines)
         said = " ".join(tells_of(lines))
-        for words in ("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has "
-                      "waited 24 hours.", "A restart of this computer cancels the job running on it", M.JOB_TOOLS):
+        for words in ("While this computer is off, asleep or held, your checks wait, and GitHub cancels a check that "
+                      "has waited 24 hours.", "A restart of this computer cancels the job running on it", M.JOB_TOOLS):
             self.assertIn(words, said)
         last_tell = max(i for i, x in enumerate(lines) if TELL.match(x))
         self.assertEqual(last_tell, len(lines) - 3, lines)
