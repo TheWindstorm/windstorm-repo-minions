@@ -110,6 +110,9 @@ class FakeHost(M.Host):
         with open(path, "wb") as f:
             f.write(self.download)
 
+    def slept_s(self):  # R83: seconds suspended since boot; a test moves it with the clock to stand in for a sleep
+        return getattr(self, "slept", 0.0)
+
     def isatty(self):
         return self.tty
 
@@ -2057,6 +2060,17 @@ class G5(unittest.TestCase):
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
         self.assertIn("warn the watch is not running: its last heartbeat was 16 min ago, at 23:00:00Z (it runs every "
                       "5 min)", lines)
+        # R83: the same 16 minutes, 12 of them asleep (seen on a stock machine): the timer counts only waking time,
+        # so the watch is not called stopped, and no stop line comes first.
+        host.slept = 12 * 60
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+        self.assertIn("ok the watch ran 16 min ago, at 23:00:00Z; this computer slept 12 min since, and the watch's "
+                      "timer counts only waking time: its next pass comes within 5 min of waking time", lines)
+        self.assertFalse([x for x in lines if "the watch is not running" in x], lines)
+        # Asleep only 30 s of the 16 minutes: 15.5 minutes awake with no pass is still a stopped watch.
+        host.slept = 30
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+        self.assertTrue(lines[0].startswith("stop the watch is not running"), lines)
 
     def test_G5_4_a_repository_no_longer_private_gets_no_job_here_and_our_runner_leaves_it(self):
         # Plan 2.0: the watch has no admin rights (G9.7). A job still runs: it finishes (GitHub refuses to remove a
