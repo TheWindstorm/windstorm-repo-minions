@@ -1027,7 +1027,7 @@ def listening_ports(tcp_text: str) -> set[int]:
     return ports
 
 
-def what_lives_here(host: Host, rep: Report) -> dict:
+def what_lives_here(host: Host, rep: Report, show_names: bool = False) -> dict:
     """G1.7: what a job could disturb or be disturbed by. On a shared computer other users' things are counted,
     never named: only what is the person's own is named (their rootless containers, runner services that run as
     them). Port numbers are named; they say nothing of whose they are."""
@@ -1087,14 +1087,17 @@ def what_lives_here(host: Host, rep: Report) -> dict:
     if not ports:
         rep.ok("no port open to the network")
     if out["containers"]:
-        rep.warn(f"{len(out['containers'])} container(s) of yours running: {', '.join(out['containers'][:20])}")
+        # G1.16, rule 18: their names may be the person's projects; counted, named only on `--show-names`.
+        rep.warn(f"{len(out['containers'])} container(s) of yours running: " + (
+            ', '.join(out['containers'][:20]) if show_names else "not named here (`look <owner/repo> --show-names` names them)"))
     if out["shared_containers"]:
         rep.warn(f"{out['shared_containers']} container(s) running on this computer's shared container service "
                  "(not named: they may be another person's)")
     if out["ours"]:
         rep.ok(f"this tool's own runner here: {', '.join(out['ours'])}")
     if out["runners"]:
-        rep.warn(f"{len(out['runners'])} other runner service(s) of yours here: {', '.join(out['runners'][:10])}")
+        rep.warn(f"{len(out['runners'])} other runner service(s) of yours here: " + (
+            ', '.join(out['runners'][:10]) if show_names else "not named here (`look <owner/repo> --show-names` names them)"))
     if out["others_runners"]:
         rep.warn(f"{out['others_runners']} other runner service(s) here that do not run as you (not named)")
     # R72: any port open to the network counts, but the computer's own upkeep (remote login, name service, address
@@ -4641,15 +4644,21 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     shared = {SLICE, f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"}
     # R78 (G1.12): a runner service that runs as neither our runner user nor the person is counted, never named,
     # as look does; and the slice is said to be kept for other runners only when runners of ours are left.
-    named, others = [], 0
+    # G1.16, rule 18: only this tool's own (run as its runner user) are named; the person's own are counted.
+    named, yours, others = [], 0, 0
     for u in (u for u in units if u.startswith("actions.runner.")):
         urc, who = host.run(systemctl("show", "-p", "User", "--value", u))
-        if urc == 0 and who.strip() in (RUNNER_USER, host.user()):
+        if urc == 0 and who.strip() == RUNNER_USER:
             named.append(u)
+        elif urc == 0 and who.strip() == host.user():
+            yours += 1
         else:
             others += 1
-    if named or not others:
+    if named or not (others or yours):
         line("runner services", named)
+    if yours:
+        rep.ok(f"census: {plural(yours, 'runner service')} of yours here that this tool did not make (kept; not "
+               "named: their names may be your projects')")
     if others:
         rep.warn(f"census: {plural(others, 'runner service')} here not running as you or as {RUNNER_USER} "
                  "(not named: they may be another person's; this tool did not make them)")
@@ -4723,7 +4732,8 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
     return rep.code()
 
 
-def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
+def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = None, out=None,
+         show_names: bool = False) -> int:
     host = host or Host()
     gh = gh or GitHub(host)
     rep = Report(out)
@@ -4732,7 +4742,7 @@ def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = N
         return rep.code()
     found: dict = {}
     try:
-        return _look(repo, start, host, gh, rep, found)
+        return _look(repo, start, host, gh, rep, found, show_names)
     finally:
         try:
             record_look(host, repo, rep, found.get("survey"))
@@ -4740,7 +4750,7 @@ def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = N
             rep.warn(f"could not write this look down in {host.state_dir()}: {e}; setup will ask for a new look")
 
 
-def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: dict) -> int:
+def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: dict, show_names: bool = False) -> int:
     if not check_github_cli(host, rep):
         return rep.code()
     if not check_admin(host, rep):
@@ -4763,7 +4773,7 @@ def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: di
     lim = slice_limits(s)
     floor = memory_floor_line(repo, lim)
     (rep.warn if floor else rep.ok)(floor or limits_in_words(lim))
-    lives = what_lives_here(host, rep)
+    lives = what_lives_here(host, rep, show_names)
     s["serves"], s["serves_what"] = lives["serves"], lives["serves_what"]  # R72: setup reads it
     check_workflows(gh, repo, s, rep)
     before_setup_words(repo, s, lim, floor, rep)
@@ -4823,6 +4833,8 @@ def parser() -> Parser:
     lk.add_argument("repo", help="owner/name of a private GitHub repository")
     lk.add_argument("--start-test", action="store_true",
                     help="with your yes: one job on a temporary branch, run on no machine, then deleted")
+    lk.add_argument("--show-names", action="store_true",
+                    help="name the containers and other runner services found here (their names may be your projects')")
     st = sub.add_parser("setup", help="install one runner for one private repository on this computer (Linux)")
     st.add_argument("repo", help="owner/name; needs a look of it on this computer under an hour old")
     st.add_argument("--limits", type=parse_limits, metavar="PROCESSORS,MEMORY%",
@@ -4885,7 +4897,7 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: 
         return EXIT_STOP
     try:
         if a.cmd == "look":
-            return look(a.repo, a.start_test, host=host)
+            return look(a.repo, a.start_test, host=host, gh=gh, out=out, show_names=a.show_names)
         if a.cmd == "setup":
             return setup(a.repo, host=host, limits=a.limits, beside_live=a.beside_live)
         if a.cmd == "drain":
