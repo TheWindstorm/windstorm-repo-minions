@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The start test's read-back asks GitHub up to three times. It says a run or branch is left only when GitHub
+  still answers with it, and says GitHub gave no clear answer when it never did. Before, any answer but "not
+  found" (a 504, or a deletion still finishing) was called left (G1.4, row R82).
 - On a stock Debian 12: `look` reads the login's scopes also from an older GitHub CLI that prints them without
   quotes (before, it said `workflow` was missing; row R79); the computer's own local name resolution port, 5355,
   counts as upkeep, not as something live (row R80); and the skill says that installing `git` on a computer

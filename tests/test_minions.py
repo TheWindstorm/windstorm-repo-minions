@@ -316,6 +316,28 @@ class G1(unittest.TestCase):
             M.start_test.__defaults__ = start_wait
         self.assertIn(("DELETE", f"repos/{REPO}/actions/runs/777"), gh.calls)
         self.assertIn("ok start test: the run and the branch are deleted, read back gone", lines)
+        # 3c. R82: GitHub gives no clear answer on the read-back (a 504, seen on a stock machine): asked again, and a
+        # run GitHub never says is there is not called left.
+        for answers, want in (([504, 504, 404], "ok start test: the run and the branch are deleted, read back gone"),
+                              ([504, 504, 504], "warn start test: deleted run 555, but GitHub gave no clear answer"),
+                              ([200, 404, 404], "ok start test: the run and the branch are deleted, read back gone"),
+                              ([200, 200, 200], "warn start test: could not remove run 555")):
+            later = list(answers)
+            first = {"read": True}
+
+            def run_reads(body):  # the first read is before the delete (the run has finished); then the read-backs
+                if first.pop("read", False):
+                    return 200, {"status": "completed"}
+                return later.pop(0), {"message": "x"}
+            gh = StandIn([], overrides={("GET", f"repos/{REPO}/actions/runs/555"): run_reads,
+                                        ("DELETE", f"repos/{REPO}/actions/runs/555"): (204, None),
+                                        ("DELETE", f"repos/{REPO}/git/refs/heads/BRANCH"): (204, None)})
+            out = io.StringIO()
+            M.cleanup_start_test(gh, linux_host(), REPO, "minions-start-test-abc123", 555, M.Report(out))
+            said = out.getvalue()
+            self.assertTrue(any(x.startswith(want) for x in said.splitlines()), said)
+            if "could not remove" not in want:
+                self.assertNotIn("could not remove", said)
         # 4. The branch cannot be pushed (no workflow scope): said, and the recent runs are read instead.
         gh = StandIn(self.recent, overrides={("POST", f"repos/{REPO}/git/blobs"):
                                              (201, {"sha": "a" * 40}),
