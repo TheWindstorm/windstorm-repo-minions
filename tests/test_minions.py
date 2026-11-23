@@ -370,6 +370,11 @@ class G1(unittest.TestCase):
         self.assertIn("warn 1 other runner service(s) of yours here: actions.runner.o-r.box-r.service", lines)
         self.assertIn("warn 1 other runner service(s) here that do not run as you (not named)", lines)
         self.assertTrue(any("serves something live" in x for x in lines), lines)
+        # Our own runner, after setup, runs as minions-runner: named as ours, never counted as another (P1a).
+        M.save_state(host, {"runners": {"o/q": {"unit": "actions.runner.o-q.box-q.service"}}})
+        _, lines = look(StandIn(self.recent), host)
+        self.assertIn("ok this tool's own runner here: actions.runner.o-q.box-q.service", lines)
+        self.assertFalse(any("do not run as you" in x for x in lines), lines)
 
     def test_G1_8_look_lists_each_jobs_needs_against_the_computer(self):
         wf = """name: ci
