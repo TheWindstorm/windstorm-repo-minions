@@ -1660,6 +1660,20 @@
    "issue": 284,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R119",
+   "seen": "2026-11-23, family rule 23 after a sister skill's bundled program rewrote a person's ssh authorized_keys by its own default; for this skill, a whole-home listing on a stock Ubuntu 24.04 virtual machine at four moments.",
+   "promise": "The skill and every program it starts touch nothing in the person's home outside the places its text names (the clone, the GitHub CLI's own login folder, its notes, the record), kept alike as globs in docs/home-named.txt; before each release a stock machine's whole home is listed at four moments and diffed against them, and any unnamed difference refuses the release.",
+   "codon": "G6.14",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_14_the_places_used_in_the_persons_home_are_named_and_listed_alike",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: the person's whole home listed (type, mode, size, time, sha256, hidden folders) on the stock image, before setup, after a real job ran on it and after uninstall --all; no stock file changed at any moment, ~/.ssh/authorized_keys included, and every difference lay in the clone, ~/.config/gh (the person's own gh auth login), ~/.minions and ~/repo-minions-record. Listed with the lane's own script; later sightings use the family's home_snapshot.py.",
+   "issue": 291,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
