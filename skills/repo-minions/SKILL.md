@@ -13,7 +13,9 @@ user of their own with no admin rights, inside processor and memory limits, and 
 The whole tool is one script: `scripts/minions.py`, two levels above this skill's base directory
 (`<base>/../../scripts/minions.py`). It uses only the Python standard library and the GitHub CLI (`gh`). Run it
 with `python3 -I`. If the file is not there, this skill was installed without its plugin: get it with
-`git clone https://github.com/TheWindstorm/windstorm-repo-minions`.
+`cd ~ && git clone https://github.com/TheWindstorm/windstorm-repo-minions`, in the person's home folder. Nothing
+that `setup` installs runs from the clone, but `status` and `uninstall` are run from it later, and a clone under
+`/tmp` is gone after a restart.
 
 ## The order, always the same
 

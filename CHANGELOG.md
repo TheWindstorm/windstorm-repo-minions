@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The skill names where to clone: the person's home folder. Seen once, over a restart: nothing that `setup`
+  installs ran from a clone under `/tmp`; the watch, the job hooks and the runner came back, and the clone was gone.
 - `look` prints the words for the person as one numbered block (`tell the person 1 of 7:` to `7 of 7:`), and the
   skill says to paste it whole, adding the agent's own words only after it (G7.10). Every `stop` and `need you`
   line names what happened and the one next step (G8.12). A reader that stops reading never cuts a command
