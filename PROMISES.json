@@ -1502,7 +1502,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_12_the_runner_says_the_skill_was_removed_and_the_way_off",
-   "proven": "2026-11-23, two stock Ubuntu 24.04.5 virtual machines: status, run from the tool's copy with the skill's folder deleted, named it gone and the one command that takes the runner off (the overnight soak's machine and run K's); and in run K the watch's own pass wrote the same line to the tool's journal at 22:26:41Z, five minutes after the folder was deleted.",
+   "proven": "2026-11-23, two stock Ubuntu 24.04.5 virtual machines: status, run from the tool's copy with the skill's folder deleted, named it gone and the one command that takes the runner off (the overnight soak's machine and run K's); and in run K the watch's own pass wrote the same line to the tool's journal at 22:26:41Z, on its next pass after the folder was deleted at 22:23:56Z.",
    "issue": 252,
    "moved_why": "",
    "moved_by_person": ""
