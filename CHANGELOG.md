@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- An error answer from GitHub is never taken for "our runner is not listed": `uninstall` deletes nothing here
+  until GitHub, read, no longer lists it; `status` and the hold say "could not be read". `status` says a removal
+  is owed when an idle runner of a repository no longer private is still listed (G6.1, G5.4). Dates in the plan
+  are the day in New York.
 - A removed runner's listener can keep running for a while: `setup` again now stops it before registering
   again (without that, the new registration stayed offline); `status` reads GitHub and the service for a
   repository no longer private instead of repeating the watch's record; a hold GitHub took behind an error answer

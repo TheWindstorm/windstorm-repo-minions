@@ -683,7 +683,7 @@
   },
   {
    "id": "R49",
-   "seen": "2026-11-23, a stock virtual machine: a job came through about 265 s asleep; a job asleep about 865 s was failed by GitHub while the machine still slept.",
+   "seen": "2026-11-22, a stock virtual machine: a job came through about 265 s asleep; a job asleep about 865 s was failed by GitHub while the machine still slept.",
    "promise": "Before setup the person hears that a long sleep during a job fails that job.",
    "codon": "G7.9",
    "owner": "maintainer",
@@ -697,7 +697,7 @@
   },
   {
    "id": "R50",
-   "seen": "2026-11-23, a stock Ubuntu 24.04 virtual machine (systemd 255): the journal says \"Performing sleep operation\", not the older \"Entering sleep state\", and a cut by sleep went unnamed until both were read.",
+   "seen": "2026-11-22, a stock Ubuntu 24.04 virtual machine (systemd 255): the journal says \"Performing sleep operation\", not the older \"Entering sleep state\", and a cut by sleep went unnamed until both were read.",
    "promise": "A cut by sleep is found in both journal wordings.",
    "codon": "G5.7",
    "owner": "maintainer",
@@ -711,7 +711,7 @@
   },
   {
    "id": "R51",
-   "seen": "2026-11-23, the same machine: systemd 255 reports any slice name as loaded, even one that never existed, so a second uninstall stopped on \"minions.slice is still loaded\".",
+   "seen": "2026-11-22, the same machine: systemd 255 reports any slice name as loaded, even one that never existed, so a second uninstall stopped on \"minions.slice is still loaded\".",
    "promise": "A slice is gone when it is inactive and has no file and no drop-in, whatever its load state says.",
    "codon": "G6.4",
    "owner": "maintainer",
@@ -837,7 +837,7 @@
   },
   {
    "id": "R60",
-   "seen": "2026-11-23, a stock Ubuntu 24.04 machine: the job hooks are named in the runner's own settings file (`.env` in its folder), which the runner's user can write, so a job that was allowed to run could change them for later jobs.",
+   "seen": "2026-11-22, a stock Ubuntu 24.04 machine: the job hooks are named in the runner's own settings file (`.env` in its folder), which the runner's user can write, so a job that was allowed to run could change them for later jobs.",
    "promise": "The job hooks are named where only an administrator can change them (a root step in the service's drop-in restores them at every start), and `doctor` reads back that the settings file still names both; the cure for a job that changes the runner's own programs is a fresh runner per job, later.",
    "codon": "G5.15",
    "owner": "maintainer",
@@ -872,7 +872,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "",
-   "proven": "",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 machine and the private proof repository, proven by the owner's word: the watch's own `public` record, GitHub's side out of reach, a real job asking for our labels handed to the runner and refused by the hook in 5 s with no mark; then the labels and the runner taken off GitHub's side once the calls went through, GitHub answering 422 while a job ran, a job asking for our labels staying queued with no runner after the removal, and coming back by `resume --private-again` and `setup`. Steered: the watch's read of privacy, and the label and removal calls withheld for two passes; everything else real. Not seen: a repository really turning public with a runner on it, which is not done by rule.",
    "issue": 99,
    "moved_why": "",
    "moved_by_person": ""

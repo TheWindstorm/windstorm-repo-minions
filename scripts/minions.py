@@ -1951,10 +1951,17 @@ def runner_version(host: Host, folder: str, rep: Report) -> str | None:
     return None
 
 
-def listed_runner(gh: GitHub, repo: str, name: str) -> dict | None:
+def read_runner(gh: GitHub, repo: str, name: str) -> tuple[int, dict | None]:
+    """GitHub's answer and our runner in it. An error answer is not "not listed": GitHub answered errors while it
+    still listed our runner (HTTP 502, seen), and an uninstall that took that for gone left a runner on GitHub."""
     s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
     mine = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == name]
-    return mine[0] if mine else None
+    return s, (mine[0] if mine else None)
+
+
+def listed_runner(gh: GitHub, repo: str, name: str) -> dict | None:
+    """Our runner as GitHub lists it; None when not listed OR not read. Where gone must mean gone: read_runner."""
+    return read_runner(gh, repo, name)[1]
 
 
 def runner_pids(host: Host, folder: str, part: str = "Runner.") -> list[int]:
@@ -2022,7 +2029,10 @@ def start_runner(host: Host, unit: str, folder: str, rep: Report) -> bool:
 def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why: str = "drain") -> dict | None:
     """The hold (Part 7 C3): our runner carries only `minions-held`, so no new job lands on it. Labels kept to lift it."""
     mine = data["runners"][repo]
-    r = listed_runner(gh, repo, mine["name"])
+    s, r = read_runner(gh, repo, mine["name"])
+    if s != 200:
+        rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing was held, nothing else was changed")
+        return None
     if r is None:
         rep.stop(f"GitHub does not list our runner {mine['name']} for {repo}: nothing to hold")
         return None
@@ -2302,10 +2312,13 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         if ps:
             first.append(("stop", public_words(rp, public_now(gh, host, rp, mine)) + ". Anyone's fork can ask a "
                                   "public repository's runner for a job"))
-        r = listed_runner(gh, rp, mine["name"])
+        s_r, r = read_runner(gh, rp, mine["name"])
         gh_at = host.now()
         active, worker, at = computer_side(host, mine)
-        if r is None:
+        if s_r != 200:
+            first.append(("warn", f"GitHub could not be read for {rp}'s runners now (HTTP {s_r}): what this says "
+                                  "of GitHub's side is not read; `status` again later"))
+        elif r is None:
             if mine.get("gone_on_github") or active in ("active", "activating"):
                 first.append(("warn", gone_words(rp, mine)))
         word, sides = both_sides_words(r, gh_at, active, worker, at)
@@ -2673,6 +2686,7 @@ def public_now(gh: GitHub, host: Host, repo: str, mine: dict) -> dict:
         r = next((x for x in (d or {}).get("runners", []) if x.get("name") == mine["name"]), None)
         ps["removed"] = r is None
         ps["labels_off"] = r is None or sorted(x.get("name") for x in r.get("labels", [])) == [HELD_LABEL]
+        ps["owed_idle"] = r is not None and not r.get("busy")
     else:
         ps["unread"] = f"GitHub not read now (HTTP {s}): from the watch's pass"
     rc, active = host.run(systemctl("is-active", mine["unit"]))
@@ -2685,6 +2699,8 @@ def public_words(repo: str, ps: dict) -> str:
             "first step"
             + ("; our runner is off the repository on GitHub's side, so GitHub hands this computer no job of it"
                if ps.get("removed") else
+               "; our runner is still on the repository on GitHub's side, with no job on it: the watch could not "
+               "take it off yet (each pass tries again)" if ps.get("owed_idle") else
                "; our runner is taken off the repository on GitHub's side as soon as no job runs on it (each pass "
                "tries again)")
             + ("" if ps.get("labels_off", True) or ps.get("removed") else "; our labels could not be taken off yet")
@@ -3246,7 +3262,11 @@ def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Repor
     """G6.1, G6.6: the GitHub side goes first. The runner's own removal runs as the runner user, the removal token on
     standard input (INV2); never by entering the runner's home as the person. If it cannot run: GitHub's API deletes
     the runner. Either way, read back that GitHub no longer lists it."""
-    r = listed_runner(gh, repo, mine["name"])
+    s, r = read_runner(gh, repo, mine["name"])
+    if s != 200:
+        rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing on this computer is deleted yet. "
+                 f"Run `uninstall {repo}` again")
+        return False
     if r is None:
         rep.ok(f"GitHub no longer lists {mine['name']} for {repo}")
         return True
@@ -3269,8 +3289,11 @@ def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Repor
         if s not in (204, 404):
             rep.stop(f"GitHub did not remove {mine['name']} (HTTP {s}): nothing on this computer is deleted yet")
             return False
-    if listed_runner(gh, repo, mine["name"]) is not None:
-        rep.stop(f"GitHub still lists {mine['name']} for {repo}: nothing on this computer is deleted yet")
+    s, back = read_runner(gh, repo, mine["name"])
+    if s != 200 or back is not None:
+        rep.stop(f"GitHub still lists {mine['name']} for {repo}: nothing on this computer is deleted yet"
+                 if s == 200 else f"GitHub could not be read back for {repo}'s runners (HTTP {s}): nothing on this "
+                 f"computer is deleted yet. Run `uninstall {repo}` again")
         return False
     rep.ok(f"GitHub no longer lists {mine['name']} for {repo} (" +
            ("the runner's own removal, as the runner user" if own else "removed through GitHub's API") + "), read back")
@@ -3328,7 +3351,12 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
         mine["removing"] = host.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         save_state(host, data)
     folder = mine.get("folder") or ""
-    if listed_runner(gh, repo, mine["name"]) is not None:
+    s, listed = read_runner(gh, repo, mine["name"])
+    if s != 200:
+        rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing is changed. Run `uninstall "
+                 f"{repo}` again")
+        return False
+    if listed is not None:
         if hold_runner(gh, host, repo, data, rep, "removal") is None:
             return False
         state = wait_idle(gh, host, repo, mine, wait_s, poll_s, rep, next_cmd)
