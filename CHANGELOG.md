@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A job killed by our memory limit is said with the limit it was killed under. After a limit change, `status` said
+  the new limit for a job killed under the old one (G5.14, row R93).
 - `uninstall --all` ends a job's sleep hold left behind by a service stopped mid-job, by exact PID, and finishes.
   It stopped on "processes of minions-runner still run" with no way out, though those processes were its own.
   Any other process of the runner user is named with its name, never ended by the tool, and the line says how

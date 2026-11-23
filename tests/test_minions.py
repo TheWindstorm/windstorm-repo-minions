@@ -2604,6 +2604,18 @@ class G5(unittest.TestCase):
                                  "limit (4.0 GB), not by your code failing; GitHub shows it as failed. The one way to "
                                  "change the limit: `setup --limits <processors>,<memory %>`. To run it again, once: "
                                  f"`status {REPO} --rerun 9001`."])
+        # R93: the limit said is the one it was killed under; limits changed after that never rewrite it.
+        d = M.load_state(host)
+        d["runners"][REPO]["limits"]["MemoryMax"] = str(2 * 1024 ** 3)
+        M.save_state(host, d)
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any(x.startswith("warn job 'check'") and "memory limit (4.0 GB)" in x for x in lines), lines)
+        # A job named before the limit was kept: no number, rather than today's.
+        d = M.load_state(host)
+        d["named"]["9001"].pop("limit")
+        M.save_state(host, d)
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any(x.startswith("warn job 'check'") and "memory limit, not by your" in x for x in lines), lines)
         # No kill counted here: the person's own failure, never named.
         host, gh, _ = self._named(f"start {t0} 555 1 1 check\nend {t0 + 70} 555 1 1 check\n", failed)
         self.assertFalse(any(x.startswith("warn job") for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
