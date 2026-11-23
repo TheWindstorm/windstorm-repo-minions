@@ -74,7 +74,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_7_look_names_what_already_lives_on_the_computer",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23: look named the open ports and another user's runner service (counted) at 04:24 and 06:23-06:59 UTC; on a computer serving a web service on a port, setup named it and asked for a yes in words before anything (06:23-06:59 UTC, with row R72's fix).",
    "issue": 11,
    "moved_why": "",
    "moved_by_person": ""
@@ -354,7 +354,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G9_4_fixtures_hold_no_token_no_email_no_real_names",
-   "proven": "",
+   "proven": "Read 2026-11-23 on the main branch: every committed fixture holds no token, only person@example.invalid as an e-mail address, and no account number, node id or numbered avatar address; the G9.4 test refuses each. A read of the repository, not of a machine.",
    "issue": 34,
    "moved_why": "",
    "moved_by_person": ""
@@ -368,7 +368,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_12_other_peoples_things_are_counted_never_named",
-   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 06:23-06:59 UTC: another user's runner service counted and not named; our own runner named as ours.",
+   "proven": "",
    "issue": 35,
    "moved_why": "",
    "moved_by_person": ""
@@ -606,7 +606,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G9_5_scrubbing_never_changes_paths",
-   "proven": "",
+   "proven": "Seen once, 2026-11-23: GitHub's real answer for a commit in the private proof repository whose author and committer were named \"workflows\" and which added docs/workflows/note.txt, recorded and scrubbed by scrub.py: the names became Example Person, the path kept its word (tests/fixtures/path-word-author.jsonl).",
    "issue": 61,
    "moved_why": "",
    "moved_by_person": ""
@@ -690,7 +690,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_9_a_long_sleep_fails_the_job_and_is_said_before_setup",
-   "proven": "",
+   "proven": "Seen, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23: a job failed on GitHub while the computer slept about 14 minutes (the night of 2026-11-22); before setup look said that a sleep of more than about 10 minutes fails the job, and an agent passed it on (08:00 and 08:13 UTC).",
    "issue": 83,
    "moved_why": "",
    "moved_by_person": ""
@@ -1084,6 +1084,20 @@
    "test": "test_G1_10_no_github_cli_or_login_is_the_first_need_you",
    "proven": "",
    "issue": 150,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R78",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine where another user ran a runner service: look counted it without naming it, but uninstall's census named its unit, and kept the slice and the watch \"for the other runners here\" with no runner of this tool left. Found on rereading the log; R26's proven line, written from the same run, was taken back.",
+   "promise": "uninstall's census counts a runner service that runs as neither our runner user nor the person, never naming it, as look does; it says the slice and the watch are kept for this tool's other runners only when runners of ours are left.",
+   "codon": "G1.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_12_other_peoples_things_are_counted_never_named",
+   "proven": "",
+   "issue": 154,
    "moved_why": "",
    "moved_by_person": ""
   }
