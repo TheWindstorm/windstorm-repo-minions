@@ -2275,6 +2275,17 @@ class G9Version(unittest.TestCase):
             top = next(x for x in f if x.startswith("## "))[3:].strip()
         if top != "Unreleased":
             self.assertEqual(top.split()[0], M.VERSION, "the changelog's top entry and the tool")
+        # The owner's ruling (2026-11-23, rule 16 as corrected): a clone of this repository named in the README or
+        # the skill names its branch, never main; once a version is released it is that version's tag (or, before
+        # the tag, its release branch), so the line cannot drift at the next release.
+        for rel in ("README.md", os.path.join("skills", "repo-minions", "SKILL.md")):
+            with open(os.path.join(root, rel), encoding="utf-8") as f:
+                clones = re.findall(r"git clone ([^`]*?)https://github\.com/TheWindstorm/windstorm-repo-minions", f.read())
+            for opts in clones:
+                if M.VERSION == "0.0.0":
+                    continue  # before the first release: main's README has no install lines (rule 15)
+                self.assertIn(opts.strip(), (f"--branch v{M.VERSION}", f"--branch release-{M.VERSION}"),
+                              f"{rel}: a clone line names this version's tag or release branch, never main")
 
 
 class G5(unittest.TestCase):
