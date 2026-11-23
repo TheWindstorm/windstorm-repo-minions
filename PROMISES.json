@@ -1706,7 +1706,7 @@
   {
    "id": "R122",
    "seen": "2026-11-23, family rule 24 (installed is not running), after a sister skill's service kept running older code after an update. Here: doctor reads GitHub's runner version from the file on disk (`bin/Runner.Listener --version`); GitHub's runner updates itself, so a listener not yet restarted can run older code than the one installed. The watch is a timer that starts a fresh process of the installed copy on each pass, so for it installed is running.",
-   "promise": "doctor and status name the version of the runner that is running, read by a read-only probe of the running listener (its executable's path, /proc/<pid>/exe, names the bin.<version> folder it started from), beside the installed one, and say so when the two differ; when the running one cannot be read, they say that, never the installed one in its place.",
+   "promise": "Each running part says the version it runs where a read-only probe finds it, and doctor and status say it in rule 6's three answers (seen X, seen older, not yet readable; the third never counted as the first): GitHub's runner, from the running listener itself (its executable's path, /proc/<pid>/exe, names the bin.<version> folder it started from), beside the version installed on disk; the watch, by each pass writing the tool version it ran into the tool's notes; the job hooks, by each job's line in the jobs log carrying the tool version that wrote the hook. A test holds each.",
    "codon": "G4.11",
    "owner": "maintainer",
    "first_ship_in": "0.1.1",
