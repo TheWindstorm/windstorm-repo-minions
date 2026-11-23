@@ -1586,6 +1586,19 @@ class G4(unittest.TestCase):
         self.assertNotIn("--mode=block --who", " ".join(M.INHIBIT_SLEEP_DELAY))
         self.assertEqual(script.count("'systemd-inhibit'"), 2)  # the two locks it starts, nothing else
 
+    def test_G11_3_sleep_is_put_off_during_a_job_where_the_os_allows(self):
+        # Linux: during a job, a delay lock on sleep (never a block), taken by the job-start hook and let go with the
+        # job; the skill names what is not put off beyond that delay: a sleep asked for, the lid, a low battery.
+        script = M.job_started_script(FOLDER)
+        self.assertIn(M.sh_quote(M.INHIBIT_SLEEP_DELAY[:3]), script)
+        self.assertIn("--what=sleep", M.INHIBIT_SLEEP_DELAY)
+        self.assertIn("--mode=delay", M.INHIBIT_SLEEP_DELAY)
+        with open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")) as f:
+            skill = re.sub(r"\s+", " ", f.read())
+        self.assertIn("A sleep you ask for, the lid, or a low battery still puts it to sleep, about N seconds later.",
+                      skill)
+        self.assertIn("one that puts off a requested sleep by the short delay the system allows", skill)
+
     def test_G4_5_runner_self_update_stays_on_and_is_reported(self):
         self.assertNotIn("--disableupdate", M.CONFIG_SCRIPT)
         host, sha = setup_host()
@@ -2360,6 +2373,27 @@ class G5(unittest.TestCase):
         code, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=1234)
         self.assertEqual((code, gh.reruns), (M.EXIT_STOP, [9001]))
         self.assertIn("stop job 1234 is not one this computer cut or its limit stopped: nothing was run again", lines)
+
+    def test_G11_5_a_job_cut_by_sleep_is_named_and_offered_again(self):
+        # After a wake: a job the sleep cut is named as cut by the sleep (both sides agree), offered once, and run
+        # again once on the person's word (as G5.7).
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        rec = f"start {t0} 555 1 0 check\nend {t0 + 900} 555 1 0 check\n"
+        cut = {"conclusion": "failure", "steps": self.CUT_STEPS}
+        slept = {("journalctl", "-u", "systemd-suspend.service"):
+                 (0, "%d.8 box-1 systemd-sleep[9]: Performing sleep operation 'suspend'...\n" % (t0 + 40))}
+        host, gh, _ = self._named(rec, cut, slept)
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertIn("warn job 'check' (run 555, started 22:40:00Z) was cut by this computer going to sleep, not a "
+                      "failing test of yours; GitHub shows it as failed. To run it again, once: "
+                      f"`status {REPO} --rerun 9001`.", lines)
+        code, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=9001)
+        self.assertEqual(gh.reruns, [9001])
+        code, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=9001)
+        self.assertEqual((code, gh.reruns), (M.EXIT_STOP, [9001]))
+        # A job that came through the same sleep (GitHub: success) is not named.
+        host, gh, _ = self._named(rec, {"conclusion": "success", "steps": []}, slept)
+        self.assertFalse([x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1] if x.startswith("warn job")])
 
     def test_G5_14_a_job_killed_by_our_limit_is_named_as_such(self):
         t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
