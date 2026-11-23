@@ -3378,6 +3378,30 @@ class G6(unittest.TestCase):
         self.assertTrue(any("was not recorded" in x and "put it back by hand" in x for x in lines), lines)
         self.assertEqual(gh.blobs(), [])
 
+    def test_G6_13_the_census_names_the_folder_the_skill_was_downloaded_into(self):
+        # Seen 2026-11-23 (run J, row R117): the census said nothing of the clone, and the agent filled the silence
+        # by offering to delete it. After `uninstall --all` the census names it: there and whose, gone, or not known.
+        clone = "/home/person/windstorm-repo-minions"
+        plugin = "/home/person/.claude/plugins/cache/the-windstorm/repo-minions/0.1.0"
+        for root, there, said in ((clone, True, f"ok census: the folder this skill was downloaded into: {clone}, still "
+                                                "there; it is yours to keep or delete, and this tool does not touch it"),
+                                  (clone, False, f"ok census: the folder this skill was downloaded into ({clone}): gone"),
+                                  (plugin, True, "it is Claude Code's plugin folder, and Claude Code's own `plugin "
+                                                 "uninstall` takes it"),
+                                  (None, None, "not known on this computer")):
+            gh, world, host = remove_setup()
+            if root:
+                d = M.load_state(host)
+                d["skill_folder"] = root
+                M.save_state(host, d)
+                if there:
+                    host.dirs[root] = ["skills"]
+            code, lines = run_uninstall(gh, host, everything=True)
+            line = next(x for x in lines if "census: the folder this skill was downloaded into" in x)
+            self.assertIn(said, line)
+            self.assertTrue(lines[-1].startswith("ok census: your record"), lines[-2:])  # the record stays last
+            self.assertNotIn("rm ", line)  # no delete command is printed for it
+
     def test_G6_3_uninstall_ends_with_a_census(self):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host)
@@ -3389,8 +3413,9 @@ class G6(unittest.TestCase):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host, everything=True)
         census = [x for x in lines if "census:" in x]
-        self.assertEqual(len(census), 7, census)
-        self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census[:-1]), census)
+        self.assertEqual(len(census), 8, census)  # G6.13: the skill's own folder is named too (here: not known)
+        self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census[:-2]), census)
+        self.assertTrue(census[-2].startswith("warn census: the folder this skill was downloaded into"), census)
         # Rule 8: the census is the last thing printed; it names this tool's state folder, and last the person's
         # record, kept (G6.10).
         self.assertIn("ok census: this tool's state folder: none", census)

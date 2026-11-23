@@ -1600,7 +1600,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G3_7_verify_counts_a_job_on_another_computer_of_ours",
-   "proven": "",
+   "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine beside a second computer of ours serving the same proof repository. Unsteered: the moved job ran here and verify said \"this computer\". Steered (the maintainer's word: the workflow put back by hand, move again, this computer's runner held, merge then verify): the job ran on the other computer and verify said \"moved: .github/workflows/ci.yml job check ran on minions-stock-noble-s (another computer of yours with this tool's runner)\", and its last line named it.",
    "issue": 272,
    "moved_why": "",
    "moved_by_person": ""
@@ -1630,6 +1630,20 @@
    "test": "test_G7_17_the_move_pull_request_opens_with_moves_lines",
    "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine: the move pull request (#25 in the proof repository) opened with move's three lines, word for word, above everything else; the person read it and merged.",
    "issue": 275,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R117",
+   "seen": "2026-11-23, run J, the smallest model on a stock Ubuntu 24.04 virtual machine: after uninstall --all the census said nothing about the folder the skill was downloaded into, and the agent offered to delete it, a step the tool never printed.",
+   "promise": "After uninstall --all the census names the folder the skill was downloaded into: still there, where, and whose it is to delete; or gone; or not known on this computer. It prints no command to delete it.",
+   "codon": "G6.13",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_13_the_census_names_the_folder_the_skill_was_downloaded_into",
+   "proven": "",
+   "issue": 279,
    "moved_why": "",
    "moved_by_person": ""
   }
