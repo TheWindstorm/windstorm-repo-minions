@@ -87,11 +87,13 @@ class Skill(unittest.TestCase):
         self.assertIn("give them exactly as printed: add nothing inside them (no other time zone, no conversion, "
                       "no comment)", lines)
         self.assertIn("Your own explanation is never presented as the tool's", lines)
-        self.assertIn("| `tell the person` | words the person must hear | say them to the person exactly as printed",
-                      lines)
+        self.assertIn("| `tell the person N of M` | words the person must hear | paste the whole block, 1 of M to M of M, "
+                      "as printed", lines)
         before = flat(section(text(), "Before setup"))
-        self.assertIn("look's last lines are `tell the person` lines. Say each one to the person, exactly as printed",
-                      before)
+        # Run B again: a small model shortened the block under the word "verbatim"; the block is pasted whole.
+        self.assertIn("Paste them to the person as they are, as one block, all of them, numbers included: never "
+                      "shortened, merged, reworded or left out. Add your own words only after the block, never inside "
+                      "it.", before)
 
     def test_G8_8_the_skill_says_waiting_is_not_done(self):
         w = flat(section(text(), "Waiting"))

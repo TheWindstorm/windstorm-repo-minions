@@ -21,7 +21,8 @@ Run the steps in this order. Do not skip one, and do not start the next while th
 `need you` or `waiting`.
 
 1. **look**: `minions.py look <owner/repo>`, then, with the person's yes, `minions.py look <owner/repo> --start-test`.
-2. **tell**: say look's `tell the person` lines to the person, exactly as printed (see "Before setup" below).
+2. **tell**: paste look's `tell the person` lines to the person as one block, all of them, as printed (see
+   "Before setup" below).
 3. **setup**: `minions.py setup <owner/repo>`.
 4. **move**: `minions.py move <owner/repo>`.
 5. **verify**: after the person merged, `minions.py move <owner/repo> --verify`.
@@ -44,7 +45,7 @@ never presented as the tool's.
 | `stop` | nothing more was done | tell the person why and what the line says to do; do not go on |
 | `need you` | a step that is the person's | ask the person to do it; wait for them |
 | `waiting` | not done yet: the tool is waiting for something, with a deadline | see "Waiting" below |
-| `tell the person` | words the person must hear | say them to the person exactly as printed, before the next step |
+| `tell the person N of M` | words the person must hear | paste the whole block, 1 of M to M of M, as printed, before the next step |
 
 The exit code is the worst line's:
 
@@ -92,8 +93,10 @@ folder).
 
 ## Before setup
 
-look's last lines are `tell the person` lines. Say each one to the person, exactly as printed, before running
-setup, then wait for their go. These are what they carry; if one is missing, say it in these words:
+look's last lines are `tell the person` lines, numbered `tell the person 1 of 7:` to `7 of 7:`. Paste them to the
+person as they are, as one block, all of them, numbers included: never shortened, merged, reworded or left out.
+Add your own words only after the block, never inside it. Then wait for their go before setup. These are what
+they carry; if one is missing, say it in these words:
 
 - **What a job can reach.** Name what look listed: the secrets a job can read (names only) and what already runs
   on this computer. Then say: "Anyone who can push to this repository can run code on this computer."
