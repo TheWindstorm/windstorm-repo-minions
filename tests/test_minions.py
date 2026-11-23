@@ -2005,6 +2005,14 @@ class G5(unittest.TestCase):
         line = next(x for x in run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline"))[1]
                     if x.startswith("warn minions-box-1 for"))
         self.assertIn(": not ready.", line)
+        # R84 (seen with the runner's listener paused during a job): GitHub says offline and busy while a job process
+        # runs here: the two sides disagree, as a warn, never "ok ... busy".
+        host, _ = g5_host(worker=True)
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(status="offline", busy=True))[1]
+        line = next(x for x in lines if "minions-box-1 for" in x)
+        self.assertTrue(line.startswith(f"warn minions-box-1 for {REPO}: the two sides disagree."), line)
+        self.assertIn("GitHub says offline, busy", line)
+        self.assertIn("a job process runs (4321)", line)
 
     def test_G5_1_status_never_begins_with_ok_while_a_job_waits_on_a_runner_that_cannot_take_it(self):
         # P2, 2026-11-23: the runner offline, a job waiting, and status began `ok minions-stock-vm ...: not ready`.

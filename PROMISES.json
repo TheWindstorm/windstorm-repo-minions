@@ -1170,6 +1170,20 @@
    "issue": 163,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R84",
+   "seen": "2026-11-23, a stock Ubuntu 22.04 virtual machine, the runner's listener paused (SIGSTOP) during a job to hold one side back: status said `ok ... busy` while GitHub said offline and busy and a job process ran here.",
+   "promise": "status says busy only when GitHub says online and busy and a job process runs here; GitHub showing the runner offline while a job runs here is said as the two sides disagreeing, as a warn.",
+   "codon": "G5.2",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_2_idle_only_when_both_sides_agree",
+   "proven": "",
+   "issue": 166,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
