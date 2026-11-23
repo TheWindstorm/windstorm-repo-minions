@@ -55,7 +55,11 @@ jobs before their first step, and the check takes the runner off that repository
 - **That user.** It has no admin rights, and it cannot open your home folder.
 - **A boot service** that runs the runner as that user. It is capped by default at half your processors and 60 % of
   your memory; on a computer with one processor that is all of it, and `look` says so plainly. `setup` tells you the real numbers before it installs, and `setup OWNER/NAME --limits PROCESSORS,MEMORY%` changes
-  them.
+  them, also on a runner already set up. A job that needs more memory than its cap fails when it reaches the cap,
+  by name, instead of running slowly: on GitHub the run shows a failed step ("Process completed with exit code
+  137"), and `status` on this computer says the memory cap stopped it, not your code, with the command that raises
+  the cap. Jobs are kept out of your swap where this computer holds that: `setup` says whether it does, and
+  `doctor` tells you if it ever stops.
 - **Two small scripts the runner calls around each job.** They empty the job's folder afterwards and keep the
   computer from falling asleep on its own during the job. A sleep you ask for, or closing the lid, still happens.
 - **A check every 5 minutes.** It keeps the runner ready, holds it when something is wrong, and tells `status`.
