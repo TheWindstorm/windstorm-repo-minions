@@ -5,6 +5,7 @@ tests/fixtures/scrub.py); the computer by FakeHost. Run: python tests/test_minio
 """
 import atexit
 import copy
+import importlib.util
 import hashlib
 import io
 import json
@@ -2854,6 +2855,40 @@ def run_uninstall(gh, host, repo=REPO, **kw):
 
 
 class G6(unittest.TestCase):
+    def test_G6_11_the_tools_own_copy_alone_runs_uninstall_all_to_the_end(self):
+        # Rule 8 (2026-11-23): a person may leave by Claude Code's own `plugin uninstall`, which leaves our runner
+        # and watch running by design. The one command that takes them off runs from the copy setup installed,
+        # with the plugin's folder gone: a lone file, standard library only.
+        src = os.path.join(ROOT, "scripts", "minions.py")
+        with tempfile.TemporaryDirectory(dir=TMP) as alone:
+            copy = os.path.join(alone, "minions.py")
+            shutil.copy(src, copy)
+            for argv in (["--help"], ["uninstall", "--help"]):
+                p = subprocess.run([sys.executable, "-I", copy, *argv], cwd=alone, capture_output=True, text=True,
+                                   timeout=60)
+                self.assertEqual(p.returncode, 0, p.stderr)
+            spec = importlib.util.spec_from_file_location("minions_copy", copy)
+            M2 = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(M2)
+            self.assertEqual(M2.TOOL_COPY, "/usr/local/lib/windstorm-repo-minions/minions.py")
+            gh, world, host = remove_setup()
+            out = io.StringIO()
+            code = M2.uninstall(None, everything=True, host=host, gh=gh, out=out, interactive=False)
+            lines = out.getvalue().splitlines()
+            self.assertEqual(code, M.EXIT_NEED, lines)  # to the end: only the put-back pull request is the person's
+            self.assertTrue(lines[-1].startswith("ok census:"), lines[-3:])
+            self.assertIsNone(gh.runner)
+        with open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md"), encoding="utf-8") as f:
+            skill = " ".join(f.read().split())
+        self.assertIn("plugin uninstall", skill)
+        self.assertIn(f"`python3 -I {M.TOOL_COPY} uninstall --all`", skill)
+        # The release branch's README says it too (main's says nothing can be installed yet).
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f:
+            readme = " ".join(f.read().split())
+        if "nothing can be installed yet" not in readme:
+            self.assertIn("plugin uninstall", readme)
+            self.assertIn(f"python3 -I {M.TOOL_COPY} uninstall --all", readme)
+
     def test_G6_1_uninstall_takes_a_runner_away_on_both_sides(self):
         gh, world, host = remove_setup(busy=(True, True, True, False))
         code, lines = run_uninstall(gh, host, wait_s=600, poll_s=10)
