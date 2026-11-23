@@ -807,6 +807,37 @@ def run_doctor(host, sha, **kw):
 
 
 class G2(unittest.TestCase):
+    def test_G6_12_the_runner_says_the_skill_was_removed_and_the_way_off(self):
+        # The family's rule 8 (2026-11-23, 12:56 PM ET): a runner is what the person set up, so it goes on after
+        # Claude Code's own `plugin uninstall`, and its own report says so, with the one command that takes it off.
+        host, sha = doctor_world()
+        root = M.load_state(host)["skill_folder"]
+        self.assertEqual(root, ROOT)  # where setup ran from: the skill's folder, not the copy
+        status = lambda: run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))[1]
+        host.dirs[root] = []
+        self.assertFalse(any("skill's folder" in x for x in status()))  # there: nothing to say
+        way_off = f"`python3 -I {M.TOOL_COPY} uninstall --all`"
+        host.files[os.path.join(root, ".orphaned_at")] = "1795455000000"
+        line = next(x for x in status() if "skill's folder" in x)
+        self.assertTrue(line.startswith("warn ") and "is marked by Claude Code as removed" in line, line)
+        self.assertIn("go on taking your repository's jobs", line)
+        self.assertIn(way_off, line)
+        del host.files[os.path.join(root, ".orphaned_at")]
+        del host.dirs[root]
+        line = next(x for x in status() if "skill's folder" in x)
+        self.assertIn("is gone", line)
+        self.assertIn(way_off, line)
+        # The watch says it in its own log, once, when it changes.
+        for _ in range(2):
+            M.watch(host=host, gh=setup_gh(sha), out=io.StringIO())
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            self.assertEqual(sum("skill's folder" in x and "is gone" in x for x in f), 1)
+        # Could not be read is a third answer (rule 6), never "gone".
+        host.there = lambda path: None
+        line = next(x for x in status() if "skill's folder" in x)
+        self.assertIn("could not be read", line)
+        self.assertNotIn("is gone", line)
+
     def test_G4_10_doctor_and_status_name_an_older_copy_running_the_watch(self):
         # Found 2026-11-23 (row R101): after the plugin updates, the watch runs the copy setup installed until setup
         # runs again; nothing said so.

@@ -2890,6 +2890,28 @@ def copy_version_line(host: Host) -> tuple[str, str]:
                        "with this one to put its copy back"))
 
 
+def skill_folder_line(host: Host, data: dict) -> tuple[str, str] | None:
+    """G6.12 (R107, rule 8): the runner is what the person set up, so it goes on after Claude Code's own
+    `plugin uninstall`; status says the skill is gone and names the one command that takes the runner off. None while
+    the skill's folder is there. Three answers (rule 6): there, gone or marked removed, could not be read."""
+    root = data.get("skill_folder")
+    if not root:
+        return None
+    there = host.there(root)
+    marked = None if there is None else (False if there is False else
+                                         (host.there(os.path.join(root, ".orphaned_at")) or
+                                          host.there(os.path.join(os.path.dirname(root), ".orphaned_at"))))
+    if there is None or (there and marked is None):
+        return "warn", (f"whether the skill's folder ({root}) is still there could not be read; if you removed the "
+                        f"skill, `python3 -I {TOOL_COPY} uninstall --all` takes the runner off")
+    if there and not marked:
+        return None
+    what = "is gone" if there is False else "is marked by Claude Code as removed"
+    return "warn", (f"the skill's folder ({root}) {what}, as after Claude Code's own `plugin uninstall`: this runner "
+                    "and its watch go on taking your repository's jobs, as you set them up. The one command that takes "
+                    f"them off, in your own terminal: `python3 -I {TOOL_COPY} uninstall --all`")
+
+
 def watch_heartbeat(data: dict, now: dt.datetime, slept_now: float | None = None) -> tuple[bool, str]:
     """G5.3: a heartbeat older than three intervals of waking time is "the watch is not running". R83: the watch's
     timer counts only waking time, so time this computer slept since the last pass is not counted against it."""
@@ -3007,6 +3029,9 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
     ok_, words = watch_heartbeat(data, now, host.slept_s())
     rest.append(("ok" if ok_ else "warn", words))
     rest.append(copy_version_line(host))  # G4.10: a watch running older code is said
+    gone = skill_folder_line(host, data)  # G6.12: the skill removed, the runner goes on, said with the way off
+    if gone:
+        first.append(gone)
     w = data.get("watch") or {}
     every = int(w.get("every_s") or WATCH_EVERY_S)
     for rp in repos:  # G5.15: a blind watch is a stop line, first, never "ok"
@@ -3299,6 +3324,11 @@ def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
         w["blind"] = {rp: {"why": why, "passes": (old.get(rp) or {}).get("passes", 0) + 1,
                            "since": (old.get(rp) or {}).get("since") or stamp(host.now())} for rp, why in blind.items()}
     cost_weekly(host, data)
+    gone = skill_folder_line(host, data)  # G6.12: said in the watch's own log when it changes
+    w["skill_folder"] = gone[1] if gone else ""
+    if w["skill_folder"] != ((data.get("watch") or {}).get("skill_folder") or ""):
+        if gone:
+            said.append(gone[1])
     data["watch"] = w
     save_state(host, data)
     journal(host, "watch", "; ".join(said) or "no runner of ours here")
@@ -3635,6 +3665,8 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
     data = load_state(host)
     data["watch"] = dict(data.get("watch") or {}, every_s=every_s)
     data["programs"] = found
+    if os.path.abspath(src) != TOOL_COPY:  # G6.12: where the skill lives, so status can say when it is gone
+        data["skill_folder"] = os.path.dirname(os.path.dirname(os.path.abspath(src)))
     save_state(host, data)
     rep.ok(f"the watch runs every {every_s // 60} minutes as you (a system timer, read back); `status` says when it "
            f"last ran. The programs it runs by name are found where this terminal finds them (gh: {found['gh']})")
