@@ -1729,8 +1729,13 @@ class G5(unittest.TestCase):
         run_cmd(M.watch, host=host, gh=gh)
         self.assertNotIn(("DELETE", f"repos/{REPO}/actions/runners/7"), gh.calls[n:], "removed once")
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(private=False, listed=False))[1]
-        self.assertIn("our runner is off the repository on GitHub's side, so no job is handed to this computer",
-                      lines[0])
+        self.assertIn("our runner is off the repository on GitHub's side, so GitHub hands this computer no job of it"
+                      "; its service here is active (a removed runner's listener can wait idle", lines[0])
+        self.assertNotIn("stopped its own service", lines[0])  # it may not have (seen): status reads the service
+        host.runs[("systemctl", "is-active")] = (3, "inactive\n")
+        lines = run_cmd(M.status, REPO, host=host, gh=StatusGH(private=False, listed=False))[1]
+        self.assertIn("; its service here is inactive; a job already running", lines[0])
+        host.runs[("systemctl", "is-active")] = (0, "active\n")
         # Coming back after the removal: the person's word, GitHub says private, then `setup` registers again.
         host._answer = host.answer_with_sudo
         code, lines = run_cmd(M.resume, REPO, host=host, gh=StatusGH(private=True, listed=False), private_again=True)
@@ -1787,6 +1792,36 @@ class G5(unittest.TestCase):
         self.assertEqual(gh.puts[-1], (REPO, ["minions", "minions-medium"]))
         self.assertNotIn("public_stop", M.load_state(host3)["runners"][REPO])
         self.assertTrue(host3.files[M.seen_path(FOLDER)].strip().isdigit())  # resume read it private: a fresh time
+
+    def test_G5_4_what_github_took_is_read_back_never_assumed(self):
+        # Seen: GitHub answered the label change with an error (HTTP 502) and had taken it. The hold reads back.
+        class ErrorButTaken(StatusGH):
+            def api(self, method, path, body=None):
+                st, d = super().api(method, path, body)
+                return (502, {"message": "Server Error"}) if method == "PUT" else (st, d)
+        host, clock = g5_host(worker=True)
+        refuse_sudo(host)
+        gh = ErrorButTaken(private=False, busy=True)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(gh.r[REPO]["labels"], ["minions-held"])
+        self.assertTrue(M.load_state(host)["runners"][REPO]["public_stop"]["labels_off"])
+        # status reads GitHub now, not the watch's record: the record says "not taken off", GitHub lists it held.
+        data = M.load_state(host)
+        data["runners"][REPO]["public_stop"]["labels_off"] = False
+        M.save_state(host, data)
+        host._answer = host.answer_with_sudo
+        gh2 = StatusGH(private=False, busy=True)
+        gh2.r[REPO]["labels"] = ["minions-held"]
+        lines = run_cmd(M.status, REPO, host=host, gh=gh2)[1]
+        self.assertNotIn("could not be taken off", lines[0])
+        gh3 = StatusGH(private=False, busy=True)  # GitHub lists our labels on it: said
+        self.assertIn("our labels could not be taken off yet", run_cmd(M.status, REPO, host=host, gh=gh3)[1][0])
+        # GitHub not reached: the watch's record, and said so.
+        class Unread(StatusGH):
+            def api(self, method, path, body=None):
+                return (0, None) if "/actions/runners" in path else super().api(method, path, body)
+        self.assertIn("(GitHub not read now (HTTP 0): from the watch's pass)",
+                      run_cmd(M.status, REPO, host=host, gh=Unread(private=False))[1][0])
 
     def test_G5_6_drain_ends_with_online_and_idle_read(self):
         host, clock = g5_host()
@@ -1857,6 +1892,13 @@ class G5(unittest.TestCase):
         configs = [a for a in host2.ran if M.CONFIG_SCRIPT in a]
         self.assertEqual(len(configs), 1)
         self.assertEqual(configs[0][-2:], ("minions-box-1", "minions,minions-medium"))
+        # The old listener can still run, idle, after GitHub dropped it (seen): stopped before the new registration,
+        # or it keeps the service and the new registration never connects (seen); started after.
+        stop = ("sudo", "-n", "systemctl", "stop", UNIT, "--no-pager")
+        start = ("sudo", "-n", "systemctl", "start", UNIT, "--no-pager")
+        self.assertIn(stop, host2.ran)
+        self.assertLess(host2.ran.index(stop), host2.ran.index(configs[0]))
+        self.assertLess(host2.ran.index(configs[0]), len(host2.ran) - 1 - host2.ran[::-1].index(start))
         self.assertFalse(any("tar" in a for a in host2.ran))
         self.assertNotIn("gone_on_github", M.load_state(host2)["runners"][REPO])
         self.assertTrue(lines[-1].startswith("ok both sides"), lines)
