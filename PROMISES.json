@@ -1096,7 +1096,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_12_other_peoples_things_are_counted_never_named",
-   "proven": "Seen once on the fix, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 09:01-09:03 UTC, with another user's runner service running: the census after uninstall and after uninstall --all counted it and named none, the slice line said kept until uninstall --all, and the other user's service stayed active.",
+   "proven": "Seen once on the fix, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 09:00 UTC, with another user's runner service running: the census after uninstall and after uninstall --all counted it and named none, the slice line said kept until uninstall --all, and the other user's service stayed active.",
    "issue": 154,
    "moved_why": "",
    "moved_by_person": ""
