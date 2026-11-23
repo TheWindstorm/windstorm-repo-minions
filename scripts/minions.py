@@ -583,6 +583,9 @@ def start_test(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int = 90,
                 run_id = run["id"]
                 if run.get("status") == "completed" or jobs_of(gh, repo, run_id):
                     break
+            if deadline == wait_s:  # G8.6: the deadline is said once the command really waits
+                rep.ok("start test: waiting for GitHub's run of it, until "
+                       f"{(host.now() + dt.timedelta(seconds=wait_s)).strftime('%H:%M:%SZ')} at the latest")
             host.sleep(poll_s)
             deadline -= poll_s
         jobs = jobs_of(gh, repo, run_id) if run_id else []
@@ -1755,6 +1758,9 @@ def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: 
                 return True
         if left <= 0:
             break
+        if left == wait_s:  # G8.6: the deadline is said once the command really waits
+            rep.ok(f"waiting for GitHub to list {name} online and idle, until "
+                   f"{(host.now() + dt.timedelta(seconds=wait_s)).strftime('%H:%M:%SZ')} at the latest")
         host.sleep(poll_s)
         left -= poll_s
     rep.wait(f"GitHub says {name} is {seen}; the service is {active or 'not read'}. Run `look {repo}` later, or "
@@ -2349,6 +2355,9 @@ def lift_hold(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, tries:
         r = listed_runner(gh, repo, mine["name"])
         if r and r.get("status") == "online":
             break
+        if i == 0 and tries > 1:  # G8.6: the deadline is said once the command really waits
+            rep.ok(f"waiting for GitHub to read {mine['name']} online, until "
+                   f"{(host.now() + dt.timedelta(seconds=5 * (tries - 1))).strftime('%H:%M:%SZ')} at the latest")
         if i < tries - 1:
             host.sleep(5)
     if not r:

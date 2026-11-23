@@ -2964,6 +2964,50 @@ class G8Limit(unittest.TestCase):
         self.assertLess(clock.t - M.parse_stamp("2026-11-22T23:00:00Z"), M.dt.timedelta(seconds=60))
 
 
+class G8Waits(unittest.TestCase):
+    def test_G8_6_no_command_hangs_on_waiting(self):
+        start = M.parse_stamp("2026-11-22T23:00:00Z")
+        # drain, with a job that never ends: the deadline said, the command ends when it passes.
+        host, clock = g5_host(worker=True)
+        code, lines = run_cmd(M.drain, REPO, host=host, gh=StatusGH(busy=True))
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertTrue([x for x in lines if re.search(r"until \d\d:\d\dZ at the latest", x)], lines)
+        self.assertLessEqual((clock.t - start).total_seconds(), M.DRAIN_WAIT_S + 10)
+        # resume, while GitHub reads the runner offline: the same.
+        host, clock = g5_host()
+        data = M.load_state(host)
+        data["runners"][REPO].update(held_for="drain", labels_before_hold=["minions", "minions-medium"])
+        M.save_state(host, data)
+        gh = StatusGH(status="offline")
+        gh.r[REPO]["labels"] = ["minions-held"]
+        code, lines = run_cmd(M.resume, REPO, host=host, gh=gh)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertTrue([x for x in lines if re.search(r"until \d\d:\d\d:\d\dZ at the latest", x)], lines)
+        self.assertLessEqual((clock.t - start).total_seconds(), 60)
+
+    def test_G8_7_waiting_exits_4_and_names_what_and_what_next(self):
+        host, clock = g5_host(worker=True)
+        code, lines = run_cmd(M.drain, REPO, host=host, gh=StatusGH(busy=True))
+        self.assertEqual(code, 4)
+        self.assertTrue(lines[-1].startswith("waiting for the running job to end"), lines[-1])
+        self.assertIn(f"Next: `drain {REPO}` again", lines[-1])
+        # Every `waiting` line in the tool names the command to run next, or is one workflow's line that `move
+        # --verify`'s own last line follows with it.
+        import ast
+        with open(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8") as f:
+            src = f.read()
+        bad = []
+        for n in ast.walk(ast.parse(src)):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "wait"
+                    and isinstance(n.func.value, ast.Name) and n.func.value.id == "rep" and n.args):
+                text = ast.unparse(n.args[0])
+                per_path = isinstance(n.args[0], ast.JoinedStr) and text.startswith("f'{path}:") or \
+                    text.startswith('f"{path}:')
+                if "`" not in text and not per_path:
+                    bad.append((n.lineno, text[:80]))
+        self.assertEqual(bad, [])
+
+
 class G8Words(unittest.TestCase):
     NEXT = re.compile(r"`|\bagain\b|\bfirst\b|\bcheck\b|\bwrite owner|\bno step to take\b|\bopen an issue\b|\bask\b|"
                       r"\btype\b|\bFree some space\b|\bmerge\b|\bsettle\b|\bway out\b|\brun\b|\binstall\b", re.I)
