@@ -1082,7 +1082,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_10_no_github_cli_or_login_is_the_first_need_you",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 08:45-08:46 UTC: with gh missing, and with gh installed but logged out, look's need-you line said that this skill reaches GitHub only through the GitHub CLI and its own login, that no SSH key and no other saved login is used or looked for, and that the step is the person's.",
    "issue": 150,
    "moved_why": "",
    "moved_by_person": ""
@@ -1096,7 +1096,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_12_other_peoples_things_are_counted_never_named",
-   "proven": "",
+   "proven": "Seen once on the fix, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-23 09:00 UTC, with another user's runner service running: the census after uninstall and after uninstall --all counted it and named none, the slice line said kept until uninstall --all, and the other user's service stayed active.",
    "issue": 154,
    "moved_why": "",
    "moved_by_person": ""
