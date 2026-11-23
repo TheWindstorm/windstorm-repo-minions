@@ -1969,6 +1969,22 @@ def run_cmd(fn, *a, **kw):
     return code, out.getvalue().splitlines()
 
 
+class G9Version(unittest.TestCase):
+    def test_G9_8_one_version_is_named_everywhere(self):
+        # The tool, the manifest (where it exists: on a release branch) and the changelog's top entry (once it is a
+        # version) name one version; a half-bumped branch fails here, before a tag.
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        self.assertRegex(M.VERSION, r"^\d+\.\d+\.\d+$")
+        manifest = os.path.join(root, ".claude-plugin", "plugin.json")
+        if os.path.exists(manifest):
+            with open(manifest, encoding="utf-8") as f:
+                self.assertEqual(json.load(f).get("version"), M.VERSION, "the manifest and the tool")
+        with open(os.path.join(root, "CHANGELOG.md"), encoding="utf-8") as f:
+            top = next(x for x in f if x.startswith("## "))[3:].strip()
+        if top != "Unreleased":
+            self.assertEqual(top.split()[0], M.VERSION, "the changelog's top entry and the tool")
+
+
 class G5(unittest.TestCase):
     def test_G5_1_status_reads_both_sides_and_the_queue(self):
         host, clock = g5_host()
