@@ -1971,6 +1971,41 @@ class G5(unittest.TestCase):
         self.assertEqual(len(gh.puts), n)
         self.assertFalse([a for a in host.ran if a[:1] == ("sudo",)], "the watch asks for no admin rights")
 
+    def test_G5_10_a_change_in_the_cost_rule_is_told(self):
+        host, clock = g5_host()
+        refuse_sudo(host)
+        gh = StatusGH()
+        run_cmd(M.watch, host=host, gh=gh)  # no earlier read: this one is kept, nothing is called a change
+        first = M.load_state(host)["cost"]
+        self.assertTrue(any(x.startswith("Self-hosted runners") for x in first["items"]))
+        self.assertNotIn("cost_change", M.load_state(host))
+        # Within the week: no read at all, whatever the page says now.
+        host.page = host.page.replace("Self-hosted runners", "Self-hosted runner minutes")
+        clock.sleep(6 * 24 * 3600)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertNotIn("cost_change", M.load_state(host))
+        # A week on, the page reads differently: kept with both versions and dates, told once at the next status.
+        clock.sleep(2 * 24 * 3600)
+        run_cmd(M.watch, host=host, gh=gh)
+        c = M.load_state(host)["cost_change"]
+        self.assertEqual((c["old"], c["old_time"]), (first["items"], first["time"]))
+        self.assertTrue(any(x.startswith("Self-hosted runner minutes") for x in c["new"]))
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(lines[0].startswith("warn GitHub's billing page changed what it says about self-hosted "
+                                            f"runners: read {first['time']}, it said"), lines[0])
+        self.assertIn(M.COST_URL, lines[0])
+        self.assertFalse(any("billing page changed" in x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
+        # A page that cannot be read is journaled, never taken for a change.
+        data = M.load_state(host)
+        data.pop("cost_change")
+        M.save_state(host, data)
+        host.page = ""
+        clock.sleep(8 * 24 * 3600)
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertNotIn("cost_change", M.load_state(host))
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            self.assertIn("cost rule GitHub's page could not be read", f.read())
+
     def test_G5_12_a_runner_github_removed_is_named_and_registered_again(self):
         host, clock = g5_host()
         refuse_sudo(host)  # G9.7: the watch is a system timer run as the person, with no sudo ticket

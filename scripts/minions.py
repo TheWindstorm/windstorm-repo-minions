@@ -1234,6 +1234,8 @@ def check_cost_rule(host: Host, rep: Report) -> None:
         items = read_cost_rule(host.fetch(COST_URL))
     except Exception:  # noqa: BLE001 - any failure to read is said as such
         items = None
+    if items and any(x.startswith("Self-hosted runners") for x in items):
+        keep_cost_read(host, items)  # G5.10: the watch compares against it once a week
     if not items or not any(x.startswith("Self-hosted runners") for x in items):
         rep.warn(f"I could not read GitHub's rule today ({when}): see {COST_URL}")
         rep.tell("I could not read GitHub's page about charges today.")
@@ -1242,6 +1244,47 @@ def check_cost_rule(host: Host, rep: Report) -> None:
            "the included usage (its words: \"" + COST_LIST_HEAD + " " + " ".join(items) + "\"). In December 2025 "
            "GitHub announced a charge for self-hosted runner use and postponed it. Artifact and cache storage "
            f"count the same whichever computer ran the job. Source: {COST_URL}")
+
+
+COST_EVERY_S = 7 * 24 * 3600  # G5.10: the watch reads GitHub's cost rule again once a week
+
+
+def keep_cost_read(host: Host, items: list[str]) -> None:
+    data = load_state(host)
+    data["cost"] = {"items": items, "time": stamp(host.now())}
+    save_state(host, data)
+
+
+def cost_weekly(host: Host, data: dict) -> None:
+    """G5.10 (R16): once a week the watch reads GitHub's cost rule again (GitHub's documentation site, not its API:
+    no call of the person's API limit). A changed sentence is kept with both versions and dates for the next
+    `status`; a page that cannot be read is journaled, never taken for a change."""
+    last = data.get("cost") or {}
+    try:
+        then = parse_stamp(last.get("checked") or last.get("time") or "")
+    except ValueError:
+        then = None
+    if then is not None and (host.now() - then).total_seconds() < COST_EVERY_S:
+        return
+    try:
+        items = read_cost_rule(host.fetch(COST_URL))
+    except Exception:  # noqa: BLE001 - any failure to read is said as such
+        items = None
+    now = stamp(host.now())
+    if not items:  # a list found but worded otherwise, or without the self-hosted line, IS a change
+        journal(host, "cost rule", f"GitHub's page could not be read or its list was not found ({COST_URL})")
+        data["cost"] = dict(last, checked=now)
+        return
+    if last.get("items") and items != last["items"]:
+        data["cost_change"] = {"old": last["items"], "old_time": last.get("time"), "new": items, "new_time": now}
+        journal(host, "cost rule changed", f"GitHub's list changed since {last.get('time')}")
+    data["cost"] = {"items": items, "time": now, "checked": now}
+
+
+def cost_change_words(c: dict) -> str:
+    return (f"GitHub's billing page changed what it says about self-hosted runners: read {c['old_time']}, it said \""
+            + COST_LIST_HEAD + " " + " ".join(c["old"]) + f"\"; read {c['new_time']}, it says \"" + COST_LIST_HEAD
+            + " " + " ".join(c["new"]) + f"\". Read it yourself before relying on it: {COST_URL}")
 
 
 # ------------------------------------------------------------------------------------------- state and journal
@@ -2495,6 +2538,13 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         first.insert(0, ("stop", "the watch is not running, so this computer takes no job now: each job is refused before its first step until "
                                  "the watch reads the repository private again. Your way out: `sudo systemctl start "
                                  f"{WATCH_UNIT}.timer`, or `setup` again"))
+    cc = data.get("cost_change")
+    if cc and not cc.get("told"):  # G5.10: told once, at the next status, first
+        first.insert(0, ("warn", cost_change_words(cc)))
+        fresh = load_state(host)  # never write back an older copy of what other steps saved meanwhile
+        if fresh.get("cost_change"):
+            fresh["cost_change"]["told"] = stamp(now)
+            save_state(host, fresh)
     rh = data.get("restart_hold")
     if rh:
         rest.append(("ok", f"held for a restart since {rh['time']}: the hold lifts by itself once this computer has "
@@ -2711,6 +2761,7 @@ def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
     if blind:  # G5.15: counted, kept with its reason, and said: a blind pass ends `failed`, never in silence
         w["blind"] = {rp: {"why": why, "passes": (old.get(rp) or {}).get("passes", 0) + 1,
                            "since": (old.get(rp) or {}).get("since") or stamp(host.now())} for rp, why in blind.items()}
+    cost_weekly(host, data)
     data["watch"] = w
     save_state(host, data)
     journal(host, "watch", "; ".join(said) or "no runner of ours here")
