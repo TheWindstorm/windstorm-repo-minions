@@ -16,11 +16,11 @@
    "codon": "G1.4",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
-   "ship_in": "0.1.0",
+   "ship_in": "0.1.1",
    "test": "test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure",
    "proven": "",
    "issue": 7,
-   "moved_why": "",
+   "moved_why": "Moved to 0.1.1 by the maintainer's word, 2026-11-23, with the reason: the check is built and tested, but seeing it needs an account whose GitHub Actions start no jobs and the right to delete the repository made for it, neither of which this release had; the README's 'Not seen yet' part says so.",
    "moved_by_person": ""
   },
   {
@@ -268,11 +268,11 @@
    "codon": "G11.1",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
-   "ship_in": "0.1.0",
+   "ship_in": "0.1.1",
    "test": "test_G11_2_on_battery_the_runners_are_held",
    "proven": "",
    "issue": 25,
-   "moved_why": "",
+   "moved_why": "Moved to 0.1.1 by the maintainer's word, 2026-11-23, with the reason: built and tested, but a battery, a lid and a laptop's heat are hardware a virtual machine lacks, and no real laptop was in this release's sittings; the README's 'Not seen yet' part says so.",
    "moved_by_person": ""
   },
   {
@@ -632,11 +632,11 @@
    "codon": "G4.9",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
-   "ship_in": "0.1.0",
+   "ship_in": "0.1.1",
    "test": "test_G4_9_the_inhibitor_never_holds_a_sleep_the_person_or_hardware_asks_for",
    "proven": "",
    "issue": 69,
-   "moved_why": "",
+   "moved_why": "Moved to 0.1.1 by the maintainer's word, 2026-11-23, with the reason: built and tested, but a lid switch, a low battery and a sleep the person asks for are a real laptop's, which a virtual machine lacks; the README's 'Not seen yet' part says so.",
    "moved_by_person": ""
   },
   {
@@ -1038,11 +1038,11 @@
    "codon": "G11.4",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
-   "ship_in": "0.1.0",
+   "ship_in": "0.1.1",
    "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
    "proven": "",
    "issue": 143,
-   "moved_why": "Made smaller by ruling, 2026-11-23, with the reason: the codon promised a restart, but the watch runs with no admin rights and cannot restart anything, a root unit that restarts after a wake would be a privileged moving part added for a case nobody has seen, and the runner was seen coming back by itself three times with no restart.",
+   "moved_why": "Made smaller by ruling, 2026-11-23, with the reason: the codon promised a restart, but the watch runs with no admin rights and cannot restart anything, a root unit that restarts after a wake would be a privileged moving part added for a case nobody has seen, and the runner was seen coming back by itself three times with no restart. Then moved to 0.1.1 by the maintainer's word, 2026-11-23: seen only in a virtual machine, and a real laptop's own sleep and change of network were not in this release's sittings; the README's 'Not seen yet' part says so.",
    "moved_by_person": ""
   },
   {
@@ -1672,6 +1672,20 @@
    "test": "test_G6_14_the_places_used_in_the_persons_home_are_named_and_listed_alike",
    "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: the person's whole home listed (type, mode, size, time, sha256, hidden folders) on the stock image, before setup, after a real job ran on it and after uninstall --all; no stock file changed at any moment, ~/.ssh/authorized_keys included, and every difference lay in the clone, ~/.config/gh (the person's own gh auth login), ~/.minions and ~/repo-minions-record. Listed with the lane's own script; later sightings use the family's home_snapshot.py.",
    "issue": 291,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R120",
+   "seen": "2026-11-23, the push run of a merge on main failed one test on Python 3.10 only: setup's first watch pass fell in the same second as the pass before and read as \"wrote nothing\"; the same can happen on a real computer when the timer's own pass falls in that second.",
+   "promise": "Each pass of the watch is counted, and setup tells its own first pass from the one before by that count, never by the time to the second, so a pass in the same second is still seen.",
+   "codon": "G5.19",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_19_a_watch_pass_in_the_same_second_as_the_last_is_still_seen",
+   "proven": "",
+   "issue": 296,
    "moved_why": "",
    "moved_by_person": ""
   }

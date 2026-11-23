@@ -3409,7 +3409,9 @@ def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
     data = load_state(host)
     old = (data.get("watch") or {}).get("blind") or {}
     w = {"time": stamp(host.now()), "every_s": int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S),
-         "slept_s": host.slept_s()}
+         "slept_s": host.slept_s(),
+         # G5.19: each pass counted, so a pass is told from the one before it even in the same second
+         "pass": int((data.get("watch") or {}).get("pass") or 0) + 1}
     if blind:  # G5.15: counted, kept with its reason, and said: a blind pass ends `failed`, never in silence
         w["blind"] = {rp: {"why": why, "passes": (old.get(rp) or {}).get("passes", 0) + 1,
                            "since": (old.get(rp) or {}).get("since") or stamp(host.now())} for rp, why in blind.items()}
@@ -3781,13 +3783,13 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
     if repo is None:
         return True
     # G5.15: one real pass now, as the timer runs it, and what it read, read back.
-    before = (load_state(host).get("watch") or {}).get("time")
+    before = (load_state(host).get("watch") or {}).get("pass")  # G5.19: the count, never the time to the second
     journal(host, "the watch's first pass")
     sudo(host, systemctl("start", f"{WATCH_UNIT}.service"))
     w = load_state(host).get("watch") or {}
     b = (w.get("blind") or {}).get(repo)
     seen = (host.read(seen_path(load_state(host)["runners"][repo]["folder"])) or "").strip()
-    if w.get("time") in (None, before):
+    if w.get("pass") in (None, before):
         rep.stop(f"the watch's first pass wrote nothing: read `journalctl -u {WATCH_UNIT}.service`")
         return False
     if b or not seen.isdigit():
