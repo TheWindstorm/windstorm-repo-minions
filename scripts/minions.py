@@ -2912,10 +2912,17 @@ def unit_path(unit: str) -> str:
 
 
 def unit_gone(host: Host, unit: str) -> bool:
-    """A unit is gone when systemd no longer has it loaded and nothing of it is active (G6.5's lesson)."""
-    rc, out = host.run(systemctl("show", unit, "-p", "LoadState", "-p", "ActiveState"))
+    """A unit is gone when systemd no longer has it loaded and nothing of it is active (G6.5's lesson). A slice is never
+    "not-found": systemd makes any slice from its name alone (seen on a stock Ubuntu 24.04, systemd 255: a slice never
+    made reads LoadState=loaded). So a slice is gone when it is inactive with no file and no drop-in loaded."""
+    rc, out = host.run(systemctl("show", unit, "-p", "LoadState", "-p", "ActiveState", "-p", "FragmentPath",
+                                 "-p", "DropInPaths"))
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
-    return got.get("LoadState") in ("not-found", None) and got.get("ActiveState") in ("inactive", None)
+    if got.get("ActiveState") not in ("inactive", None):
+        return False
+    if got.get("LoadState") in ("not-found", None):
+        return True
+    return unit.endswith(".slice") and not got.get("FragmentPath") and not got.get("DropInPaths")
 
 
 def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> bool:

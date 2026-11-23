@@ -1977,8 +1977,12 @@ class World:
             return 0, ""
         if a[:2] == ["systemctl", "show"]:
             u = a[2]
-            return 0, (f"LoadState={'loaded' if u in self.loaded else 'not-found'}\n"
-                       f"ActiveState={self.active.get(u, 'inactive') if u in self.loaded else 'inactive'}\n")
+            # As systemd 255 answers: a slice always reads "loaded" (systemd makes any slice from its name); what
+            # tells a loaded file is FragmentPath.
+            frag = f"/etc/systemd/system/{u}" if u in self.loaded else ""
+            return 0, (f"LoadState={'loaded' if u in self.loaded or u.endswith('.slice') else 'not-found'}\n"
+                       f"ActiveState={self.active.get(u, 'inactive') if u in self.loaded else 'inactive'}\n"
+                       f"FragmentPath={frag}\nDropInPaths=\n")
         if a[:2] == ["systemctl", "is-active"]:
             st = self.active.get(a[2], "inactive")
             return (0 if st == "active" else 3), st + "\n"
@@ -2122,7 +2126,13 @@ class G6(unittest.TestCase):
         self.assertLess(o.index(f"stop {M.SLICE}"), o.index(f"rm {SLICE_FILE}"))
         self.assertNotIn(M.SLICE, world.loaded)
         self.assertTrue(any("was stopped before its file was deleted, and is gone, read back" in x for x in lines))
-        # A slice that is still loaded after its removal is a `stop`, never "gone".
+        # A slice still loaded from its file after its removal is a `stop`, never "gone".
+        gh, world, host = remove_setup()
+        host._answer = (lambda real: lambda a, i=None: (0, f"LoadState=loaded\nActiveState=inactive\nFragmentPath={SLICE_FILE}\n")
+                        if list(a[:3]) == ["systemctl", "show", M.SLICE] else real(a, i))(world.answer)
+        code, lines = run_uninstall(gh, host, everything=True)
+        self.assertEqual(code, M.EXIT_STOP)
+        # And one still active, too.
         gh, world, host = remove_setup()
         host._answer = (lambda real: lambda a, i=None: (0, "LoadState=loaded\nActiveState=active\n")
                         if list(a[:3]) == ["systemctl", "show", M.SLICE] else real(a, i))(world.answer)
