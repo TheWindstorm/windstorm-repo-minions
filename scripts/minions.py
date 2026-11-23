@@ -413,16 +413,21 @@ def os_release_id(host: Host) -> str:
     return ""
 
 
+# R77: said in the line itself, where an agent told that gh is missing looks for another road to GitHub.
+GH_ONLY = ("This skill reaches GitHub only through the GitHub CLI and its own login: no SSH key and no other saved "
+           "login on this computer is used or looked for. This step is yours, in your own terminal")
+
+
 def check_github_cli(host: Host, rep: Report) -> bool:
     """G1.10: the first check. Without the GitHub CLI and a login, nothing else runs."""
     if not host.which("gh"):
         key = "Darwin" if host.system() == "Darwin" else os_release_id(host)
         cmd = INSTALL_GH.get(key, "see https://cli.github.com for this system")
-        rep.need(f"install the GitHub CLI: {cmd}")
+        rep.need(f"install the GitHub CLI: {cmd}. {GH_ONLY}")
         return False
     rc, _ = host.run(["gh", "auth", "status", "--hostname", "github.com"])
     if rc != 0:
-        rep.need("log in to GitHub: run `gh auth login` and follow its steps (this step is yours)")
+        rep.need(f"log in to GitHub: run `gh auth login` and follow its steps. {GH_ONLY}")
         return False
     rep.ok("GitHub CLI installed and logged in")
     return True
