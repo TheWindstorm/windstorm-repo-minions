@@ -1650,6 +1650,19 @@ def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: 
     return False
 
 
+def one_repository_here(host: Host, repo: str, rep: Report) -> bool:
+    """G7.6: version 0.1.0 serves one repository per computer, says so at setup, and holds it: a second repository's
+    setup changes nothing while this tool's record names another one here."""
+    others = sorted(r for r in (load_state(host).get("runners") or {}) if r != repo)
+    if others:
+        rep.stop(f"this computer already serves {others[0]}, and this version serves one repository per computer, so "
+                 f"nothing was changed. To serve {repo} here instead, run `uninstall {others[0]}` first, then "
+                 f"`setup {repo}` again; more repositories per computer come in the next version")
+        return False
+    rep.ok(f"this version serves one repository per computer: here, {repo}; more come in the next version")
+    return True
+
+
 def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
           interactive: bool | None = None, limits: tuple[int, int] | None = None) -> int:
     host = host or Host()
@@ -1664,6 +1677,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if host.system() != "Linux" or not host.which("systemctl"):
         rep.stop("this version sets up Linux with systemd only; macOS comes in the next version. Nothing was changed, "
                  "and there is no step to take on this computer now")
+        return rep.code()
+    if not one_repository_here(host, repo, rep):
         return rep.code()
     survey_ = entry.get("survey") or {}
     lim = slice_limits(survey_, limits)
