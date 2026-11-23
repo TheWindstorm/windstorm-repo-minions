@@ -8,7 +8,8 @@ seen on stock virtual machines (Ubuntu 24.04.5, Ubuntu 22.04.5, Debian 12) again
 Claude Code 2.1.330 following the skill from a cold start. Not seen yet, by name: a laptop (battery, lid, its own
 sleep, a change of network); an account whose GitHub Actions start no jobs; GitHub's own removal of a runner after
 14 days offline; a repository really turned public with a runner on it; GitHub's API limit running out while the
-tool works; other Linux distributions, macOS and Windows.
+tool works; other Linux distributions, macOS and Windows. The four rows built and tested for a laptop or such an
+account are due in 0.1.1, to be seen there (rows R1, R19, R45, R74).
 
 Since those cold starts one default changed: a job that needs more memory than its cap now fails when it
 reaches the cap, by name, instead of running slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises
@@ -33,6 +34,8 @@ the cap (row R94).
   and after leaving, your record) and changes no other file of yours; before each release a stock machine's whole
   home is listed before and after setup, a real job and uninstall, and any change outside those places stops the
   release (G6.14, row R119).
+- Setup tells the watch's first pass from the one before by a count of passes, not by the time, so a pass in the
+  same second as the last one is no longer said as "wrote nothing" (G5.19, row R120).
 - Each line for you is said where it matters: before setup, before the merge, when status names a job the memory
   cap stopped (G7.14, row R111). The cost line points to GitHub's own page and claims nothing (G7.13, row R109).
 - Every system command the tool prints for you is one that was run exactly as printed on that kind of system; the
