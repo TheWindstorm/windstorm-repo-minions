@@ -10,6 +10,10 @@ sleep, a change of network); an account whose GitHub Actions start no jobs; GitH
 14 days offline; a repository really turned public with a runner on it; GitHub's API limit running out while the
 tool works; other Linux distributions, macOS and Windows.
 
+Since those cold starts one default changed: a job that needs more memory than its cap now fails when it
+reaches the cap, by name, instead of running slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises
+the cap (row R94).
+
 - Memory: a job that needs more than its cap now fails when it reaches the cap, by name, instead of running
   slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises the cap. Jobs get no high mark and are kept
   out of swap, where this computer holds that: `setup` reads it back from the running slice and says kept, not
