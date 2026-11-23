@@ -506,7 +506,8 @@ def token_scopes(host: Host) -> set[str] | None:
     m = re.search(r"Token scopes:\s*(.+)", out)
     if not m:
         return None
-    return set(re.findall(r"'([^']+)'", m.group(1)))
+    # R79: newer gh quotes each scope ('repo', 'workflow'); older gh (2.23 on Debian 12) prints them bare.
+    return set(re.findall(r"'([^']+)'", m.group(1))) or {x.strip() for x in m.group(1).split(",") if x.strip()}
 
 
 # ------------------------------------------------------------------------------------------------------------ G1.4
@@ -623,9 +624,29 @@ def jobs_of(gh: GitHub, repo: str, run_id) -> list[dict]:
     return (d or {}).get("jobs", []) if s == 200 else []
 
 
+def read_back_gone(gh: GitHub, host: Host, path: str) -> bool | None:
+    """R82: True once GitHub answers 404. Asked up to three times, 3 s apart (a deletion can take a moment, and
+    GitHub sometimes answers 5xx); then False when it still answers with the thing, None when it gave no clear
+    answer: a third answer, never "left"."""
+    s = 0
+    for i in range(3):
+        s, _ = gh.api("GET", path)
+        if s == 404:
+            return True
+        if i < 2:
+            host.sleep(3)
+    return False if 200 <= s < 300 else None
+
+
 def cleanup_start_test(gh: GitHub, host: Host, repo: str, branch: str | None, run_id, rep: Report) -> None:
     """Cancel and delete the run, delete the branch, and read back that both are gone. Runs even after an error."""
-    left = []
+    left, unread = [], []
+
+    def note(what: str, gone: bool | None) -> None:
+        if gone is False:
+            left.append(what)
+        elif gone is None:
+            unread.append(what)
     if run_id:
         s, d = gh.api("GET", f"repos/{repo}/actions/runs/{run_id}")
         if s == 200 and (d or {}).get("status") != "completed":
@@ -636,14 +657,10 @@ def cleanup_start_test(gh: GitHub, host: Host, repo: str, branch: str | None, ru
                     break
                 host.sleep(3)
         gh.api("DELETE", f"repos/{repo}/actions/runs/{run_id}")
-        s, _ = gh.api("GET", f"repos/{repo}/actions/runs/{run_id}")
-        if s != 404:
-            left.append(f"run {run_id}")
+        note(f"run {run_id}", read_back_gone(gh, host, f"repos/{repo}/actions/runs/{run_id}"))
     if branch:
         gh.api("DELETE", f"repos/{repo}/git/refs/heads/{branch}")
-        s, _ = gh.api("GET", f"repos/{repo}/git/ref/heads/{branch}")
-        if s != 404:
-            left.append(f"branch {branch}")
+        note(f"branch {branch}", read_back_gone(gh, host, f"repos/{repo}/git/ref/heads/{branch}"))
         if not run_id:
             # GitHub may make the run late, after the branch is gone: look once more and take it away too
             host.sleep(10)
@@ -652,13 +669,14 @@ def cleanup_start_test(gh: GitHub, host: Host, repo: str, branch: str | None, ru
                 gh.api("POST", f"repos/{repo}/actions/runs/{late['id']}/cancel")
                 host.sleep(3)
                 gh.api("DELETE", f"repos/{repo}/actions/runs/{late['id']}")
-                s2, _ = gh.api("GET", f"repos/{repo}/actions/runs/{late['id']}")
-                if s2 != 404:
-                    left.append(f"run {late['id']}")
+                note(f"run {late['id']}", read_back_gone(gh, host, f"repos/{repo}/actions/runs/{late['id']}"))
     if branch or run_id:
         if left:
             rep.warn("start test: could not remove " + " and ".join(left) + "; remove it by hand")
-        else:
+        if unread:
+            rep.warn("start test: deleted " + " and ".join(unread) + ", but GitHub gave no clear answer when asked "
+                     "whether it is gone (three tries); look for it on the repository's Actions and branches pages")
+        if not left and not unread:
             rep.ok("start test: the run and the branch are deleted, read back gone")
 
 
@@ -918,7 +936,7 @@ def sleep_setting(host: Host) -> str | None:
 # ------------------------------------------------------------------------------------------------------------ G1.7
 
 UPKEEP_PORTS = {22: "remote login", 53: "name service", 67: "address service", 68: "address service",
-                123: "time service", 5353: "local name discovery"}
+                123: "time service", 5353: "local name discovery", 5355: "local name resolution"}
 
 
 def listening_ports(tcp_text: str) -> set[int]:

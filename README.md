@@ -17,6 +17,8 @@ Tell your coding agent:
 
 **If you are the agent that was sent here:**
 1. Clone this repository into the person's home folder: `cd ~ && git clone https://github.com/TheWindstorm/windstorm-repo-minions`.
+   If `git` is not installed (a stock Debian has none), installing it is the person's step: ask them to run
+   `sudo apt update && sudo apt install git` (Debian, Ubuntu) in their own terminal.
 2. Read `skills/repo-minions/SKILL.md` and follow it, in its order.
 3. Stop and ask the person at each step the skill marks as theirs.
 4. Do not invent steps. If the skill does not say what to do, ask the person. A step that is the person's is never

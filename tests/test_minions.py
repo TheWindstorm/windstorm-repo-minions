@@ -245,6 +245,13 @@ class G1(unittest.TestCase):
         host = linux_host(runs={("gh", "auth", "status"): (0, "  ✓ Logged in to github.com account x\n")})
         _, lines = look(StandIn(self.recent), host)
         self.assertTrue(any("could not read the token's scopes" in x for x in lines), lines)
+        # R79: an older gh (2.23, Debian 12's) prints the scopes without quotes; read the same way
+        bare = "  ✓ Logged in to github.com as example-person (/home/x/.config/gh/hosts.yml)\n" \
+               "  ✓ Token scopes: gist, read:org, repo, workflow\n"
+        self.assertEqual(M.token_scopes(linux_host(runs={("gh", "auth", "status"): (0, bare)})),
+                         {"gist", "read:org", "repo", "workflow"})
+        _, lines = look(StandIn(self.recent), linux_host(runs={("gh", "auth", "status"): (0, bare)}))
+        self.assertIn("ok your login has the `workflow` scope (needed to change workflow files)", lines)
 
     def test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure(self):
         # 1. The recorded real start test: jobs start; the run and the branch are deleted and read back gone.
@@ -309,6 +316,28 @@ class G1(unittest.TestCase):
             M.start_test.__defaults__ = start_wait
         self.assertIn(("DELETE", f"repos/{REPO}/actions/runs/777"), gh.calls)
         self.assertIn("ok start test: the run and the branch are deleted, read back gone", lines)
+        # 3c. R82: GitHub gives no clear answer on the read-back (a 504, seen on a stock machine): asked again, and a
+        # run GitHub never says is there is not called left.
+        for answers, want in (([504, 504, 404], "ok start test: the run and the branch are deleted, read back gone"),
+                              ([504, 504, 504], "warn start test: deleted run 555, but GitHub gave no clear answer"),
+                              ([200, 404, 404], "ok start test: the run and the branch are deleted, read back gone"),
+                              ([200, 200, 200], "warn start test: could not remove run 555")):
+            later = list(answers)
+            first = {"read": True}
+
+            def run_reads(body):  # the first read is before the delete (the run has finished); then the read-backs
+                if first.pop("read", False):
+                    return 200, {"status": "completed"}
+                return later.pop(0), {"message": "x"}
+            gh = StandIn([], overrides={("GET", f"repos/{REPO}/actions/runs/555"): run_reads,
+                                        ("DELETE", f"repos/{REPO}/actions/runs/555"): (204, None),
+                                        ("DELETE", f"repos/{REPO}/git/refs/heads/BRANCH"): (204, None)})
+            out = io.StringIO()
+            M.cleanup_start_test(gh, linux_host(), REPO, "minions-start-test-abc123", 555, M.Report(out))
+            said = out.getvalue()
+            self.assertTrue(any(x.startswith(want) for x in said.splitlines()), said)
+            if "could not remove" not in want:
+                self.assertNotIn("could not remove", said)
         # 4. The branch cannot be pushed (no workflow scope): said, and the recent runs are read instead.
         gh = StandIn(self.recent, overrides={("POST", f"repos/{REPO}/git/blobs"):
                                              (201, {"sha": "a" * 40}),
@@ -384,6 +413,12 @@ class G1(unittest.TestCase):
         self.assertIn("ok 1 port open to the network for this computer's own upkeep: 22 (remote login); normal on most "
                       "computers, not counted as something live", lines)
         self.assertFalse(any("open to the network here" in x for x in lines), lines)
+        # R80: Debian 12's own name resolution (LLMNR, 5355) is upkeep too
+        host = linux_host(files={"/proc/net/tcp": "  sl\n 0: 00000000:14EB 00000000:0000 0A\n"})
+        _, lines = look(StandIn(self.recent), host)
+        self.assertIn("ok 1 port open to the network for this computer's own upkeep: 5355 (local name resolution); "
+                      "normal on most computers, not counted as something live", lines)
+        self.assertFalse(any("serves something live" in x for x in lines), lines)
         self.assertFalse(any("serves something live" in x for x in lines), lines)
         self.assertFalse(M.load_state(host)["looks"][REPO]["survey"]["serves"])
         host = linux_host(files={"/proc/net/tcp": "  sl\n 0: 00000000:1F98 00000000:0000 0A\n"})
