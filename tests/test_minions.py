@@ -1773,6 +1773,131 @@ class G5(unittest.TestCase):
         self.assertTrue(lines[0].startswith("warn job 'check'") and "behind our runner being offline" in lines[0], lines)
 
 
+    # ---- G5.7 and G5.14: naming a job a cut or our limit stopped (one path)
+
+    def _named(self, records, job, here_runs=None, notes=(), worker=False, files=None):
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        runs = {("systemctl", "show", "actions.runner.example-org-example-repo.minions-box-1.service", "-p",
+                 "ActiveEnterTimestamp"): (0, "ActiveEnterTimestamp=@%d\nInactiveEnterTimestamp=\n" % (t0 - 3600))}
+        runs.update(here_runs or {})
+        host, clock = g5_host(runs=runs, worker=worker)
+        host.files[M.records_dir_of("/home/minions-runner/runners/example-org-example-repo") + "/jobs.log"] = records
+        host.files["/proc/stat"] = "cpu 1 2 3\nbtime %d\n" % (t0 - 7200)
+        host.files.update(files or {})
+        data = M.load_state(host)
+        data["runners"][REPO]["limits"] = {"MemoryMax": str(4 * 1024 ** 3)}
+        M.save_state(host, data)
+        gh = StatusGH()
+        gh.jobs[555] = [dict({"id": 9001, "name": "check", "runner_name": "minions-box-1", "run_attempt": 1,
+                              "started_at": "2026-11-22T22:39:58Z"}, **job)]
+        gh.annotations[9001] = [{"message": m} for m in notes]
+        return host, gh, t0
+
+    CUT_STEPS = [{"name": "Set up job", "conclusion": "success"}, {"name": "Run tests", "conclusion": "cancelled"}]
+
+    def test_G5_7_a_job_cut_by_a_restart_is_named_and_offered_again(self):
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        start = f"start {t0} 555 1 0 check\n"
+        cut = {"conclusion": "failure", "steps": self.CUT_STEPS}
+        # A stop of the runner's service during the job, no end recorded here: both sides agree, named as cut.
+        stopped = {("systemctl", "show", "actions.runner.example-org-example-repo.minions-box-1.service", "-p",
+                    "ActiveEnterTimestamp"): (0, "ActiveEnterTimestamp=@%d\nInactiveEnterTimestamp=@%d\n" % (t0 + 30, t0 + 20))}
+        host, gh, _ = self._named(start, cut, stopped, notes=[M.CANCELED])
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        named = [x for x in lines if x.startswith("warn job 'check'")]
+        self.assertEqual(named, ["warn job 'check' (run 555, started 22:40:00Z) was cut by a stop of this computer's "
+                                 "runner service, not a failing test of yours; GitHub shows it as failed. To run it "
+                                 f"again, once: `status {REPO} --rerun 9001`."])
+        # The stop is only in the unit's journal (systemd's own start and stop times were replaced since, as a
+        # reboot does): still named. And once named, it is kept: a later read without this computer's record of the
+        # stop still names it (the watch names and keeps them).
+        later = {("systemctl", "show", "actions.runner.example-org-example-repo.minions-box-1.service", "-p",
+                  "ActiveEnterTimestamp"): (0, "ActiveEnterTimestamp=@%d\nInactiveEnterTimestamp=@%d\n" % (t0 + 9000, t0 + 8990)),
+                 ("journalctl", "-u", "actions.runner.example-org-example-repo.minions-box-1.service"):
+                 (0, "%d.1 box-1 systemd[1]: Stopping actions.runner...\n" % (t0 + 20))}
+        host, gh, _ = self._named(start, cut, later, notes=[M.CANCELED])
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(M.load_state(host)["named"]["9001"]["why"], "a stop of this computer's runner service")
+        host.runs.pop(("journalctl", "-u", "actions.runner.example-org-example-repo.minions-box-1.service"))
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any("was cut by a stop of this computer's runner service" in x for x in lines), lines)
+        # A restart of the computer during the job.
+        host, gh, _ = self._named(start, cut, files={"/proc/stat": "btime %d\n" % (t0 + 60)})
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(any("was cut by a restart of this computer" in x for x in lines), lines)
+        # A sleep during the job (end recorded): cut by sleep.
+        sleep = {("journalctl", "-u", "systemd-suspend.service"):
+                 (0, "%d.5 box-1 systemd-sleep[9]: Entering sleep state 'suspend'...\n" % (t0 + 40))}
+        host, gh, _ = self._named(start + f"end {t0 + 900} 555 1 0 check\n", cut, sleep)
+        self.assertTrue(any("was cut by this computer going to sleep" in x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
+        # Not named: a job that came through a sleep (GitHub: success); the person's own failing test (no step
+        # cancelled), even with a stop here; GitHub's cut with nothing on this computer's side.
+        for job, runs, rec in (({"conclusion": "success", "steps": []}, sleep, start + f"end {t0 + 900} 555 1 0 check\n"),
+                               ({"conclusion": "failure", "steps": [{"name": "Run tests", "conclusion": "failure"}]},
+                                stopped, start),
+                               (cut, None, start + f"end {t0 + 900} 555 1 0 check\n")):
+            host, gh, _ = self._named(rec, job, runs)
+            lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+            self.assertFalse(any(x.startswith("warn job 'check'") for x in lines), (job, lines))
+        # Run again once, only on the person's word; never a second time; never a job we did not name.
+        host, gh, _ = self._named(start, cut, stopped, notes=[M.CANCELED])
+        self.assertEqual(gh.reruns, [])
+        code, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=9001)
+        self.assertEqual(gh.reruns, [9001])
+        self.assertIn("ok asked GitHub to run job 'check' again, once; it lands here when this computer is free", lines)
+        code, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=9001)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertEqual(gh.reruns, [9001])
+        self.assertTrue(any("It was run again once already." in x for x in lines))
+        code, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=1234)
+        self.assertEqual((code, gh.reruns), (M.EXIT_STOP, [9001]))
+        self.assertIn("stop job 1234 is not one this computer cut or its limit stopped: nothing was run again", lines)
+
+    def test_G5_14_a_job_killed_by_our_limit_is_named_as_such(self):
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        failed = {"conclusion": "failure", "steps": [{"name": "Build", "conclusion": "failure"}]}
+        # The slice's kill count rose during the job: named as our limit, with the one way to change it.
+        host, gh, _ = self._named(f"start {t0} 555 1 0 check\nend {t0 + 70} 555 1 1 check\n", failed,
+                                  notes=["Process completed with exit code 137."])
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        named = [x for x in lines if x.startswith("warn job 'check'")]
+        self.assertEqual(named, ["warn job 'check' (run 555, started 22:40:00Z) was stopped by this computer's memory "
+                                 "limit (4.0 GB), not by your code failing; GitHub shows it as failed. The one way to "
+                                 "change the limit: `setup --limits <processors>,<memory %>`. To run it again, once: "
+                                 f"`status {REPO} --rerun 9001`."])
+        # No kill counted here: the person's own failure, never named.
+        host, gh, _ = self._named(f"start {t0} 555 1 1 check\nend {t0 + 70} 555 1 1 check\n", failed)
+        self.assertFalse(any(x.startswith("warn job") for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
+        # No end here (the runner itself was killed): the count read now decides.
+        host, gh, _ = self._named(f"start {t0} 555 1 0 check\n", failed, files={M.MEMORY_EVENTS: "oom 2\noom_kill 2\n"})
+        self.assertTrue(any("stopped by this computer's memory limit" in x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]))
+        # The hooks themselves write the records, with the slice's kill count, for real.
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            events = os.path.join(d, "memory.events")
+            with open(events, "w") as f:
+                f.write("low 0\nhigh 3\nmax 2\noom 1\noom_kill 1\n")
+            recs = os.path.join(d, "records")
+            os.makedirs(recs)
+            env = dict(os.environ, GITHUB_RUN_ID="555", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="check",
+                       GITHUB_WORKSPACE=os.path.join(d, "nowhere"), PATH="/usr/bin:/bin")
+            with mock.patch.object(M, "MEMORY_EVENTS", events):
+                for name, fn in (("s.sh", M.job_started_script), ("e.sh", M.job_completed_script)):
+                    with open(os.path.join(d, name), "w") as f:
+                        f.write(fn(os.path.join(d, "runner"), recs).replace("command -v systemd-inhibit", "false"))
+                    r = subprocess.run(["bash", os.path.join(d, name)], env=env, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(r.returncode, 0, r.stderr)
+            with open(os.path.join(recs, "jobs.log")) as f:
+                got = [x.split() for x in f.read().splitlines()]
+            self.assertEqual([g[0] for g in got], ["start", "end"])
+            self.assertEqual([g[2:] for g in got], [["555", "1", "1", "check"], ["555", "1", "1", "check"]])
+        # setup makes the records folder: the runner writes, you read.
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        self.assertIn(("sudo", "-n", "install", "-d", "-o", "minions-runner", "-g", "person", "-m", "2750",
+                       f"{M.RECORDS_ROOT}/example-org-example-repo"), host.ran)
+
+
 class G8(unittest.TestCase):
     def test_G8_3_commands_and_line_kinds_are_exactly_these(self):
         # The commands built so far are the plan's own, in its order (a subsequence of it); more come with genes.

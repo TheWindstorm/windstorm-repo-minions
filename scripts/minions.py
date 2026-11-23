@@ -1658,6 +1658,8 @@ HOOKS_ROOT = "/usr/local/lib/windstorm-repo-minions"
 DISK_FLOOR = 5 * 1024 ** 3  # G4.3: under this much free space for the work folders, the runner is to be held
 JOB_HOURS_MOST = 6  # GitHub's default job time limit; a lock left by a runner that died ends by itself after this
 HELD_LABEL = "minions-held"
+RECORDS_ROOT = "/var/lib/windstorm-repo-minions"  # G5.7, G5.14: each job's start and end, as this computer saw them
+MEMORY_EVENTS = f"/sys/fs/cgroup/{SLICE}/memory.events"  # its oom_kill count: a kill by OUR memory limit
 DRAIN_WAIT_S = 1800
 # G4.4 and G4.9: exactly two locks while a job runs, both nested in one process group the hooks start and end.
 # `idle` in block mode stops only the computer's own idle sleep; `sleep` in DELAY mode only delays a sleep that was
@@ -1684,15 +1686,27 @@ def hook_dir(repo: str) -> str:
     return f"{HOOKS_ROOT}/{owner}-{name}"
 
 
-def job_started_script(folder: str) -> str:
+def records_dir_of(folder: str) -> str:
+    return f"{RECORDS_ROOT}/{os.path.basename(folder.rstrip('/'))}"
+
+
+def record_line(kind: str, records: str) -> str:
+    """G5.7, G5.14: one line per job start or end: the time, the run, its attempt, the slice's kill count, the job."""
+    return (f'REC={sh_quote([records + "/jobs.log"])}\n'
+            f'oom="$(awk \'/^oom_kill /{{print $2}}\' {sh_quote([MEMORY_EVENTS])} 2>/dev/null)"\n'
+            f'[ -w "$(dirname "$REC")" ] && printf \'{kind} %s %s %s %s %s\\n\' "$(date -u +%s)" '
+            '"${GITHUB_RUN_ID:-?}" "${GITHUB_RUN_ATTEMPT:-?}" "${oom:-?}" "${GITHUB_JOB:-?}" >> "$REC"\n')
+
+
+def job_started_script(folder: str, records: str | None = None) -> str:
     """G4.4: written by setup, owned by root, read-only to the runner user; runs as the runner user at each job's start."""
     return f"""#!/bin/bash
-# Windstorm Repo Minions, job started (G4.4, G4.9). Written by setup; owned by root.
+# Windstorm Repo Minions, job started (G4.4, G4.9, G5.7). Written by setup; owned by root.
 # It holds the computer's own idle sleep off and delays (never refuses) a sleep you ask for, while this job runs.
 FOLDER={sh_quote([folder])}
 STATE="$FOLDER/_minions"
 mkdir -p "$STATE" && chmod 700 "$STATE"
-if command -v systemd-inhibit >/dev/null 2>&1; then
+{record_line("start", records or records_dir_of(folder))}if command -v systemd-inhibit >/dev/null 2>&1; then
   env -u RUNNER_TRACKING_ID setsid {sh_quote(inhibitor_argv())} </dev/null >/dev/null 2>&1 &
   pid="$!"
   echo "$pid" > "$STATE/inhibit.pid"
@@ -1711,14 +1725,14 @@ exit 0
 """
 
 
-def job_completed_script(folder: str) -> str:
+def job_completed_script(folder: str, records: str | None = None) -> str:
     """G4.3 and G4.4: ends the locks, empties this job's work folder, and marks a disk under the floor."""
     return f"""#!/bin/bash
-# Windstorm Repo Minions, job completed (G4.3, G4.4). Written by setup; owned by root.
+# Windstorm Repo Minions, job completed (G4.3, G4.4, G5.7). Written by setup; owned by root.
 FOLDER={sh_quote([folder])}
 STATE="$FOLDER/_minions"
 mkdir -p "$STATE" && chmod 700 "$STATE"
-if [ -f "$STATE/inhibit.pid" ]; then
+{record_line("end", records or records_dir_of(folder))}if [ -f "$STATE/inhibit.pid" ]; then
   pid="$(cat "$STATE/inhibit.pid")"
   case "$pid" in ''|*[!0-9]*) ;; *) kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null ;; esac
   rm -f "$STATE/inhibit.pid"
@@ -1744,6 +1758,11 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
     d = hook_dir(repo)
     journal(host, "write", f"{d}/job-started.sh, {d}/job-completed.sh and their lines in {folder}/.env")
     sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", HOOKS_ROOT, d])
+    # G5.7, G5.14: the jobs' records, written by the runner, read by you (nothing secret in them).
+    rc, grp_ = host.run(["id", "-gn"])
+    group = grp_.strip() if rc == 0 and grp_.strip() else host.user()
+    sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", RECORDS_ROOT])
+    sudo(host, ["install", "-d", "-o", RUNNER_USER, "-g", group, "-m", "2750", records_dir_of(folder)])
     for name, text in (("job-started.sh", job_started_script(folder)), ("job-completed.sh", job_completed_script(folder))):
         rc, out = sudo(host, ["tee", f"{d}/{name}"], input=text)
         if rc != 0:
@@ -2182,9 +2201,166 @@ def gone_words(repo: str, mine: dict) -> str:
             "its folders and labels")
 
 
+CANCELED = "The operation was canceled."
+RECORDS_KEPT = 30  # the last jobs read back by `status`
+MATCH_S = 300  # a record and GitHub's job are the same job when they started this close together
+
+
+def read_records(host: Host, folder: str) -> list[dict]:
+    """The job hooks' lines (G5.7, G5.14): each start, with its end if the computer saw one."""
+    jobs: list[dict] = []
+    for line in (host.read(records_dir_of(folder) + "/jobs.log") or "").splitlines()[-4 * RECORDS_KEPT:]:
+        parts = line.split(" ", 5)
+        if len(parts) < 6 or parts[0] not in ("start", "end") or not parts[1].isdigit():
+            continue
+        kind, t, run, attempt, oom, name = parts
+        rec = {"t": int(t), "run": run, "attempt": attempt, "oom": int(oom) if oom.isdigit() else None, "job": name}
+        if kind == "start":
+            jobs.append({"start": rec, "end": None})
+        else:
+            for j in reversed(jobs):
+                if j["end"] is None and (j["start"]["run"], j["start"]["attempt"]) == (run, attempt):
+                    j["end"] = rec
+                    break
+    return jobs[-RECORDS_KEPT:]
+
+
+def unix_of(value: str) -> int | None:
+    m = re.search(r"@(\d+)", value or "")
+    return int(m.group(1)) if m else None
+
+
+def computer_record(host: Host, unit: str) -> dict:
+    """What this computer itself knows: when the runner's service last started and stopped, when it booted, when it
+    slept, and the slice's kill count now."""
+    rc, out = host.run(systemctl("show", unit, "-p", "ActiveEnterTimestamp", "-p", "InactiveEnterTimestamp",
+                                 "--timestamp=unix"))
+    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x) if rc == 0 else {}
+    m = re.search(r"^btime (\d+)$", host.read("/proc/stat") or "", re.M)
+    rc, out = host.run(journalctl("-u", "systemd-suspend.service", "-o", "short-unix", "--since", "-3d"))
+    sleeps = [int(float(x.split()[0])) for x in (out.splitlines() if rc == 0 else [])
+              if "Entering sleep state" in x and re.match(r"^\d+(\.\d+)?\s", x)]
+    oom = re.search(r"^oom_kill (\d+)$", host.read(MEMORY_EVENTS) or "", re.M)
+    # systemd keeps only the LAST start and stop times (seen: a reboot replaced the record of an earlier stop), so
+    # every stop of the runner's unit is also read from its journal.
+    rc, out = host.run(journalctl("-u", unit, "-o", "short-unix", "--since", "-3d"))
+    stops = [int(float(x.split()[0])) for x in (out.splitlines() if rc == 0 else [])
+             if re.match(r"^\d+(\.\d+)?\s", x) and re.search(r"Stopping |Stopped |Failed with result|Deactivated", x)]
+    for k in ("ActiveEnterTimestamp", "InactiveEnterTimestamp"):
+        if unix_of(got.get(k, "")):
+            stops.append(unix_of(got[k]))
+    return {"started": unix_of(got.get("ActiveEnterTimestamp", "")), "stopped": unix_of(got.get("InactiveEnterTimestamp", "")),
+            "stops": sorted(set(stops)), "boot": int(m.group(1)) if m else None, "sleeps": sleeps,
+            "oom": int(oom.group(1)) if oom else None}
+
+
+def github_job(gh: GitHub, repo: str, rec: dict, runner_name: str) -> dict | None:
+    if not rec["run"].isdigit():
+        return None
+    s, d = gh.api("GET", f"repos/{repo}/actions/runs/{rec['run']}/jobs?filter=all&per_page=100")
+    best = None
+    for j in ((d or {}).get("jobs", []) if s == 200 else []):
+        st = parse_stamp(j.get("started_at"))
+        if j.get("runner_name") != runner_name or st is None:
+            continue
+        if rec["attempt"].isdigit() and j.get("run_attempt") not in (None, int(rec["attempt"])):
+            continue
+        gap = abs(st.timestamp() - rec["t"])
+        if gap <= MATCH_S and (best is None or gap < best[0]):
+            best = (gap, j)
+    return best[1] if best else None
+
+
+def judge_cut(job: dict, notes: list[str], start: dict, end: dict | None, until: int, here: dict,
+              oom_after: int | None) -> tuple[str, str] | None:
+    """G5.7, G5.14: a job is named only when BOTH sides agree. GitHub: the job failed. This computer: its memory
+    limit killed something during the job (the slice's kill count rose), or the job had no end here and the service
+    stopped or restarted, or the computer booted or slept, during it. A job that came through a sleep is not cut."""
+    if job.get("conclusion") != "failure":
+        return None
+    t0 = start["t"]
+    if start["oom"] is not None and oom_after is not None and oom_after > start["oom"]:
+        return "killed", "this computer's memory limit"
+    gh_cut = any(s.get("conclusion") == "cancelled" for s in job.get("steps") or []) or any(CANCELED in n for n in notes)
+    if not gh_cut:
+        return None
+    if end is None:
+        if here.get("boot") and t0 < here["boot"] <= until:
+            return "cut", "a restart of this computer"
+        if any(t0 < s <= until for s in here.get("stops") or []):
+            return "cut", "a stop of this computer's runner service"
+    window_end = end["t"] if end else until
+    if any(t0 < s <= window_end for s in here.get("sleeps") or []):
+        return "cut", "this computer going to sleep"
+    return None
+
+
 def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rerun: int | None) -> list:
-    """G5.7 and G5.14 come in their own part; until then nothing is named."""
-    return [("stop", "naming cut jobs comes in the next part: nothing was run again")] if rerun is not None else []
+    """G5.7, G5.14: name the jobs a cut or our memory limit stopped, never as the person's test failing; offer each
+    a run again, once, only on the person's word (`status --rerun JOB_ID`)."""
+    lines = []
+    recs = read_records(host, mine["folder"])
+    here = computer_record(host, mine["unit"])
+    now = int(host.now().timestamp())
+    named = {}
+    for i, j in enumerate(recs):
+        nxt = recs[i + 1]["start"] if i + 1 < len(recs) else None
+        until = nxt["t"] if nxt else now
+        if j["end"] is not None:
+            oom_after = j["end"]["oom"]
+        else:
+            oom_after = nxt["oom"] if nxt else here.get("oom")
+        if j["end"] is None and nxt is None and runner_pids(host, mine["folder"], "Runner.Worker"):
+            continue  # still running
+        g = github_job(gh, repo, j["start"], mine["name"])
+        if g is None or g.get("conclusion") != "failure":
+            continue
+        s, notes = gh.api("GET", f"repos/{repo}/check-runs/{g['id']}/annotations")
+        msgs = [n.get("message") or "" for n in (notes if s == 200 and isinstance(notes, list) else [])]
+        verdict = judge_cut(g, msgs, j["start"], j["end"], until, here, oom_after)
+        kept = (data.get("named") or {}).get(str(g["id"]))
+        if verdict is None and kept:
+            verdict = (kept["kind"], kept["why"])  # named once, while this computer still had its record
+        if verdict is None:
+            continue
+        if not kept:
+            data.setdefault("named", {})[str(g["id"])] = {"kind": verdict[0], "why": verdict[1], "run": j["start"]["run"],
+                                                         "time": stamp(host.now())}
+            save_state(host, data)
+            journal(host, "named", f"{repo} job {g['id']}: {verdict[0]} by {verdict[1]}")
+        named[int(g["id"])] = g
+        when = hms(dt.datetime.fromtimestamp(j["start"]["t"], dt.timezone.utc))
+        done = int(g["id"]) in (data.get("reruns") or [])
+        again = (" It was run again once already." if done else
+                 f" To run it again, once: `status {repo} --rerun {g['id']}`.")
+        if verdict[0] == "killed":
+            lim = (mine.get("limits") or {}).get("MemoryMax")
+            lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was stopped by "
+                                  f"this computer's memory limit{' (' + gb(int(lim)) + ')' if lim else ''}, not by your "
+                                  "code failing; GitHub shows it as failed. The one way to change the limit: "
+                                  f"`setup --limits <processors>,<memory %>`.{again}"))
+        else:
+            lines.append(("warn", f"job '{g.get('name')}' (run {j['start']['run']}, started {when}) was cut by "
+                                  f"{verdict[1]}, not a failing test of yours; GitHub shows it as failed.{again}"))
+    if rerun is not None:
+        lines.append(rerun_once(gh, host, repo, rerun, named, data))
+    return lines
+
+
+def rerun_once(gh: GitHub, host: Host, repo: str, job_id: int, named: dict, data: dict) -> tuple[str, str]:
+    if job_id not in named:
+        return ("stop", f"job {job_id} is not one this computer cut or its limit stopped: nothing was run again")
+    if job_id in (data.get("reruns") or []):
+        return ("stop", f"job {job_id} was run again once already: it is not run a second time")
+    journal(host, "rerun", f"{repo} job {job_id}, on your word")
+    s, d = gh.api("POST", f"repos/{repo}/actions/jobs/{job_id}/rerun")
+    if s not in (200, 201, 204):
+        return ("stop", f"GitHub did not run job {job_id} again (HTTP {s})")
+    data.setdefault("reruns", []).append(job_id)
+    save_state(host, data)
+    return ("ok", f"asked GitHub to run job '{named[job_id].get('name')}' again, once; it lands here when this computer "
+                  "is free")
+
 
 
 def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
@@ -2214,6 +2390,8 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> str
         public_guard(gh, host, repo, data, rep)
         return f"{repo}: no longer private: held, drained, stopped"
     r = listed_runner(gh, repo, mine["name"])
+    if r is not None and not r.get("busy"):
+        name_cut_jobs(gh, host, repo, mine, data, None)  # named and kept now, while this computer has its record
     if r is None and s == 200:
         if not mine.get("gone_on_github"):
             gone_on_github(host, repo, data, rep)
