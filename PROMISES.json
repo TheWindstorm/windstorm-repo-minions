@@ -1152,7 +1152,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure",
-   "proven": "",
+   "proven": "By the owner's word, not held for the tag: the fault was met once on a real machine before the fix (2026-11-23, a stock Ubuntu 22.04.5 virtual machine: the start test said its run was left though GitHub answered 404 for it, with a 504 on a read moments later); the fix (three tries, \"left\" only when GitHub still answers with it, \"no clear answer\" otherwise) is tested and not seen on a machine, since GitHub giving no clear answer cannot be caused honestly.",
    "issue": 160,
    "moved_why": "",
    "moved_by_person": ""
