@@ -3720,6 +3720,15 @@ class Helpers(unittest.TestCase):
         self.assertEqual(d["message"], "patxyz is not patx; see .github/workflows/ci.yml")  # text is not a name field
         self.assertEqual(d["html_url"], "https://github.com/example-org/example-repo/commit/abc")
         self.assertEqual((d["full_name"], d["name"]), ("example-org/example-repo", "example-repo"))
+        # R43: real answers. GitHub's answer for a commit whose author was named "workflows" (the same word as a path
+        # segment) and which added docs/workflows/note.txt, recorded 2026-11-23 from the private proof repository
+        # and scrubbed by scrub.py: the name became Example Person, the path kept its word.
+        with open(os.path.join(FIX, "path-word-author.jsonl"), encoding="utf-8") as f:
+            real = json.loads(f.readline())
+        self.assertEqual(real["data"]["commit"]["author"]["name"], "Example Person")
+        self.assertEqual(real["data"]["commit"]["committer"]["name"], "Example Person")
+        self.assertEqual([f["filename"] for f in real["data"]["files"]], ["docs/workflows/note.txt"])
+        self.assertTrue(real["path"].startswith("repos/example-org/example-repo/commits/"))
         # Every committed fixture: scrubbing it again changes no path.
         for name in [x for x in os.listdir(FIX) if x.endswith(".jsonl")]:
             with open(os.path.join(FIX, name), encoding="utf-8") as f:
