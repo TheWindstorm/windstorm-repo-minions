@@ -144,7 +144,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_2_the_runner_runs_low_and_capped",
-   "proven": "",
+   "proven": "2026-11-23, two stock Ubuntu 24.04.5 virtual machines and the private proof repository, seen once each, nothing steered, the person's own work timed every 2 s throughout. On 4 processors and 7.8 GB, `setup` set jobs to at most 2 processors and 60 % of memory, nice 10, read back; five real workloads one at a time (a redis build, a CPython build, TypeScript's install and build, express's tests, rich's tests) passed inside them, the CPU cap binding the builds and none near the memory cap. On 2 processors and 3.9 GB, `setup` set at most 1 processor and 2.3 GB, kept out of swap, read back; the same five passed (the TypeScript build peaking at 2.29 GB, at the cap, not killed), with no kill and no swap, and the person's own work stayed near what it was with no job. The build tools were the person's step on the stock image (`make: command not found` before). Not seen: more than one runner on a computer (one repository per computer in this version).",
    "issue": 16,
    "moved_why": "",
    "moved_by_person": ""
@@ -1320,7 +1320,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_2_the_runner_runs_low_and_capped",
-   "proven": "2026-11-23, one stock Ubuntu 24.04.5 virtual machine with a swap file and the private proof repository, seen once, nothing steered, on this change's code before its swap read-back was added: `setup` wrote the slice and systemd read `MemoryHigh=infinity`, `MemoryMax=4996160716`, `MemorySwapMax=0`. A job holding 6 GB of random bytes was killed when it reached the cap (the run started 13:48:51Z and was read failed at 13:49:28Z, UTC), and `status` said `warn job 'j' (run 45187630529, ...) was stopped by this computer's memory limit (4.7 GB), not by your code failing ...`; a 3 GB job passed. GitHub, read through its API (the job's steps and annotations, not the page in a browser), showed the job's run step as failed with the annotation `Process completed with exit code 137.` and nothing naming memory. Not seen: `setup`'s read-back of the swap cap from the running slice (tested only), and a computer that does not hold the cap.",
+   "proven": "2026-11-23, one stock Ubuntu 24.04.5 virtual machine with a swap file and the private proof repository, seen once, nothing steered, on this change's code before its swap read-back was added: `setup` wrote the slice and systemd read `MemoryHigh=infinity`, `MemoryMax=4996160716`, `MemorySwapMax=0`. A job holding 6 GB of random bytes was killed when it reached the cap (the run started 13:48:51Z and was read failed at 13:49:28Z, UTC), and `status` said `warn job 'j' (run 45187630529, ...) was stopped by this computer's memory limit (4.7 GB), not by your code failing ...`; a 3 GB job passed. GitHub, read through its API (the job's steps and annotations, not the page in a browser), showed the job's run step as failed with the annotation `Process completed with exit code 137.` and nothing naming memory. The read-back, seen once each, nothing steered, on the merged code: on a stock Ubuntu 24.04.5 virtual machine `setup` said `ok jobs are kept out of this computer's swap, read back from the running slice` (the file read 0) and `doctor` said `ok every promise of the install read back as kept`; on a stock Ubuntu 20.04.6 virtual machine (the older mixed control-group layout) `setup` said `warn could not read whether jobs are kept out of swap: /sys/fs/cgroup/minions.slice/memory.swap.max is not there ...` and did not say or record it kept (that computer is now refused before any step, row R95). Not seen: the \"not kept\" answer (tested only).",
    "issue": 207,
    "moved_why": "",
    "moved_by_person": ""
@@ -1334,7 +1334,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_15_below_its_python_floor_the_tool_stops_before_any_step",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 20.04.6 virtual machine (Python 3.8.10), seen once, nothing steered, on the fix's commit: `look`, `setup` and `status` as the person each said `stop this tool needs Python 3.10 or newer, and this computer's python3 is 3.8.10; nothing was changed. This version runs where the system's own Python is new enough (Ubuntu 22.04 or newer, Debian 12 or newer): use such a computer for its jobs`, exit 2; after them neither the tool's state nor the runner user existed.",
    "issue": 210,
    "moved_why": "",
    "moved_by_person": ""
@@ -1348,7 +1348,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_9_a_runner_whose_setup_was_cut_before_its_unit_was_recorded_is_stopped_by_name",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine (2 processors, 3.9 GB) and the private proof repository, proven by the owner's word for what was seen, seen once, steered: the runner's record was moved by hand to the shape a cut setup leaves (`setting_up` with its name, folder, labels and time, and no unit: the record setup writes before it makes anything), while the runner's service was really active. That crash's own record on the stock Ubuntu 20.04 machine was not kept; the shape is as that crash's output showed it (an empty unit name in uninstall's stop line). `uninstall --all` as the person then said `ok the runner is stopped: the service is inactive, and no process of it is left`, stopping it by the name in the runner's own folder; the removal finished, exit 0, every census line `none`. Not seen: a setup really cut at that point.",
    "issue": 211,
    "moved_why": "",
    "moved_by_person": ""
