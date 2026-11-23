@@ -1492,6 +1492,34 @@
    "issue": 249,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R107",
+   "seen": "2026-11-23, the family's rule 8 as changed at 12:56 PM ET (from a sister skill's sighting that day on Claude Code 2.1.280 and 2.1.330: plugin uninstall leaves the cache folder marked `.orphaned_at`); read against this tool: after the skill is removed, the runner and its watch go on by design, but `status` said nothing of it.",
+   "promise": "`status` says when the skill's folder is gone or marked removed, that the runner goes on, and the one command that takes it off; the watch logs it once; a folder that could not be read is said as not read.",
+   "codon": "G6.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_12_the_runner_says_the_skill_was_removed_and_the_way_off",
+   "proven": "",
+   "issue": 252,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R108",
+   "seen": "2026-11-23, the family's rule 7 as changed at 12:56 PM ET, read against this tool: it printed install commands for macOS, Fedora and Arch that were never run; placeholders (`sudo kill <pid>`, `sudo gpasswd -d minions-runner <group>`, `sudo chmod 600` with no files); and lines run on stock virtual machines only in other forms (the GitHub CLI's apt line with -qq or -y, `chmod 750 $HOME`).",
+   "promise": "Every system command the tool prints was run exactly as printed on that kind of system, listed with where in `PRINTED_COMMANDS`; a release is refused while one is not; elsewhere a line says what is missing and where to read; no placeholders.",
+   "codon": "G8.16",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_16_every_printed_command_is_registered_with_where_it_was_run_as_printed",
+   "proven": "",
+   "issue": 254,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
