@@ -144,7 +144,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_2_the_runner_runs_low_and_capped",
-   "proven": "",
+   "proven": "2026-11-23, two stock Ubuntu 24.04.5 virtual machines and the private proof repository, seen once each, nothing steered, the person's own work timed every 2 s throughout. On 4 processors and 7.8 GB, `setup` set jobs to at most 2 processors and 60 % of memory, nice 10, read back; five real workloads one at a time (a redis build, a CPython build, TypeScript's install and build, express's tests, rich's tests) passed inside them, the CPU cap binding the builds and none near the memory cap. On 2 processors and 3.9 GB, `setup` set at most 1 processor and 2.3 GB, kept out of swap, read back; the same five passed (the TypeScript build peaking at 2.29 GB, at the cap, not killed), with no kill and no swap, and the person's own work stayed near what it was with no job. The build tools were the person's step on the stock image (`make: command not found` before). Not seen: more than one runner on a computer (one repository per computer in this version).",
    "issue": 16,
    "moved_why": "",
    "moved_by_person": ""
@@ -1348,7 +1348,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G6_9_a_runner_whose_setup_was_cut_before_its_unit_was_recorded_is_stopped_by_name",
-   "proven": "",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine (2 processors, 3.9 GB) and the private proof repository, proven by the owner's word for what was seen, seen once, steered: the runner's record was moved by hand to the shape a cut setup leaves (`setting_up` with its name, folder, labels and time, and no unit: the record setup writes before it makes anything), while the runner's service was really active. That crash's own record on the stock Ubuntu 20.04 machine was not kept; the shape is as that crash's output showed it (an empty unit name in uninstall's stop line). `uninstall --all` as the person then said `ok the runner is stopped: the service is inactive, and no process of it is left`, stopping it by the name in the runner's own folder; the removal finished, exit 0, every census line `none`. Not seen: a setup really cut at that point.",
    "issue": 211,
    "moved_why": "",
    "moved_by_person": ""
