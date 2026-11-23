@@ -162,6 +162,10 @@ amount, a promise that something costs nothing, or that the person spends less: 
   person asks to see them.
 - **The person's keys and logins.** Do not look into the person's keys, their `~/.ssh` folder, git's saved
   logins or any other saved login. Reach GitHub only as the tool does: through the GitHub CLI and its own login.
+- **The person's home.** In the person's home folder this skill uses only these: the clone
+  (`~/windstorm-repo-minions`), the GitHub CLI's own login (`~/.config/gh`, written by the person's `gh auth login`),
+  the tool's notes (`~/.minions`), and after uninstall the person's record (`~/repo-minions-record`). It changes no
+  other file of theirs; neither do you.
 - **What uninstall kept.** Never delete, and never offer to delete, what an uninstall kept (the person's record of
   what this tool did), unless the person asks for it in their own words in this conversation.
 - **Merge rules.** Never tell the person that required checks or branch protection hold their merges unless look
