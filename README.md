@@ -16,7 +16,7 @@ Tell your coding agent:
 > Go to https://github.com/TheWindstorm/windstorm-repo-minions and set it up for my repository OWNER/NAME.
 
 **If you are the agent that was sent here:**
-1. Clone this repository: `git clone https://github.com/TheWindstorm/windstorm-repo-minions`.
+1. Clone this repository into the person's home folder: `cd ~ && git clone https://github.com/TheWindstorm/windstorm-repo-minions`.
 2. Read `skills/repo-minions/SKILL.md` and follow it, in its order.
 3. Stop and ask the person at each step the skill marks as theirs.
 4. Do not invent steps. If the skill does not say what to do, ask the person. A step that is the person's is never
@@ -37,8 +37,8 @@ The tool the skill runs is `scripts/minions.py`. It uses only Python's standard 
 - merging the pull request that moves your jobs (the tool never merges);
 - a yes for each job that publishes or deploys, if you want it moved too.
 
-Or do it by hand: clone the repository and run `python3 -I windstorm-repo-minions/scripts/minions.py look
-OWNER/NAME`, then `setup`, then `move`, as `SKILL.md` describes.
+Or do it by hand: clone the repository into your home folder and run
+`python3 -I windstorm-repo-minions/scripts/minions.py look OWNER/NAME`, then `setup`, then `move`, as `SKILL.md` describes.
 
 **Why private only.** On a public repository, a stranger's pull request could run code on your computer, as GitHub's
 own documentation warns. The tool refuses a public repository. If one is made public later, it holds and stops the
