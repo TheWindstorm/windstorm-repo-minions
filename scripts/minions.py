@@ -2684,6 +2684,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rest.append(("ok" if word in ("idle", "busy") and not held else "warn",
                      f"{mine['name']} for {rp}: {word}. {sides}; {survey_words(data, rp)}{hold_words}"))
         # G11.4 (R74): GitHub has shown it offline for more than two watch intervals while its service runs here.
+        # R86: the watch reads GitHub once a pass, so the line says what was read (each pass, and now), not that
+        # GitHub showed it offline the whole span: between passes it may have been online.
         since = parse_stamp(mine.get("offline_since"))
         every = int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S)
         # R85: counted in waking time, as the watch's own timer is: a computer that slept was not offline meanwhile
@@ -2694,8 +2696,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         if (since and r is not None and r.get("status") != "online" and active == "active" and not worker
                 and awake > 2 * every):
             span = minutes((now - since).total_seconds()) + (f", {minutes(awake)} of it awake" if asleep else "")
-            first.append(("warn", f"{mine['name']} for {rp}: GitHub has shown it offline since {hms(since)} "
-                                  f"({span}) while its service runs here, so no job "
+            first.append(("warn", f"{mine['name']} for {rp}: GitHub has shown it offline at every watch pass "
+                                  f"since {hms(since)} ({span}), and now, while its service runs here, so no job "
                                   "lands on it. A runner usually comes back by itself within a few minutes of a wake "
                                   f"or of the network returning; this one has not. `drain {rp} --stop`, then "
                                   f"`resume {rp}`, starts it fresh (each asks for the admin password once)"))
