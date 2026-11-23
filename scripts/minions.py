@@ -2720,7 +2720,35 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
         return f"{repo}: GitHub no longer lists {mine['name']}", why
     if r is None:
         return f"{repo}: GitHub not read (HTTP {s}){': ' + why if why else ''}", why
-    return f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}", why
+    return f"{repo}: {r.get('status')}, {'busy' if r.get('busy') else 'not busy'}" + disk_pass(gh, host, repo, data,
+                                                                                            rep), why
+
+
+DISK_HOLD = "low disk"
+DISK_LIFT_MARGIN = 1024 ** 3  # G4.3: lifted only at the floor plus this, so a disk near the floor does not flap
+
+
+def disk_pass(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> str:
+    """G4.3 (P4): below the free-space floor our runner is held before the disk fills, and the hold lifts by itself
+    once the space is back. Read as the person: the runner user's home is not opened, only its file system measured.
+    A runner already held for another reason is left as it is."""
+    mine = data["runners"][repo]
+    u = host.disk_free(f"/home/{RUNNER_USER}")
+    if u is None:
+        return "; free space not read"
+    free, held = u[0], mine.get("held_for")
+    if free < DISK_FLOOR and not held:
+        journal(host, "low disk", f"{repo}: {gb(free)} free for the work folders, under the {gb(DISK_FLOOR)} floor")
+        if hold_runner(gh, host, repo, data, rep, DISK_HOLD) is None:
+            return f"; {gb(free)} free, under the floor: the hold could not be taken yet (the next pass tries again)"
+        return f"; held: {gb(free)} free, under the {gb(DISK_FLOOR)} floor"
+    if held == DISK_HOLD and free >= DISK_FLOOR + DISK_LIFT_MARGIN:
+        if lift_hold(gh, host, repo, data, rep, tries=1):
+            return f"; the hold for low disk lifted: {gb(free)} free"
+        return f"; {gb(free)} free again: the hold could not be lifted yet (the next pass tries again)"
+    if held == DISK_HOLD:
+        return f"; held for low disk: {gb(free)} free, lifted at {gb(DISK_FLOOR + DISK_LIFT_MARGIN)}"
+    return ""
 
 
 def public_guard(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None:

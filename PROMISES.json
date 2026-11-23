@@ -918,6 +918,20 @@
    "issue": 108,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R66",
+   "seen": "2026-11-23, proof P4 on a stock Ubuntu 24.04 machine: 4 GB free for the work folders, and the watch said only \"online, not busy\"; nothing held the runner.",
+   "promise": "Below the free-space floor the watch holds our runner before the disk fills, and lifts that hold by itself once the space is back.",
+   "codon": "G4.3",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G4_3_below_the_floor_the_watch_holds_and_lifts_by_itself",
+   "proven": "",
+   "issue": 115,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
