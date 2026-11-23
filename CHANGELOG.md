@@ -14,6 +14,11 @@ Since those cold starts one default changed: a job that needs more memory than i
 reaches the cap, by name, instead of running slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises
 the cap (row R94).
 
+- `look`'s block for the person also says what a job too big for the memory cap does, and that a job has only the
+  tools installed on this computer. In a cold start these were in the README only and did not reach the person
+  (G7.10, row R98).
+- `look` reads the login's scopes from GitHub's own answer where the GitHub CLI does not print them (gh 2.4.0,
+  Ubuntu 22.04's); it said it could not read them (G1.3, row R97).
 - Below Python 3.10 every command stops before any step, saying the version found and that this version runs on
   Ubuntu 22.04 or newer and Debian 12 or newer. On Ubuntu 20.04 (Python 3.8) there was no check: `setup` made and
   started the runner, then failed (G8.15, row R95).

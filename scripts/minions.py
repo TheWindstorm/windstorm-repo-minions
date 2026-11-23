@@ -514,7 +514,15 @@ def token_scopes(host: Host) -> set[str] | None:
         return None
     m = re.search(r"Token scopes:\s*(.+)", out)
     if not m:
-        return None
+        # R97: an older gh (2.4.0 on Ubuntu 22.04) prints no scopes; GitHub itself sends them with every answer to a
+        # classic token, in the X-OAuth-Scopes header. Only that header's names are read; a token without it
+        # (fine-grained) stays "could not read".
+        rc, out = host.run(["gh", "api", "-i", "user"])
+        head = out.split("\r\n\r\n", 1)[0].split("\n\n", 1)[0] if rc == 0 else ""
+        h = re.search(r"^X-Oauth-Scopes:[ \t]*(.*?)\r?$", head, re.M | re.I)
+        if not h:
+            return None
+        return {x.strip() for x in h.group(1).split(",") if x.strip()}
     # R79: newer gh quotes each scope ('repo', 'workflow'); older gh (2.23 on Debian 12) prints them bare.
     return set(re.findall(r"'([^']+)'", m.group(1))) or {x.strip() for x in m.group(1).split(",") if x.strip()}
 
@@ -4559,6 +4567,12 @@ LAPTOP_WORDS = ("a laptop takes jobs only while it is awake, on the network and 
                 "`resume <owner/repo> --on-battery-too` lets it take jobs on battery as well")
 
 
+MEMORY_TRADE_OFF = ("A job that needs more memory than that fails when it reaches the cap, and `status` names it, "
+                    "instead of running slowly; jobs are kept out of this computer's swap where it holds that.")
+JOB_TOOLS = ("A job here has only the tools installed on this computer. GitHub's own computers come with many tools "
+             "already installed, so a job that stops with \"command not found\" needs that tool installed here.")
+
+
 def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
     """G7.10 (P1a run B): what the person must hear before setup, printed by the tool for the agent to pass on word
     for word. A list in the skill file was skipped by a small model; a line the tool prints is not."""
@@ -4575,6 +4589,8 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
              f"puts it to sleep, {sleep_delay_words(s.get('sleep_delay'))}. `status` names a job cut that way as cut, "
              "not as your test failing.")
     rep.tell(floor or limits_in_words(lim))
+    rep.tell(MEMORY_TRADE_OFF)  # R98: said by the tool, so it reaches the person; the README alone did not
+    rep.tell(JOB_TOOLS)
     if s.get("battery"):
         rep.tell("This computer has a battery: " + LAPTOP_WORDS + ".")
     elif s.get("lid"):
