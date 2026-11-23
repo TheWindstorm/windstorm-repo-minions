@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- GitHub's API limit: when GitHub refuses for it, the tool names it with GitHub's reset time, makes no call until
+  then, and a drain's or `move --verify`'s wait ends with a `waiting` line instead of polling into it; the
+  watch's line says it comes back by itself (G8.14, row R68).
 - `status` begins with its worst true line: a runner neither idle nor busy is a `warn`, and jobs waiting on a
   runner that is offline or held are a `warn`, first, with what they wait behind and the way on (G5.1, row R67).
 - Below 5 GB free for the work folders, the watch holds our runner before the disk fills, and lifts the hold by

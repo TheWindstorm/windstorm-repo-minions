@@ -292,8 +292,18 @@ class GitHub:
     def __init__(self, host: Host):
         self.host = host
         self.why = ""  # G5.15: why the last call got no HTTP answer, in words
+        self.limited_until: dt.datetime | None = None  # G8.14: GitHub's API limit for this login, spent until then
+
+    def limited(self) -> bool:
+        until = getattr(self, "limited_until", None)
+        host = getattr(self, "host", None)
+        now = host.now() if host is not None else dt.datetime.now(dt.timezone.utc)
+        return until is not None and now < until
 
     def api(self, method: str, path: str, body: dict | None = None) -> tuple[int, object]:
+        if self.limited():  # G8.14: no call while the limit is spent; each one would only be refused
+            self.why = limit_words(self.limited_until)
+            return 429, {"message": self.why}
         argv = ["gh", "api", "-i", "-X", method, path, "-H", "Accept: application/vnd.github+json"]
         stdin = None
         if body is not None:
@@ -311,6 +321,10 @@ class GitHub:
             return 0, {"message": self.why}
         status, data = parse_include(raw)
         self.why = "" if status else ("GitHub gave no answer: " + (tail(p.stderr or "", 2) or "no words"))
+        until = rate_limited_until(raw, status, data, self.host.now())
+        if until is not None:
+            self.limited_until = until
+            self.why = limit_words(until)
         rec = os.environ.get("MINIONS_RECORD")
         if rec:
             kept = data
@@ -326,6 +340,34 @@ class GitHub:
         if status != 200:
             raise GitHubError(status, data)
         return data
+
+
+WATCH_CALLS_PER_HOUR = 24  # G8.14: one pass reads the repository and its runners (2 calls), every 5 minutes
+
+
+def rate_limited_until(raw: str, status: int, data: object, now: dt.datetime) -> dt.datetime | None:
+    """G8.14: when GitHub refused for its API limit (HTTP 403 or 429 with no calls left, or its words say so), the
+    time it comes back, from GitHub's own headers; None for any other answer."""
+    if status not in (403, 429):
+        return None
+    head = re.split(r"\r?\n\r?\n", raw or "", maxsplit=1)[0]
+    left = re.search(r"(?im)^x-ratelimit-remaining:\s*(\d+)", head)
+    words = str((data or {}).get("message", "")) if isinstance(data, dict) else ""
+    reset = re.search(r"(?im)^x-ratelimit-reset:\s*(\d+)", head)
+    retry = re.search(r"(?im)^retry-after:\s*(\d+)", head)  # GitHub's secondary limit says only this
+    if not ((left and left.group(1) == "0") or "rate limit" in words.lower() or retry):
+        return None
+    if retry:
+        return now + dt.timedelta(seconds=int(retry.group(1)))
+    if reset:
+        return dt.datetime.fromtimestamp(int(reset.group(1)), dt.timezone.utc)
+    return now + dt.timedelta(seconds=60)
+
+
+def limit_words(until: dt.datetime) -> str:
+    return (f"GitHub's API limit for this login is spent until {until.strftime('%H:%MZ')}, and it comes back by itself "
+            "then. Every program logged in as this account shares that limit; this tool's watch uses about "
+            f"{WATCH_CALLS_PER_HOUR} calls an hour of it")
 
 
 def parse_include(raw: str) -> tuple[int, object]:
@@ -2138,6 +2180,9 @@ def wait_idle(gh: GitHub, host: Host, repo: str, mine: dict, wait_s: int, poll_s
     said = False
     while True:
         r = listed_runner(gh, repo, mine["name"]) or {}
+        if gh.limited():  # G8.14: never poll into a spent limit
+            rep.wait(f"for GitHub: {gh.why}. Held, nothing stopped. Next: `{next_cmd}` again after that time")
+            return "running"
         busy = bool(r.get("busy"))
         worker = runner_pids(host, mine["folder"], "Runner.Worker")
         if not busy and not worker:
@@ -2686,7 +2731,9 @@ def write_seen(host: Host, mine: dict, value: str) -> str:
 
 def blind_words(repo: str, b: dict, every_s: int) -> str:
     held = b["passes"] >= SEEN_PASSES
-    way = ("log in again with `gh auth login`" if "auth login" in b["why"] or "401" in b["why"] else
+    way = ("nothing to do now: it comes back by itself at the time named; if it is spent again, something else logged "
+           "in as this account uses it up" if "API limit" in b["why"] else
+           "log in again with `gh auth login`" if "auth login" in b["why"] or "401" in b["why"] else
            "make `gh` reachable, then run `setup` again from a terminal where `gh` works (it finds gh's folder again)"
            if "could not be found" in b["why"] or "could not be run" in b["why"] else
            "check this computer's network; the next pass reads again by itself")
@@ -3335,6 +3382,9 @@ def find_or_start_run(gh: GitHub, host: Host, repo: str, path: str, base: str, m
         done = [r for r in runs if r.get("status") == "completed"]
         if done:
             return done[0]
+        if gh.limited():  # G8.14: never poll into a spent limit
+            rep.wait(f"{path}: {gh.why}. Run `move {repo} --verify` again after that time")
+            return None
         if left <= 0:
             break
         host.sleep(poll_s)

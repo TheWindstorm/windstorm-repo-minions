@@ -2873,6 +2873,62 @@ class G9(unittest.TestCase):
         self.assertEqual(host.run(["sudo", "-n", "true"])[0], 1)
 
 
+class G8Limit(unittest.TestCase):
+    def test_G8_14_a_spent_api_limit_is_named_and_never_polled_into(self):
+        # Seen 2026-11-23: the fleet's login spent its 5000 calls; every call then was refused with HTTP 403 until
+        # GitHub's reset, and the watch's words said to check the network.
+        now = M.parse_stamp("2026-11-23T05:13:28Z")
+        head = ("HTTP/2.0 403 Forbidden\r\nX-Ratelimit-Limit: 5000\r\nX-Ratelimit-Remaining: 0\r\n"
+                "X-Ratelimit-Reset: {}\r\n\r\n".format(int(M.parse_stamp("2026-11-23T05:20:27Z").timestamp())))
+        spent = head + '{"message": "API rate limit exceeded for user ID 1."}'
+        self.assertEqual(M.rate_limited_until(spent, 403, {"message": "API rate limit exceeded"}, now),
+                         M.parse_stamp("2026-11-23T05:20:27Z"))
+        self.assertEqual(M.rate_limited_until("HTTP/2.0 429 Too Many\r\nRetry-After: 60\r\n\r\n{}", 429, {}, now),
+                         now + M.dt.timedelta(seconds=60))
+        self.assertIsNone(M.rate_limited_until("HTTP/2.0 403 Forbidden\r\n\r\n{}", 403,
+                                               {"message": "Resource not accessible by integration"}, now))
+        self.assertIsNone(M.rate_limited_until("HTTP/2.0 200 OK\r\n\r\n{}", 200, {}, now))
+        # The wrapper: one refused call, then no call at all until the reset, then calls again.
+        host = linux_host()
+        clock = Clock(host, "2026-11-23T05:13:28Z")
+        gh = M.GitHub(host)
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            out = spent if len(calls) == 1 else "HTTP/2.0 200 OK\r\n\r\n{\"private\": true}"
+            return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+        orig = M.subprocess.run
+        M.subprocess.run = run
+        try:
+            self.assertEqual(gh.api("GET", f"repos/{REPO}")[0], 403)
+            s, d = gh.api("GET", f"repos/{REPO}")
+            self.assertEqual((s, len(calls)), (429, 1))
+            self.assertIn("GitHub's API limit for this login is spent until 05:20Z", d["message"])
+            self.assertIn("this tool's watch uses about 24 calls an hour", d["message"])
+            clock.sleep(420)
+            self.assertEqual(gh.api("GET", f"repos/{REPO}")[0], 200)
+            self.assertEqual(len(calls), 2)
+        finally:
+            M.subprocess.run = orig
+        # The watch's words: the limit and its time, and that it comes back by itself, never "check the network".
+        b = {"why": M.limit_words(M.parse_stamp("2026-11-23T05:20:27Z")), "passes": 1, "since": "2026-11-23T05:13:28Z"}
+        words = M.blind_words(REPO, b, 300)
+        self.assertIn("spent until 05:20Z", words)
+        self.assertIn("it comes back by itself at the time named", words)
+        self.assertNotIn("network", words)
+        # drain's wait ends at once with a `waiting` line instead of polling into the limit.
+        host, clock = g5_host(worker=True)
+        gh = StatusGH(busy=True)
+        gh.limited_until = M.parse_stamp("2026-11-23T23:59:00Z")
+        gh.why = M.limit_words(gh.limited_until)
+        code, lines = run_cmd(M.drain, REPO, host=host, gh=gh)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertIn("GitHub's API limit for this login is spent until 23:59Z", lines[-1])
+        self.assertIn("Held, nothing stopped", lines[-1])
+        self.assertLess(clock.t - M.parse_stamp("2026-11-22T23:00:00Z"), M.dt.timedelta(seconds=60))
+
+
 class G8Words(unittest.TestCase):
     NEXT = re.compile(r"`|\bagain\b|\bfirst\b|\bcheck\b|\bwrite owner|\bno step to take\b|\bopen an issue\b|\bask\b|"
                       r"\btype\b|\bFree some space\b|\bmerge\b|\bsettle\b|\bway out\b|\brun\b|\binstall\b", re.I)
