@@ -3616,17 +3616,22 @@ class P1a(unittest.TestCase):
 
     def test_G4_9_the_delay_said_is_the_one_this_computer_gives(self):
         # R48: the words name logind's own delay, read without admin rights, never a fixed number.
+        def move_words(host):  # G7.14: look reads the delay; move says it, from look's record of this computer
+            lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
+            survey = next(iter(M.load_state(host)["looks"].values()))["survey"]
+            rep = M.Report(io.StringIO())
+            M.before_move_words(survey, rep)
+            rep.code()
+            return lines, " ".join(tells_of(rep.lines))
         host = linux_host(runs={tuple(M.LOGIND_DELAY): (0, "t 30000000\n")})
-        lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
+        lines, said = move_words(host)
         self.assertIn("ok a sleep asked while a job runs is put off by at most 30 s (logind's delay)", lines)
-        self.assertIn("still puts it to sleep, about 30 seconds later (this computer's own delay).", " ".join(tells_of(lines)))
+        self.assertIn("still puts it to sleep, about 30 seconds later (this computer's own delay).", said)
         self.assertFalse([a for a in host.ran if a[:1] == ("sudo",) and "busctl" in a])
         for answer, words in (((1, "Failed to get property\n"), "a little later (how much later could not be read on "
                                                                   "this computer)"),
                               ((0, "t 0\n"), "still puts it to sleep, at once.")):
-            host = linux_host(runs={tuple(M.LOGIND_DELAY): answer})
-            lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
-            self.assertIn(words, " ".join(tells_of(lines)))
+            self.assertIn(words, move_words(linux_host(runs={tuple(M.LOGIND_DELAY): answer}))[1])
         self.assertIn("warn the delay a sleep gets while a job runs: not read",
                       look(StandIn(load("look-recent-runs.jsonl")), linux_host())[1])
 
@@ -3639,14 +3644,12 @@ class P1a(unittest.TestCase):
         said = " ".join(tells)
         for words in ("Anyone who can push to example-org/example-repo can run code on this computer",
                       "This is for a private repository only",
-                      "While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has "
-                      "waited 24 hours.",
-                      "A restart of this computer cancels the job running on it",
                       "This version serves one repository per computer",
-                      M.COST_POINTER,
-                      # R98: a cold start on the shipping README showed these reached the person only from the tool
-                      M.MEMORY_TRADE_OFF, M.JOB_TOOLS):
+                      M.COST_POINTER):
             self.assertIn(words, said)
+        # G7.14 (R111): what matters only once jobs move, or once one is stopped at the cap, is said there instead.
+        for later in ("your checks wait", "A restart of this computer", M.JOB_TOOLS, M.MEMORY_TRADE_OFF):
+            self.assertNotIn(later, said)
         limits = next(x for x in lines if x.startswith("ok jobs here get at most"))
         self.assertIn(limits[len("ok "):], tells)  # the limits, word for word as look printed them
         self.assertFalse(any(x.startswith("This computer has a battery") for x in tells))  # no laptop sentence
@@ -3673,13 +3676,37 @@ class P1a(unittest.TestCase):
             self.assertNotIn(never, said)
         self.assertEqual(len([x for x in lines if x.startswith("ok GitHub's billing page, read ")]), 1, lines)
 
+    def test_G7_14_each_line_for_the_person_is_said_at_the_stop_where_it_matters(self):
+        # The owner's ruling (2026-11-23, rule 7, row R111): nine lines before setup were pasted whole in one small-model
+        # run of three; what matters only once jobs move is move's own block, the last thing before the merge it asks
+        # for; the memory cap's trade-off is said where status names a job the cap stopped.
+        host, gh = move_host(), MoveGH(G3.FILES)
+        lines = run_move(gh, host)[1]
+        tells = [x for x in lines if TELL.match(x)]
+        self.assertEqual([TELL.match(x).groups() for x in tells], [("1", "3"), ("2", "3"), ("3", "3")], lines)
+        said = " ".join(tells_of(lines))
+        for words in ("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has "
+                      "waited 24 hours.", "A restart of this computer cancels the job running on it", M.JOB_TOOLS):
+            self.assertIn(words, said)
+        last_tell = max(i for i, x in enumerate(lines) if TELL.match(x))
+        self.assertEqual(last_tell, len(lines) - 2, lines)
+        self.assertTrue(lines[-1].startswith("need you: read and merge pull request #12 yourself"), lines)
+        # status: a job the cap stopped is named, then the trade-off, as its own one-line block at the end
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        failed = {"conclusion": "failure", "steps": [{"name": "Build", "conclusion": "failure"}]}
+        host, gh, _ = G5._named(G5(), f"start {t0} 555 1 0 check\nend {t0 + 70} 555 1 1 check\n", failed,
+                                     notes=["Process completed with exit code 137."])
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertEqual(lines[-1], "tell the person 1 of 1: " + M.MEMORY_TRADE_OFF, lines)
+        self.assertNotIn("than that", M.MEMORY_TRADE_OFF)  # it stands alone now, away from the limits line
+
     def test_G7_12_the_tell_block_carries_only_what_the_person_must_hear_within_a_bound(self):
         # Seen 2026-11-23 (row R104): the smallest model kept all nine lines in meaning but reworded seven and lost
         # three clauses, each only good to know. What is only good to know lives in the README; the block is bound.
         for host in (linux_host(), linux_host(files={"/sys/class/power_supply/BAT0/type": "Battery\n"},
                                               dirs={"/sys/class/power_supply": ["BAT0"]})):
             tells = tells_of(look(StandIn(load("look-recent-runs.jsonl")), host)[1])
-            self.assertLessEqual(len(tells), 10, tells)
+            self.assertLessEqual(len(tells), 6, tells)  # G7.14 (R111): six at most before setup, laptop included
             rest = [x for x in tells if x != M.COST_POINTER]  # G7.13 holds its words
             self.assertEqual(len(rest), len(tells) - 1, "the cost pointer is one line of the block")
             self.assertLessEqual(max(len(x) for x in rest), 420, rest)
