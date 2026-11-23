@@ -1632,7 +1632,7 @@ def limits_in_words(lim: dict) -> str:
              f"{lim['pct']} % of its memory ({gb(int(lim['MemoryMax']))}); the one way to change that is "
              "`setup <owner/repo> --limits <processors>,<memory %>`")
     if total == 1:  # the owner's ruling, 2026-11-23: warned plainly, never refused, never hidden by a rounding
-        words += (". This computer has one processor: while a job runs it uses all of it, at low priority, and "
+        words += ("; this computer has one processor: while a job runs it uses all of it, at low priority, and "
                   "everything else here will be slow")
     return words
 
@@ -3967,8 +3967,17 @@ def open_move_pr(gh: GitHub, host: Host, repo: str, base: str, changed: dict[str
     return {"number": pr["number"], "url": pr.get("html_url"), "branch": branch}
 
 
-def pr_body(moved: list, left: list, publish: list, here: list) -> str:
-    out = ["This pull request changes only `runs-on` lines, so these jobs run on your own computer's runner "
+def move_lines(s: dict) -> list[str]:
+    """move's block as a list: one source for the agent's block and the pull request's own words (G7.17)."""
+    lines = _Lines()
+    before_move_words(s, lines)
+    return list(lines)
+
+
+def pr_body(moved: list, left: list, publish: list, here: list, first: list[str] | None = None) -> str:
+    # G7.17 (R116): the page the person reads when they decide carries move's lines, word for word, above all else.
+    out = (["## Before you merge", ""] + [f"- {x}" for x in first] + [""]) if first else []
+    out += ["This pull request changes only `runs-on` lines, so these jobs run on your own computer's runner "
            "(labels `minions`). Nothing else in your workflows changes. The tool that opened it never merges it: "
            "you do.", "", "## Moved"]
     out += [f"- `{p}` job `{j}`: {w}" for p, j, w in moved]
@@ -4049,7 +4058,7 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     if not moved:
         rep.ok("no job can move to this computer now; nothing was changed")
         return rep.code()
-    pr = open_move_pr(gh, host, repo, base, changed, pr_body(moved, left, publish, here), rep)
+    pr = open_move_pr(gh, host, repo, base, changed, pr_body(moved, left, publish, here, move_lines(survey_)), rep)
     if pr is None:
         return rep.code()
     data = load_state(host)
@@ -4953,13 +4962,12 @@ def before_move_words(s: dict, rep: Report) -> None:
     """G7.14 (R111): what the person must hear before their merge moves jobs here, printed by `move` as its own
     numbered block just before it asks for that merge (the owner's ruling, 2026-11-23: each line at the moment it
     matters; nine lines before setup were more than the smallest model carried whole)."""
-    rep.tell("While this computer is off, asleep or held, your checks wait. GitHub cancels a check that has waited "
-             f"{GITHUB_GIVES_UP_H} hours.")
-    rep.tell("A restart of this computer cancels the job running on it. A short sleep only delays it; a sleep of more "
-             f"than about {LONG_SLEEP_MIN} minutes fails it on GitHub. While a job "
-             "runs, this computer does not fall asleep by itself; a sleep you ask for, the lid, or a low battery still "
-             f"puts it to sleep, {sleep_delay_words(s.get('sleep_delay'))}. `status` names a job cut that way as cut, "
-             "not as your test failing.")
+    rep.tell("While this computer is off, asleep or held, your checks wait, and GitHub cancels a check that has "
+             f"waited {GITHUB_GIVES_UP_H} hours.")
+    rep.tell("A restart of this computer cancels the job running on it, a short sleep only delays it, and a sleep of "
+             f"more than about {LONG_SLEEP_MIN} minutes fails it on GitHub, which `status` names as cut, not as your "
+             "test failing; while a job runs, this computer does not fall asleep by itself, but a sleep you ask for, "
+             f"the lid or a low battery still puts it to sleep, {sleep_delay_words(s.get('sleep_delay'))}.")
     rep.tell(JOB_TOOLS)
 
 
@@ -4969,9 +4977,9 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
     before setup (G7.14): the rest is said where it matters."""
     rep.tell(f"Anyone who can push to {repo} can run code on this computer, as its own user {RUNNER_USER}, which "
              "has no admin rights.")
-    rep.tell("This is for a private repository only: on a public one, a stranger's pull request could run code on "
-             f"this computer. The tool refuses a public repository, and if {repo} is made public later, its runner "
-             "stops taking jobs.")
+    rep.tell(f"This is for a private repository only: the tool refuses a public one, and if {repo} is made public "
+             "later its runner stops taking jobs, because on a public one a stranger's pull request could run code on "
+             "this computer.")
     rep.tell(floor or limits_in_words(lim))
     # G7.14 (R111): waiting checks, restarts and sleep, and a job's tools are said by `move`, before the merge that
     # moves jobs here; the memory cap's trade-off by `status`, where it names a job the cap stopped.
@@ -4990,10 +4998,9 @@ class _Lines(list):
         self.append(text)
 
 
-ADMIN_MAKES = (f"With your admin password, setup makes on this computer: the user {RUNNER_USER}, GitHub's runner as a "
-               "service that starts at boot, a slice that holds the limits, job hooks, and the watch, a timer that runs "
-               "this tool's own copy every 5 minutes. Each step is written down first, and that journal is kept for you "
-               "as your record.")
+ADMIN_MAKES = (f"With your admin password, setup makes the user {RUNNER_USER}, GitHub's runner as a service that starts "
+               "at boot, a slice that holds the limits, job hooks and the watch (a timer that runs this tool's own copy "
+               "every 5 minutes), and it writes each step first in a journal that is kept for you as your record.")
 MEMORY_BEFORE_SETUP = ("A job that needs more memory than this computer's limit for jobs is stopped when it reaches it, "
                        "and `status` names it; where this computer cannot keep jobs out of its swap, such a job may run "
                        "slowly instead, and setup says so.")  # true either way: whether swap is held is read only later
@@ -5018,15 +5025,15 @@ def uninstall_lines(host: Host, repo: str | None, everything: bool, data: dict) 
     moves = data.get("moves") or {}
     if everything:
         lines = ["This takes off this computer every runner of this tool, the watch, the slice, the user "
-                 f"{RUNNER_USER} and this tool's copy. New jobs are held first, so none starts here while it works."]
+                 f"{RUNNER_USER} and this tool's copy, holding new jobs first so that none starts here while it works."]
     else:
-        lines = [f"This takes the runner for {repo} off this computer. New jobs are held first, so none starts here "
-                 "while it works. The watch, the slice and the user stay until `uninstall --all`."]
+        lines = [f"This takes the runner for {repo} off this computer, holding new jobs first so that none starts here "
+                 "while it works, and leaves the watch, the slice and the user until `uninstall --all`."]
     lines.append(f"Your record of what this tool did is kept in {record}; deleting it is only ever your own choice.")
     if everything and moves:
-        lines.append("Then it opens a pull request that puts each moved job back where it ran before: you merge it, "
-                     "and until then those jobs wait for a runner. Opening it starts its own checks, as any pull "
-                     "request does.")
+        lines.append("Then it opens a pull request that puts each moved job back where it ran before, which you merge "
+                     "and which starts its own checks when it opens, as any pull request does; until you merge it, "
+                     "those jobs wait for a runner.")
     elif not everything and repo in moves:
         lines.append(f"The jobs of {repo} moved here still ask for this tool's runner, so they wait for one until a "
                      "pull request puts them back; `uninstall --all` opens it.")

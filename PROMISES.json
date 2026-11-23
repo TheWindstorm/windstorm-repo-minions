@@ -1618,6 +1618,20 @@
    "issue": 273,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R116",
+   "seen": "2026-11-23, run I: the agent shortened move's three-line block before the merge; the move pull request, the page the person reads when they decide, did not carry those lines.",
+   "promise": "The move pull request's description opens with move's own lines, word for word from one source, above anything else.",
+   "codon": "G7.17",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_17_the_move_pull_request_opens_with_moves_lines",
+   "proven": "",
+   "issue": 275,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
