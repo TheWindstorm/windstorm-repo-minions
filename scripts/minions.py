@@ -614,19 +614,27 @@ def check_github_cli(host: Host, rep: Report) -> bool:
     return check_gh_road(host, rep)
 
 
-def saved_account(status: str) -> str | None:
-    """R144: the account gh acts as on github.com, from `gh auth status --hostname github.com`. A newer gh lists every
-    saved account with "Active account: true|false" under each; an older one lists one, with no such line. None when
-    no name can be read, or when several are listed and none is marked active."""
-    blocks = re.split(r"(?=Logged in to github\.com (?:account|as) )", status)[1:]
-    names = [(re.match(r"Logged in to github\.com (?:account|as) ([A-Za-z0-9-]+)", b), b) for b in blocks]
-    names = [(m.group(1), b) for m, b in names if m]
-    if not names:
-        return None
-    active = [n for n, b in names if re.search(r"Active account:\s*true", b)]
-    if active:
-        return active[0]
-    return names[0][0] if len(names) == 1 else None
+def login_read(host: Host) -> tuple[str, str | None, str]:
+    """G1.18 (R146, family rule 6: AN EXIT CODE CAN SAY "NO" FOR "COULD NOT ASK"): whether gh's saved login for
+    github.com works, in three answers, from one `gh api -i user`. `gh auth status` cannot tell them apart: seen on
+    Ubuntu's own gh 2.45.0, a saved login with GitHub unreachable gave exit 0 and "Failed to log in"; seen on gh
+    2.105.0, it gave exit 1, the same exit as no saved login at all.
+    ("yes", the account's name or None, "") when GitHub answered 200;
+    ("no", None, why) when GitHub refused the login (401) or gh said it has none (exit 4 and no HTTP status line);
+    ("unread", None, gh's last lines) for anything else: no answer from GitHub, a timeout, another status."""
+    rc, out = host.run(["gh", "api", "-i", "user", "--hostname", "github.com"], timeout=60)
+    status, data = parse_include(out)
+    if status == 200:
+        name = data.get("login") if isinstance(data, dict) else None
+        return "yes", name if isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9-]+", name) else None, ""
+    if status == 401:
+        return "no", None, "GitHub refuses the login gh saved for github.com (HTTP 401)"
+    if not status and rc == 4:
+        return "no", None, "gh has no saved login for github.com"
+    # gh's own lines about logging in, out or refreshing are not passed on: this answer is "could not ask", not "no"
+    words = [x.strip() for x in out.splitlines()
+             if x.strip() and not re.search(r"gh auth|log ?in|log ?out|refresh", x, re.I)]
+    return "unread", None, (f"HTTP {status}: " if status else "") + (" / ".join(words[-2:]) or f"gh exit {rc}, no words")
 
 
 def check_gh_road(host: Host, rep: Report) -> bool:
@@ -650,11 +658,14 @@ def check_gh_road(host: Host, rep: Report) -> bool:
     unused = (f" Found in your shell and not used by this tool: {', '.join(found)}. The watch runs without your "
               "shell, so this tool's every GitHub call, setup's and the watch's alike, goes to github.com as the login "
               "gh saved; your own use of gh is unchanged.") if found else ""
-    rc, out = host.run(["gh", "auth", "status", "--hostname", "github.com"])
-    if rc != 0:
-        rep.need(f"log in to GitHub: run `gh auth login` and follow its steps. {GH_ONLY}{unused}")
+    answer, name, why = login_read(host)
+    if answer == "no":
+        rep.need(f"log in to GitHub: run `gh auth login` and follow its steps ({why}). {GH_ONLY}{unused}")
         return False
-    name = saved_account(out)
+    if answer == "unread":
+        rep.stop(f"GitHub could not be asked whether gh's saved login for github.com works: {why}. Nothing was "
+                 f"changed; run the same command again.{unused}")
+        return False
     who = f"as {name}, the login gh saved for github.com" if name else \
         "as the login gh saved for github.com (its name could not be read from gh's answer)"
     where = (f", read from {place} (your shell's {' and '.join(moved)}; the watch reads it there too)"
@@ -4051,7 +4062,7 @@ def watch_units(user: str, every_s: int, path: str = "") -> tuple[str, str]:
            "After=network-online.target\n\n"
            f"[Service]\nType=oneshot\nUser={user}\n"
            + (f'Environment="PATH={path}"\n' if path else "")
-           + f"ExecStart=/usr/bin/python3 {TOOL_COPY} watch\nNice=10\n")
+           + f"ExecStart=/usr/bin/python3 -I {TOOL_COPY} watch\nNice=10\n")  # R147: -I, as every start of the tool
     tmr = ("# Windstorm Repo Minions: the watch's schedule (G5.3).\n"
            f"[Unit]\nDescription=Windstorm Repo Minions watch, every {every_s // 60} minutes\n\n"
            f"[Timer]\nOnBootSec=2min\nOnUnitActiveSec={every_s}s\nAccuracySec=30s\n\n"

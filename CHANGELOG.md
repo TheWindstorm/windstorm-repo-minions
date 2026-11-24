@@ -43,6 +43,10 @@ the cap (row R94).
   environment the tool builds by name, so your locale no longer reaches every job; jobs get `LANG=C.UTF-8`
   (row R143). Before a tag, one round runs on a machine set up as a person's is, listed in `tests/lived-in.md`
   (row R145).
+- A network blip no longer reads as "log in again": whether gh's login works is read in three answers (logged in;
+  no saved login, or GitHub refuses it; could not be read, which says to run the same command again), from GitHub's
+  own answer rather than `gh auth status`'s exit, which differs between gh versions (row R146). The watch starts the
+  tool with `python3 -I`, so nothing in your own Python site-packages runs in it (row R147).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for

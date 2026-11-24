@@ -2024,6 +2024,48 @@
    "issue": "",
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R146",
+   "seen": "2026-11-24, family rule 6 (AN EXIT CODE CAN SAY \"NO\" FOR \"COULD NOT ASK\"): the login check read `gh auth status --hostname github.com` by its exit alone. Seen on gh 2.105.0: no saved login gives exit 1 (\"You are not logged into any GitHub hosts\"), and a saved login with GitHub unreachable also gives exit 1, with \"Failed to log in ... The token ... is invalid ... To forget about this account, run: gh auth logout\"; the tool would have told the person to log in again on a network blip. Seen on Ubuntu's own gh 2.45.0 on a stock Ubuntu 24.04 virtual machine: the same unreachable case gave exit 0 and \"Failed to log in\", which the tool would have taken as logged in; `gh api -i user` gave exit 4 and no status line for no saved login, exit 1 and no status line (\"proxyconnect tcp ... connection refused\") for GitHub unreachable, and HTTP 200 when logged in.",
+   "promise": "Whether gh's saved login for github.com works is read in three answers, from one `gh api -i user`: logged in (200; the account named from GitHub's answer); no (401, or exit 4 with no status line): need you, gh auth login; could not be read (anything else): a stop quoting gh's last lines without its lines about logging in, out or refreshing, and saying to run the same command again. `gh auth status`'s exit is not read for it.",
+   "codon": "G1.18",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_18_the_login_read_has_three_answers",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R147",
+   "seen": "2026-11-24, read in the code at the release head: the watch's unit started the tool as `/usr/bin/python3 <copy> watch`, without -I, while every other start of the tool and every line printed for a person says `python3 -I`. The unit has no shell, so PYTHONPATH did not cross, but the person's own user site-packages did: a sitecustomize.py or a .pth file there would run in every watch pass, and a broken one would stop the watch.",
+   "promise": "The watch's unit starts the tool with `python3 -I`, as every start of Python by the tool does; a person's site-packages never runs in a watch pass and a broken one never stops it. A test reads every start of python3 in the tool's source and in the job hook.",
+   "codon": "G5.21",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G5_21_the_watch_starts_python_isolated",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R148",
+   "seen": "2026-11-24, read in the code: the runner's configuration runs under env -i (row R143) and gets no proxy setting; on a stock sudo it got none before either. Not tried on a computer that reaches GitHub only through a proxy.",
+   "promise": "On a computer that reaches GitHub only through a proxy, the runner's configuration and its service get the proxy settings they need, by name, and look says whether this computer reaches GitHub directly. Until then the README names it as not tried and expected not to register.",
+   "codon": "G2.22",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

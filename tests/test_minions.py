@@ -223,6 +223,12 @@ class FakeHost(M.Host):
 
 
 SCOPES = "github.com\n  ✓ Logged in to github.com account example-person\n  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n"
+# R146: `gh api -i user` as Ubuntu's own gh 2.45.0 answered it on a stock virtual machine, 2026-11-24 (names made up)
+USER_OK = 'HTTP/2.0 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n{"login":"example-person","id":1}'
+NO_LOGIN = ("To get started with GitHub CLI, please run:  gh auth login\n"
+            "Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.\n")
+UNREACHABLE = ('Get "https://api.github.com/user": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection '
+               'refused\n')
 MEMINFO = "MemTotal:       16384000 kB\nMemAvailable:    8192000 kB\nSwapTotal:       2097152 kB\nSwapFree:        2097152 kB\n"
 ROUTE = "Iface\tDestination\tGateway\nenp3s0\t00000000\t0101A8C0\n"
 TCP = ("  sl  local_address rem_address   st\n"
@@ -236,7 +242,7 @@ def linux_host(**kw):
              "/proc/meminfo": MEMINFO, "/proc/net/route": ROUTE, "/proc/net/tcp": TCP,
              "/sys/devices/nvme0n1/queue/rotational": "0\n"}
     files.update(kw.pop("files", {}))
-    runs = {("gh", "auth", "status"): (0, SCOPES), ("sudo", "-n", "true"): (0, ""),
+    runs = {("gh", "auth", "status"): (0, SCOPES), ("gh", "api", "-i", "user"): (0, USER_OK), ("sudo", "-n", "true"): (0, ""),
             ("systemctl", "is-enabled"): (0, "enabled\nenabled\n")}
     runs.update(kw.pop("runs", {}))
     links = {"/sys/dev/block/259:2": "/sys/devices/nvme0n1/nvme0n1p2"}
@@ -643,7 +649,8 @@ jobs:
         self.assertEqual(lines, ["need you: install the GitHub CLI: `sudo apt update && sudo apt install gh`. " + M.GH_ONLY])
         self.assertEqual(code, M.EXIT_NEED)
         self.assertEqual(gh.calls, [])
-        host = linux_host(runs={("gh", "auth", "status"): (1, "You are not logged into any GitHub hosts.")})
+        host = linux_host(runs={("gh", "auth", "status"): (1, "You are not logged into any GitHub hosts."),
+                                ("gh", "api", "-i", "user"): (4, NO_LOGIN)})
         code, lines = look(StandIn(self.recent), host)
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].startswith("need you: log in to GitHub: run `gh auth login`"), lines)
@@ -2774,7 +2781,7 @@ class G5(unittest.TestCase):
         # The units: a system timer every 5 minutes; its service runs as the person, the tool's root-owned copy.
         svc, tmr = M.watch_units("person", M.WATCH_EVERY_S)
         self.assertIn("User=person\n", svc)
-        self.assertIn(f"ExecStart=/usr/bin/python3 {M.TOOL_COPY} watch\n", svc)
+        self.assertIn(f"ExecStart=/usr/bin/python3 -I {M.TOOL_COPY} watch\n", svc)
         self.assertIn("OnUnitActiveSec=300s\n", tmr)
         self.assertIn("WantedBy=timers.target\n", tmr)
         # setup installs it and reads it back.
@@ -5220,23 +5227,16 @@ class RuleTwo(unittest.TestCase):
         host.environ = lambda: {"HOME": "/home/person", "PATH": "/usr/bin"}
         self.assertEqual(host.gh_env()["GH_CONFIG_DIR"], "/home/person/.lived/gh")
         # no saved login for github.com: need you, and the shell's token is said as not used
-        host = linux_host(runs={("gh", "auth", "status"): (1, "You are not logged into any GitHub hosts.")})
+        host = linux_host(runs={("gh", "api", "-i", "user"): (4, NO_LOGIN)})
         host.environ = lambda: dict(self.LIVED)
         code, lines = look(StandIn(load("look-recent-runs.jsonl")), host)
         self.assertEqual(code, M.EXIT_NEED)
         self.assertTrue(lines[0].startswith("need you: log in to GitHub: run `gh auth login`"), lines)
         self.assertIn("Found in your shell and not used by this tool: GH_TOKEN", lines[0])
-        # three answers: the name read; not logged in (above); logged in, the name not readable
-        host = linux_host(runs={("gh", "auth", "status"): (0, "github.com\n  something gh may say one day\n")})
+        # logged in, the name not readable from GitHub's answer
+        host = linux_host(runs={("gh", "api", "-i", "user"): (0, "HTTP/2.0 200 OK\r\n\r\n{}")})
         _, lines = look(StandIn(load("look-recent-runs.jsonl")), host)
         self.assertTrue([x for x in lines if "its name could not be read from gh's answer" in x], lines)
-        # several accounts saved for github.com (a newer gh): the active one is named, never the first listed
-        two = ("github.com\n  ✓ Logged in to github.com account other-person (keyring)\n  - Active account: false\n"
-               "  ✓ Logged in to github.com account example-person (keyring)\n  - Active account: true\n")
-        self.assertEqual(M.saved_account(two), "example-person")
-        self.assertIsNone(M.saved_account(two.replace("true", "false")))
-        self.assertEqual(M.saved_account("  ✓ Logged in to github.com as old-gh (/home/x/.config/gh/hosts.yml)\n"),
-                         "old-gh")
         # setup says it too, in its own lines
         host, sha = setup_host()
         fresh_look(host)
@@ -5246,6 +5246,55 @@ class RuleTwo(unittest.TestCase):
         self.assertTrue(lines[1].startswith("ok GitHub CLI installed and logged in: this tool acts as example-person"),
                         lines)
         self.assertTrue(lines[2].startswith("warn Found in your shell and not used by this tool: GH_TOKEN"), lines)
+
+    def test_G1_18_the_login_read_has_three_answers(self):
+        # R146 (family rule 6): logged in / no saved login / could not be read, each as Ubuntu's own gh 2.45.0 said it
+        # on a stock virtual machine; the third never says to log in, log out or refresh.
+        def read(answer):
+            return M.login_read(linux_host(runs={("gh", "api", "-i", "user"): answer}))
+        self.assertEqual(read((0, USER_OK)), ("yes", "example-person", ""))
+        self.assertEqual(read((4, NO_LOGIN))[:2], ("no", None))
+        self.assertEqual(read((0, "HTTP/2.0 401 Unauthorized\r\n\r\n{\"message\":\"Bad credentials\"}"))[:2], ("no", None))
+        for answer in ((1, UNREACHABLE), (127, "timed out"), (0, "HTTP/2.0 502 Bad Gateway\r\n\r\n"),
+                       (1, "X Failed to log in\n- To forget about this account, run: gh auth logout -h github.com\n"),
+                       (4, "HTTP/2.0 403 Forbidden\r\n\r\n{}")):
+            kind, name, why = read(answer)
+            self.assertEqual((kind, name), ("unread", None), answer)
+            self.assertNotRegex(why.lower(), r"gh auth|log ?in|log ?out|refresh", answer)
+        _, _, why = read((1, UNREACHABLE))
+        self.assertIn("connection refused", why)
+        # look and setup: the third answer is a stop that says run the same command again, never a login
+        host = linux_host(runs={("gh", "api", "-i", "user"): (1, UNREACHABLE)})
+        code, lines = look(StandIn(load("look-recent-runs.jsonl")), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("stop GitHub could not be asked whether gh's saved login for github.com "
+                                            "works: Get \"https://api.github.com/user\""), lines)
+        self.assertIn("run the same command again", lines[0])
+        self.assertNotRegex(lines[0], r"gh auth|log in|logout|refresh")
+        host, sha = setup_host()
+        fresh_look(host)
+        host.runs[("gh", "api", "-i", "user")] = (1, UNREACHABLE)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertTrue(lines[-1].startswith("stop GitHub could not be asked"), lines)
+        # the login is read by `gh api -i user`, never by `gh auth status`'s exit (2.45.0: exit 0 with "Failed")
+        host = linux_host(runs={("gh", "auth", "status"): (0, "  X Failed to log in to github.com account x\n"),
+                                ("gh", "api", "-i", "user"): (1, UNREACHABLE)})
+        self.assertEqual(look(StandIn(load("look-recent-runs.jsonl")), host)[0], M.EXIT_STOP)
+
+    def test_G5_21_the_watch_starts_python_isolated(self):
+        # R147: the watch's unit starts the tool with -I, as every start of Python by the tool does, so a person's
+        # user site-packages (a sitecustomize.py or a .pth file) never runs in a watch pass or stops it.
+        svc, _ = M.watch_units("person", M.WATCH_EVERY_S)
+        self.assertIn(f"ExecStart=/usr/bin/python3 -I {M.TOOL_COPY} watch\n", svc)
+        with open(M.__file__, encoding="utf-8") as f:
+            src = f.read()
+        starts = re.findall(r"python3 [-/{][^\s\"'`]*", src)  # python3 then a flag, a path or a placeholder
+        self.assertTrue(starts)
+        self.assertEqual([x for x in starts if not x.startswith("python3 -I")], [], starts)
+        hook = M.job_started_script(FOLDER, path="/usr/bin:/bin", every_s=300)
+        self.assertTrue(all(x.startswith("python3 -I") for x in re.findall(r"python3 \S+", hook)))
 
     def test_G9_13_the_lived_in_list_holds_to_the_code(self):
         # R145: the lived-in round's list (tests/lived-in.md) names every setting the tool takes away from gh or
