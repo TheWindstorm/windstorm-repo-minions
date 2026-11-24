@@ -1926,6 +1926,48 @@
    "issue": "",
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R139",
+   "seen": "2026-11-24, a stock Ubuntu 24.04.5 virtual machine (run51, a whole-filesystem listing before and after setup): the runner's own dependency script installed liblttng-ust1t64, liblttng-ust-common1t64 and liblttng-ust-ctl5t64; uninstall --all left them, and nothing named them. The owner's ruling the same night: record and name them in 0.1.0, by what the script added, not by three fixed names; removal is 0.1.1's row.",
+   "promise": "Setup reads the system's package list, as the person, before and after the runner's dependency script and keeps what it added in its notes and journal; its line says the script may add system packages and that they stay when the tool leaves; uninstall --all's census names them as kept, with why, and no command. A list not read is said as such.",
+   "codon": "G2.20",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G2_20_setup_records_the_system_packages_the_dependency_script_added",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R140",
+   "seen": "2026-11-24, from R139: the packages the runner's dependency script added stay after the tool leaves. The owner's ruling: removing system packages is not ours in a first release; another program may have come to use them.",
+   "promise": "Read first which way is safe on each system to take away only what the dependency script added (marking them as installed automatically so the system's own clean-up may take them, or removing one only when nothing depends on it); build it, or the README says why not. The tool never runs a general clean-up.",
+   "codon": "G6.20",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R141",
+   "seen": "2026-11-24, family rule 8 (A LEAVE LEAVES THE HOME AS IT FOUND IT): this skill's measure of a leave is a step on a stock machine (the person's home listed at four moments); no test in the suite holds it, and the listing outside the home after uninstall was not taken.",
+   "promise": "A test in the suite: in the stand-in, the paths after uninstall --all equal the paths before setup, each difference a named line; its control, with the record's lines taken out, fails. The proof on a stock machine lists the whole filesystem and the package list before setup and after uninstall --all.",
+   "codon": "G6.21",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

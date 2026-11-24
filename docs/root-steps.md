@@ -83,6 +83,11 @@ The one place a root step makes something the runner user can write, outside its
 folder: the job hooks run as the runner user and write that repository's job records there. Nothing in it is ever
 run, sourced or followed by root: at uninstall the runner user empties it and root removes the empty folder.
 
+Steps run as you, not as root, that read the whole system: `package_list` runs `dpkg-query -W` (or `rpm -qa` where
+there is no `dpkg-query`) just before and just after the runner's dependency script, to read which system packages
+that script installed. It reads the package list only and changes nothing (R139). The packages it names stay when
+the tool leaves, named in the census, because another program may use them by then.
+
 No service of this tool runs as root. The runner's unit runs as the runner user. Its drop-in's `ExecStopPost` has
 no `+`, so it runs as the runner user too. The watch runs as you.
 

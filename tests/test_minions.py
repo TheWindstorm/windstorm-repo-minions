@@ -1254,6 +1254,62 @@ class G2(unittest.TestCase):
         self.assertEqual((svc["KillMode"], svc["KillSignal"], svc["User"]), ("mixed", "SIGTERM", M.RUNNER_USER))
         self.assertEqual(text.count("KillMode="), 1)
 
+    def test_G2_20_setup_records_the_system_packages_the_dependency_script_added(self):
+        # R139 (rule 8, A LEAVE LEAVES THE HOME AS IT FOUND IT; the owner's ruling 2026-11-24): the runner's own
+        # dependency script may install system packages (on a stock Ubuntu 24.04.5: liblttng-ust1t64 and two it
+        # needs). Setup reads the system's package list, as the person, before and after that script, keeps what it
+        # added in its notes and journal, and says they stay when the tool leaves; uninstall --all names them in the
+        # census as kept, with why, and no command. This tool never removes a system package.
+        base = "installed bash\ninstalled python3\nconfig-files oldpkg\n"
+        def lists(added):
+            calls = []
+            def answer(argv, inp=None):
+                calls.append(argv)
+                return 0, base + "".join(f"installed {p}\n" for p in (added if len(calls) > 1 else []))
+            return answer
+        new = ["liblttng-ust-common1t64", "liblttng-ust1t64"]
+        host, sha = setup_host(runs={("dpkg-query",): lists(new)})
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        ran = list(host.ran)
+        reads = [i for i, a in enumerate(ran) if a[:1] == ("dpkg-query",)]
+        deps = ran.index(("sudo", "-n", "bash", f"{DEPS}/root/bin/installdependencies.sh"))
+        self.assertEqual(len(reads), 2)
+        self.assertLess(reads[0], deps)
+        self.assertLess(deps, reads[1])
+        self.assertIn("ok the runner's own dependency script ran (from root's checked copy of the download); it "
+                      "installed these system packages: liblttng-ust-common1t64, liblttng-ust1t64; they stay on this "
+                      "computer when this tool leaves, because another program may come to use them", lines)
+        self.assertEqual(M.load_state(host)["dependency_packages"], new)
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            self.assertIn("added by the runner's dependency script: liblttng-ust-common1t64, liblttng-ust1t64", f.read())
+        # none added; and a list that could not be read is said as such, never as none
+        for runs, said in (({("dpkg-query",): lists([])}, "it installed no system packages"),
+                           ({("dpkg-query",): (1, "dpkg-query: error")}, "it may install system packages, which stay "
+                            "on this computer when this tool leaves; which ones could not be read here")):
+            host, sha = setup_host(runs=runs)
+            fresh_look(host)
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertTrue(any(x.startswith("ok the runner's own dependency script ran") and x.endswith(said)
+                                for x in lines), lines)
+        self.assertTrue(M.load_state(host)["dependency_packages_unread"])
+        # uninstall --all names them, kept, with why; nothing removes a package
+        for data, said in ((["liblttng-ust1t64"], "ok census: system packages the runner's dependency script "
+                            "installed: liblttng-ust1t64 (kept: installed for the whole system, and another program "
+                            "may use them now)"),
+                           (None, "ok census: system packages the runner's dependency script installed: not recorded "
+                            "at setup (kept, whatever they are: installed for the whole system, and another program "
+                            "may use them now)")):
+            gh, world, host = remove_setup()
+            d = M.load_state(host)
+            d["dependency_packages"] = data
+            M.save_state(host, d)
+            code, lines = run_uninstall(gh, host, everything=True)
+            self.assertIn(said, lines)
+            self.assertFalse([a for a in host.ran if {"apt", "apt-get", "dpkg", "rpm", "dnf", "yum", "zypper"} & set(a)])
+            self.assertTrue(lines[-1].startswith("ok census: your record of what this tool did"), lines[-1])
+
     def test_G2_15_every_root_step_is_on_the_list(self):
         # R135 (rule 28): docs/root-steps.md lists every place the tool runs a command as root, each with its answers
         # (runs a job's file? a job's path? what it creates, with mode and owner). A root step not on the list, or a
@@ -3446,7 +3502,8 @@ def remove_setup(own_removal_works=True, interrupt_on=None, busy=(False,), moved
                                                  if p.startswith(path.rstrip("/") + "/")}) if path in world.paths else [])
     Clock(host)
     data = {"runners": {REPO: {"name": OURS, "folder": FOLDER, "unit": UNIT, "labels": ["minions", "minions-medium"]}},
-            "runner_user_made": True}  # R129: setup made the runner user, and its record says so
+            "runner_user_made": True,  # R129: setup made the runner user, and its record says so
+            "dependency_packages": []}  # R139: setup read the package list; the dependency script added none
     if moved:
         data["moves"] = {REPO: {"pr": 12, "branch": "minions-move-1", "base": "main", "files": {
             ".github/workflows/ci.yml": [{"id": "test", "name": "Unit tests",
@@ -3834,7 +3891,8 @@ class G6(unittest.TestCase):
         gh, world, host = remove_setup()
         code, lines = run_uninstall(gh, host, everything=True)
         census = [x for x in lines if "census:" in x]
-        self.assertEqual(len(census), 8, census)  # G6.13: the skill's own folder is named too (here: not known)
+        self.assertEqual(len(census), 9, census)  # G6.13: the skill's own folder is named too (here: not known);
+        # R139: and the system packages the runner's dependency script installed (here: none)
         self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census[:-2]), census)
         self.assertTrue(census[-2].startswith("warn census: the folder this skill was downloaded into"), census)
         # Rule 8: the census is the last thing printed; it names this tool's state folder, and last the person's

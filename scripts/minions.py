@@ -2041,20 +2041,59 @@ def unpack_from_roots_copy(host: Host, rel: dict, tmp: str, folder: str, rep: Re
         sudo(host, ["rm", "-rf", "--one-file-system", d])
 
 
+def package_list(host: Host) -> set[str] | None:
+    """R139 (rule 8): the system's installed packages, read only, as you (no admin rights). None: not read."""
+    for argv in (["dpkg-query", "-W", "-f", "${db:Status-Status} ${Package}\n"],
+                 ["rpm", "-qa", "--qf", "installed %{NAME}\n"]):
+        if host.which(argv[0]):
+            rc, out = host.run(argv, timeout=120)
+            if rc != 0:
+                return None
+            return {x.split()[1] for x in out.splitlines() if len(x.split()) == 2 and x.split()[0] == "installed"}
+    return None
+
+
+def record_packages(host: Host, before: set[str] | None, after: set[str] | None) -> list[str] | None:
+    """R139: what the runner's dependency script added to the system, kept in this tool's notes (and so, through the
+    journal, in your record) for the census when the tool leaves; never removed by this tool. None: not read."""
+    known = load_state(host)
+    if before is None or after is None:
+        known["dependency_packages_unread"] = True
+        save_state(host, known)
+        journal(host, "packages", "the system's package list could not be read before and after the dependency script")
+        return None
+    added = sorted(after - before)
+    known["dependency_packages"] = sorted(set(known.get("dependency_packages") or []) | set(added))
+    save_state(host, known)
+    journal(host, "packages", "added by the runner's dependency script: " + (", ".join(added) or "none"))
+    return added
+
+
 def run_dependencies(host: Host, tgz: str, d: str, rep: Report) -> None:
     """R127 (rule 28): the runner's dependency script runs as root from root's own checked copy of the download,
-    taken out into a folder only root can enter; never the copy in the runner's folder, which a job could rewrite."""
+    taken out into a folder only root can enter; never the copy in the runner's folder, which a job could rewrite.
+    R139 (rule 8): the system's package list is read before and after it, and what it added is recorded and said."""
     script = f"{d}/bin/installdependencies.sh"
     journal(host, "dependencies", f"{script} (from root's checked copy)")
     rc, out = sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0700", d])
     if rc == 0:
         rc, out = sudo(host, ["tar", "xzf", tgz, "-C", d, "--wildcards", "*bin/installdependencies.sh"])
+    before = package_list(host) if rc == 0 else None
     if rc == 0:
         rc, out = sudo(host, ["bash", script], timeout=900)
-    if rc != 0:
-        rep.warn(f"the runner's own dependency script did not finish: {tail(out)}")
+    added = record_packages(host, before, package_list(host)) if before is not None else record_packages(host, None, None)
+    if added is None:
+        what = ("it may install system packages, which stay on this computer when this tool leaves; which ones could "
+                "not be read here")
+    elif added:
+        what = (f"it installed these system packages: {', '.join(added)}; they stay on this computer when this tool "
+                "leaves, because another program may come to use them")
     else:
-        rep.ok("the runner's own dependency script ran (from root's checked copy of the download)")
+        what = "it installed no system packages"
+    if rc != 0:
+        rep.warn(f"the runner's own dependency script did not finish: {tail(out)}; {what}")
+    else:
+        rep.ok(f"the runner's own dependency script ran (from root's checked copy of the download); {what}")
 
 
 def register(gh: GitHub, host: Host, repo: str, folder: str, name: str, labels: list[str], rep: Report) -> bool:
@@ -2401,6 +2440,7 @@ PROGRAMS = {
     "mktemp": "a root-only folder for the download", "find": "emptying the runner's records, as the runner",
     "rmdir": "an emptied folder", "crontab": "the runner user's crontab off", "atq": "its at jobs, read",
     "atrm": "its at jobs off", "loginctl": "its linger off", "cp": "the runner's service script, as the runner",
+    "dpkg-query": "the system's package list, read as you", "rpm": "the system's package list, read as you",
 }
 DARWIN_ONLY = {"launchctl", "pmset", "diskutil", "sw_vers", "sysctl", "netstat"}  # macOS; resolved there, later
 # The programs the two job hooks run (as the runner user, which cannot enter your home folder).
@@ -5091,7 +5131,7 @@ def remove_slice(host: Host, rep: Report) -> bool:
 
 
 def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report,
-           state_left: bool | None = None, skill_folder: str | None = None) -> None:
+           state_left: bool | None = None, skill_folder: str | None = None, packages: dict | None = None) -> None:
     """G6.3, INV6: what is left, each "none" or named. With --all every line should read none."""
     unread: list[str] = []
 
@@ -5167,6 +5207,17 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         line("this tool's state folder", [host.state_dir()] if state_left else [],
              (f"kept: it holds {', '.join(foreign)}, which this tool did not write; that and the folder are yours"
               if foreign else "kept: its journal could not be moved to your record (said above)") if state_left else "")
+    if everything and packages is not None:  # R139 (rule 8): what the runner's dependency script installed stays
+        names, unread = packages.get("dependency_packages") or [], packages.get("dependency_packages_unread")
+        if names:
+            rep.ok(f"census: system packages the runner's dependency script installed: {', '.join(names)} (kept: "
+                   "installed for the whole system, and another program may use them now)")
+        elif unread or packages.get("dependency_packages") is None:  # not read, or a setup that did not record it
+            rep.ok("census: system packages the runner's dependency script installed: not "
+                   f"{'read' if unread else 'recorded'} at setup (kept, whatever they are: installed for the whole "
+                   "system, and another program may use them now)")
+        else:
+            rep.ok("census: system packages the runner's dependency script installed: none")
     if everything:  # G6.13 (R117, rule 8): the folder the skill was downloaded into is named, so nobody guesses at it
         skill_folder_census(host, skill_folder, rep)
     # G6.10, INV6: last, the person's record, kept: theirs.
@@ -5257,7 +5308,8 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
             delete_record_if_typed(host, rep)
         # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
         census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()),
-               skill_folder=data.get("skill_folder"))
+               skill_folder=data.get("skill_folder"), packages={k: data.get(k) for k in (
+                   "dependency_packages", "dependency_packages_unread")})
         if rep.stayed and not rep.stopped:  # R136 (rule 8): the leave went to its end; what stayed is the person's
             rep.ok("this tool is off this computer; what stayed is yours, named above with why each stayed")
         return rep.code()
