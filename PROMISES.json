@@ -2304,6 +2304,20 @@
    "issue": null,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R166",
+   "seen": "2026-11-24, a stock Ubuntu 24.04 virtual machine, steered (a keyring started by hand; the step taken with a token on stdin): after the step R160 prints, gh 2.45.0 kept the login in hosts.yml as plain text and the copy it had put in the keyring stayed there; `uninstall --all` then said nothing of either, and the plain-text login outlives the tool.",
+   "promise": "At `uninstall`, when gh's hosts.yml holds a login as plain text, the census says so in one line: it is gh's, this tool did not write it and does not remove it, and it stays. gh's own way to take it out is named only once that step was taken as printed in a proof and the keyring's entries were counted after it.",
+   "codon": "G6.27",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
