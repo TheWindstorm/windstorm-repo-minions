@@ -2233,6 +2233,20 @@
    "issue": 357,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R172",
+   "seen": "2026-11-24, a stock Ubuntu 24.04 virtual machine with language-pack-de, the person's shell in German (LANG=de_DE.UTF-8, LANGUAGE=de_DE:de): id, stat, pgrep and sudo answered in German; a first `setup` stopped at its first step (\"could not read whether the user minions-runner is on this computer (id: ... Einen solchen Benutzer gibt es nicht)\"), and `uninstall --all` with the runner user gone waited at every run (pgrep's German refusal not read as a user that is gone).",
+   "promise": "Every program the tool runs and reads gets LC_ALL=C.UTF-8 and no LANGUAGE in its own environment (seen on the same machine: that setting gave English words, through sudo too, with LANGUAGE still set), so the words it matches are the same in every language; nothing else of the person's environment changes. A test answers in German wherever the environment does not carry the setting and sees the same ends.",
+   "codon": "G6.29",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G9_14_a_run_that_ends_early_or_prints_a_pass_is_never_green",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 360,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

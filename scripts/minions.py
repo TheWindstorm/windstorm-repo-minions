@@ -192,10 +192,20 @@ def gh_config_dir(env, home: str) -> str:
     return os.path.join(home, ".config", "gh")
 
 
+def c_language(env) -> dict:
+    """R172 (seen, a stock Ubuntu 24.04 in German: id, stat, pgrep and sudo answered in German, and setup stopped at
+    its first step): every program the tool reads runs in the C language, whatever the person's shell is set to, so
+    the words it matches are the same in every language. LC_ALL wins over LANG and every LC_*; LANGUAGE goes (seen:
+    LC_ALL=C.UTF-8 alone gave English, through sudo too). Nothing else of the environment changes."""
+    out = {k: v for k, v in env.items() if k != "LANGUAGE"}
+    out["LC_ALL"] = "C.UTF-8"
+    return out
+
+
 def gh_environ(env, config_dir: str) -> dict:
     """R144: the environment the tool's own gh runs with: the person's, without GH_NOT_HANDED, and with the one place
     its saved login is read from. Proxy and certificate settings stay as the person has them."""
-    out = {k: v for k, v in env.items() if k not in GH_NOT_HANDED}
+    out = {k: v for k, v in c_language(env).items() if k not in GH_NOT_HANDED}
     out["GH_CONFIG_DIR"] = config_dir
     out["DBUS_SESSION_BUS_ADDRESS"] = NO_BUS  # R160
     return out
@@ -242,8 +252,9 @@ class Host:
         return gh_environ(env, kept or gh_config_dir(env, self.home()))
 
     def run(self, argv: list[str], timeout: int = 20) -> tuple[int, str]:
-        """R168: the answer is what the program wrote on standard output; standard error is kept beside it (Out)."""
-        env = self.gh_env() if argv[:1] == ["gh"] else None  # R144
+        """R168: the answer is what the program wrote on standard output; standard error is kept beside it (Out).
+        R172: in the C language, so the words read are the same whatever the person's language."""
+        env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144
         try:
             p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
                                env=env)
@@ -262,7 +273,7 @@ class Host:
 
     def run_in(self, argv: list[str], input: str, timeout: int = 600) -> tuple[int, str]:
         """Like run(), with `input` on standard input: the only way a secret reaches another program (INV2)."""
-        env = self.gh_env() if argv[:1] == ["gh"] else None  # R144
+        env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144, R172
         try:
             p = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout, env=env)
             return p.returncode, Out(p.stdout or "", p.stderr or "")
@@ -2897,6 +2908,11 @@ def keep_jobs_record(host: Host, records: str, rep: Report) -> str | bool:
         rc, out = as_runner(host, ["cat", path])
         text = out if rc == 0 else None
     if text is None:
+        if runner_user_state(host)[0] == "absent":  # R167 (seen): no step reads them now, so none is printed
+            rep.warn(f"the jobs' records in {records} are kept where they are, not deleted: the user "
+                     f"{RUNNER_USER} is gone, so nothing reads them as that user, and root never reads what a job "
+                     "could write (a job can put a link there). They are yours to read or delete")
+            return False
         rep.warn(f"the jobs' records in {records} could not be read, so they are kept where they are, not deleted; "
                  "the same command run again in your own terminal moves them to your record")
         return False
@@ -5107,7 +5123,19 @@ def root_test(host: Host, path: str) -> bool | None:
     # run the command (seen: "sudo: unable to resolve host NAME: ...", on a computer whose name does not resolve, with
     # the test's exit passed on), and its own refusal is an exit 1 with words; neither is taken for the test's answer.
     # No mark, or both: could not be read.
-    rc, out = how(host, marked_test(path))
+    got = marked_answer(*how(host, marked_test(path)))
+    if got is None and how is as_runner:
+        # R167 (seen, a stock Ubuntu 24.04 with the runner user removed by hand): sudo cannot run anything as a user
+        # that is gone ("sudo: unknown user"), so every read in its home was "could not be read" and counted as there,
+        # and uninstall stopped at its folder on every run. The home itself is root's to read (a folder in /home, which
+        # a job cannot replace): where it is not there, nothing in it is.
+        home = marked_answer(*sudo(host, marked_test(f"/home/{RUNNER_USER}")))
+        return False if home is False else None
+    return got
+
+
+def marked_answer(rc: int, out: str) -> bool | None:
+    """R167: the marked test's own answer: there, not there, or None (no mark, both, or an exit other than 0)."""
     marks = {x.strip() for x in out.splitlines()} & {TEST_THERE, TEST_NOT_THERE}
     if rc != 0 or len(marks) != 1:
         return None

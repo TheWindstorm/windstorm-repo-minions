@@ -3678,6 +3678,8 @@ class World:
             raise KeyboardInterrupt
         if a[:2] == ["sudo", "-n"]:
             a = a[2:]
+            if a[:3] == ["-u", "minions-runner", "--"] and not self.user:  # as sudo 1.9.15p5 answered (seen, R167)
+                return 1, "sudo: unknown user minions-runner\nsudo: error initializing audit plugin sudoers_audit\n"
             if a[:3] == ["-u", "minions-runner", "--"] and a[3:5] != ["bash", "-c"] and a[3:5] != ["env", "-i"]:
                 a = a[3:]  # R128: the runner user's own steps (read, rm, find, kill) in its own folders
                 if a[:3] == ["stat", "-c", "%F"]:  # R128: what kind of thing a job may have left there
@@ -4320,6 +4322,7 @@ class G6(unittest.TestCase):
             code, lines = run_uninstall(gh, host, repo=None if everything else REPO, everything=everything)
             self.assertNotIn(code, (M.EXIT_STOP, M.EXIT_WAIT), lines)
             self.assertFalse([x for x in lines if "could not be read" in x], lines)
+            self.assertFalse([x for x in lines if "run again" in x and "records" in x], lines)  # no step that cannot be
             self.assertNotIn(f"/etc/systemd/system/{UNIT}", world.paths, lines)
             if everything:
                 self.assertIn("ok census: the runner user: none", lines)
@@ -4505,6 +4508,43 @@ class G6(unittest.TestCase):
             self.assertNotIn(code, (M.EXIT_STOP, M.EXIT_WAIT), (how, lines))
             self.assertNotIn(M.HOOKS_ROOT, world.paths, how)
             self.assertTrue(any(x.endswith("the very last removal") for x in lines), (how, lines))
+
+    def test_G6_29_the_words_the_tool_reads_are_never_in_the_persons_language(self):
+        # R172 (owner 4:36 PM ET 11-24, the language probe; seen on a stock Ubuntu 24.04 with language-pack-de and the
+        # person's shell in German): id, stat, pgrep and sudo answered in German, setup stopped at its first step,
+        # and uninstall with the runner user gone waited at every run. The real Host and GitHub are run here with the
+        # programs stood in: each answers in German unless its own environment carries LC_ALL=C.UTF-8 and no
+        # LANGUAGE (as seen: that setting gave English, through sudo too). The same ends as in English.
+        seen = []
+        GERMAN = {"id": "id: \u00bbminions-runner\u201c: Einen solchen Benutzer gibt es nicht\n",
+                  "pgrep": "pgrep: Ung\u00fcltiger Benutzername: minions-runner\n",
+                  "sudo": "sudo: Ein Passwort ist notwendig\n"}
+        ENGLISH = {"id": "id: \u2018minions-runner\u2019: no such user\n",
+                   "pgrep": "pgrep: invalid user name: minions-runner\n", "sudo": "sudo: a password is required\n"}
+        def fake_run(argv, input=None, **kw):
+            env = kw.get("env") if kw.get("env") is not None else dict(os.environ)
+            seen.append((list(argv), env))
+            c = env.get("LC_ALL") == "C.UTF-8" and "LANGUAGE" not in env
+            words = ENGLISH if c else GERMAN
+            name = argv[0]
+            if name in ("id", "pgrep", "sudo"):
+                return subprocess.CompletedProcess(argv, {"id": 1, "pgrep": 2, "sudo": 1}[name], "", words[name])
+            return subprocess.CompletedProcess(argv, 0, "HTTP/2.0 200 OK\r\n\r\n{}", "")
+        shell = {"LANG": "de_DE.UTF-8", "LANGUAGE": "de_DE:de", "LC_MESSAGES": "de_DE.UTF-8", "HOME": "/home/you",
+                 "PATH": "/usr/bin:/bin"}
+        host = M.Host()
+        with mock.patch.dict(os.environ, shell, clear=True), mock.patch.object(M.subprocess, "run", fake_run):
+            self.assertEqual(M.runner_user_state(host)[0], "absent")  # setup's first step reads it
+            self.assertEqual(M.pids_list_or_none(host), [])  # uninstall with the user gone: none
+            rc, out = M.sudo(host, ["true"])
+            self.assertIn("sudo's permission ran out", M.said(out))  # sudo's refusal read as one
+            host.run_in(["gh", "api", "x"], "{}")
+            M.GitHub(host).api("GET", "repos/o/r")
+        self.assertGreaterEqual(len(seen), 6)
+        for argv, env in seen:
+            self.assertEqual(env.get("LC_ALL"), "C.UTF-8", argv)
+            self.assertNotIn("LANGUAGE", env, argv)
+            self.assertEqual(env.get("LANG"), "de_DE.UTF-8", argv)  # nothing else of the shell changes
 
     def test_G6_28_a_warning_on_standard_error_is_never_part_of_an_answer(self):
         # R168 (owner 4:01 PM ET 11-24; family rule 30's last paragraph, "a warning is not part of the answer"): every
@@ -6062,7 +6102,9 @@ class RuleTwo(unittest.TestCase):
             self.assertFalse([n for n in M.GH_NOT_HANDED if n in e], argv)
             self.assertEqual(e.get("HTTPS_PROXY"), "http://proxy.invalid:3128")
         self.assertEqual(seen[2][0][-2:], ["--hostname", "github.com"])
-        self.assertIsNone(seen[3][1], "a program other than gh runs with the environment as it is")
+        # a program other than gh: the environment as it is, in the C language (R172)
+        self.assertEqual((seen[3][1].get("LC_ALL"), seen[3][1].get("HTTPS_PROXY"), seen[3][1].get("GH_TOKEN")),
+                         ("C.UTF-8", "http://proxy.invalid:3128", "made-up-token-value"))
         # look, from a shell carrying a token and a host of its own: it names the account and what it does not use
         host = linux_host()
         host.environ = lambda: dict(self.LIVED, XDG_CONFIG_HOME="/home/person/.lived")
