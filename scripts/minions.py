@@ -740,8 +740,9 @@ def login_step(host: Host) -> str:
 
 
 def keyring_step_words(host: Host, repo: str | None, rep: Report) -> None:
-    """R160 (owner's ruling 11-24, option A): the stop, the one step, and the five things the person hears before
-    choosing it. This tool made nothing when this is said."""
+    """R160 (owner's ruling 11-24, option A): the stop, the one step, and the six things the person hears before
+    choosing it (the git question's line added by the owner's ruling of 11-24, as seen on a desktop login). This tool
+    made nothing when this is said."""
     where, scopes = login_where(host)
     hosts = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
     again = f"`look {repo}`" if repo else "the same command"
@@ -756,6 +757,9 @@ def keyring_step_words(host: Host, repo: str | None, rep: Report) -> None:
              "whoever gets the disk, if the disk is not encrypted.")
     rep.tell("Why it is needed: the check every 5 minutes runs when nobody is logged in, and then only that file "
              "can be read.")
+    rep.tell('If gh asks "Authenticate Git with your GitHub credentials?": this tool does not need it. Answered Yes '
+             "(gh's first choice), gh also makes itself git's helper for github.com and gist.github.com, two settings "
+             "in ~/.gitconfig, and git on this computer then uses this login too; answered No, gh leaves git as it is.")
     rep.tell("If you would rather not, stop here: this tool made nothing, and this computer will not run jobs.")
 
 

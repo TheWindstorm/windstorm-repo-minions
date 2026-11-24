@@ -5548,7 +5548,7 @@ class RuleTwo(unittest.TestCase):
         no_token = (1, "no oauth token found for github.com\n")
         keyring = (0, "github.com\n  ✓ Logged in to github.com account example-person (keyring)\n"
                       "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n")
-        # look: the stop, where gh keeps it, the one step, and five things to hear, before GitHub is asked anything
+        # look: the stop, where gh keeps it, the one step, and six things to hear, before GitHub is asked anything
         host = linux_host(runs={("gh", "auth", "token"): no_token, ("own", "gh", "auth", "status"): keyring})
         gh = StandIn(load("look-recent-runs.jsonl"))
         code, lines = look(gh, host)
@@ -5559,7 +5559,14 @@ class RuleTwo(unittest.TestCase):
         self.assertIn("This tool made nothing, on this computer or on GitHub", stop)
         self.assertIn(f"`gh auth login --insecure-storage`, then `look {REPO}` again", stop)
         tells = [x for x in lines if x.startswith("tell the person ")]
-        self.assertEqual(len(tells), 5, lines)
+        self.assertEqual(len(tells), 6, lines)
+        # owner 11-24 (run59): the git question, its own line, fifth; the choice stays last
+        self.assertIn('If gh asks "Authenticate Git with your GitHub credentials?": this tool does not need it. '
+                      'Answered Yes (gh\'s first choice), gh also makes itself git\'s helper for github.com and '
+                      'gist.github.com, two settings in ~/.gitconfig, and git on this computer then uses this login too; '
+                      'answered No, gh leaves git as it is.',
+                      tells[4])
+        self.assertIn("If you would rather not, stop here", tells[5])
         said = " ".join(tells)
         hosts = os.path.join(host.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
         for must in (f"keeps your GitHub login in {hosts}, as plain text", "your account and this computer's admins",

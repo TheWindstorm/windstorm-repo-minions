@@ -2168,7 +2168,7 @@
   {
    "id": "R160",
    "seen": "2026-11-24, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, steered (a keyring started by hand under dbus-run-session, not a desktop login): a gh login kept only in the keyring was read by setup's shell and never by the watch, a system timer; setup made everything, then stopped at the watch's first pass, which read the private repository as HTTP 404 and said to check the network; after a restart, before anyone logged in, every pass was blind and the job hook refused jobs (closed, no job ran); status said GitHub did not list the runner, from a call sent without a login.",
-   "promise": "look and setup read the login as the check every 5 minutes will read it, with no session bus, before anything is made, and stop with where it is kept, the one step `gh auth login --insecure-storage` and five things the person hears first; every GitHub call of the tool is read that way, no answer to a call sent without a login is read as anything, and the watch and status say no login, a repository not there for this login, and no answer apart.",
+   "promise": "look and setup read the login as the check every 5 minutes will read it, with no session bus, before anything is made, and stop with where it is kept, the one step `gh auth login --insecure-storage` and six things the person hears first; every GitHub call of the tool is read that way, no answer to a call sent without a login is read as anything, and the watch and status say no login, a repository not there for this login, and no answer apart.",
    "codon": "G1.19",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
