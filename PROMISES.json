@@ -2147,7 +2147,21 @@
    "test": "test_G5_24_a_restart_hold_ends_when_the_person_resumes_or_drains_by_name",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 313,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R155",
+   "seen": "2026-11-24, read in the code at the release head and walked in the stand-in (family rule 11, WHAT WILL REFUSE IS ASKED BEFORE THE FIRST WRITE): setup checked that `systemctl` exists, not that systemd runs the computer; where it does not (a container, Linux inside Windows without it) setup made the runner user, unpacked and registered the runner on GitHub, and stopped after 48 admin steps on `systemctl daemon-reload` with another program's error and no next step. Cut at the runner downloads list, at the registration token or at the runner's configuration, setup's stop named nothing it had left, and `status` then said \"no runner of ours\" while the user, the folder and the record were there. With sudo set to keep no ticket between steps, setup said the password was not accepted.",
+   "promise": "Before its first write, setup reads whether systemd runs this computer (systemd's own test: its run folder is there) and, where it does not, stops having made nothing on this computer or on GitHub, saying what was found and the next step; `look` says it first. Every stop after the first write ends with a line naming what is left (the runner user, the folder, the job hooks, the services, the registration on GitHub, the system packages added) and the one next step: `setup REPO` again finishes it, or `uninstall REPO` takes it away. `status` says a setup cut part-way as what it is, never as no runner. sudo's words say whether the password was taken.",
+   "codon": "G2.23",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G2_23_what_will_refuse_is_asked_before_the_first_write_and_a_later_stop_names_what_it_left",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 314,
    "moved_why": "",
    "moved_by_person": ""
   }

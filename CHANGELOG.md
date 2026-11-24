@@ -51,6 +51,10 @@ the cap (row R94).
   check of both sides, and the commands after it work (row R149).
 - A restart lifts only the hold `drain --restart` itself set: a runner you held before it stays held, `resume` or
   `uninstall` of a repository ends its restart hold, and `drain REPO` makes the hold yours (row R154).
+- `setup` reads whether systemd runs this computer before it makes anything: in a container, or in Linux inside
+  Windows without systemd, it stops having changed nothing here or on GitHub, and `look` says so first. A setup that
+  stops after its first step names what it left and the next step (`setup` again finishes it, `uninstall` takes it
+  away), and `status` says such a setup as cut part-way (row R155).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for

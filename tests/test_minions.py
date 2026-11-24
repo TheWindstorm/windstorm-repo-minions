@@ -248,7 +248,9 @@ def linux_host(**kw):
     links = {"/sys/dev/block/259:2": "/sys/devices/nvme0n1/nvme0n1p2"}
     with open(os.path.join(FIX, "billing-page-excerpt.html"), encoding="utf-8") as f:
         page = f.read()
-    return FakeHost(files=files, runs=runs, links=links, page=kw.pop("page", page), **kw)
+    dirs = {M.SYSTEMD_RUN_DIR: []}  # R155: systemd runs this stand-in computer, as it does a stock Ubuntu
+    dirs.update(kw.pop("dirs", {}))
+    return FakeHost(files=files, runs=runs, links=links, page=kw.pop("page", page), dirs=dirs, **kw)
 
 
 def look(gh, host, start=False):
@@ -1054,7 +1056,7 @@ class G2(unittest.TestCase):
             made_by_us(host)  # R129: a user this tool made earlier; one it did not make is never taken (G2.14)
             code, lines = run_setup(setup_gh(sha), host)
             self.assertEqual(code, M.EXIT_STOP)
-            self.assertIn("own group only", lines[-1])
+            self.assertIn("own group only", lines[-2])
             self.assertFalse(any("useradd" in a for a in host.ran))
         # a home closed to others is read back, and the person's own home must not be open to every user
         host, sha = setup_host(runs={("sudo", "-n", "stat", "-c", "%a", "/home/minions-runner"): (0, "755\n")})
@@ -1088,7 +1090,7 @@ class G2(unittest.TestCase):
         fresh_look(host)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertIn("checksum is not the one GitHub publishes", lines[-1])
+        self.assertIn("checksum is not the one GitHub publishes", lines[-2])
         self.assertFalse(any(a[2:3] == ("install",) for a in host.ran))
         self.assertEqual([x for x in os.listdir(host.state_dir()) if x.endswith(".tar.gz")], [])
         # the version is written down
@@ -1114,7 +1116,7 @@ class G2(unittest.TestCase):
         fresh_look(host)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertIn("exists already", lines[-1])
+        self.assertIn("exists already", lines[-2])
         self.assertFalse(any("tar" in a for a in host.ran))
 
     def test_G2_5_the_registration_token_goes_by_stdin_only(self):
@@ -1428,8 +1430,8 @@ class G2(unittest.TestCase):
         host.runs[("sudo", "-n", "useradd")] = (1, "sudo: a password is required\n")
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP, lines)
-        self.assertIn("run the same command again from the terminal where you typed the password", lines[-1])
-        self.assertIn("never done twice", lines[-1])
+        self.assertIn("run the same command again from the terminal where you typed the password", lines[-2])
+        self.assertIn("never done twice", lines[-2])
         # R73: `resume` and `drain --stop` ask for the password themselves before their admin step, never sending
         # the person back to a terminal where nothing was asked.
         host = setup_host(runs={("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner."): (1, ""),
@@ -1498,7 +1500,7 @@ class G2(unittest.TestCase):
         fresh_look(host)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertIn("credential files are not its own only", lines[-1])
+        self.assertIn("credential files are not its own only", lines[-2])
         self.assertFalse(any("svc.sh" in " ".join(a) or UNIT in " ".join(a) for a in host.ran),
                          "no service before the files are closed")
 
@@ -1529,7 +1531,7 @@ class G2(unittest.TestCase):
         fresh_look(host)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertIn("Slice='system.slice'", lines[-1])
+        self.assertIn("Slice='system.slice'", lines[-2])
         self.assertNotIn("runners", M.load_state(host))
 
     def test_G2_10_setup_ends_with_both_sides_read(self):
@@ -1566,6 +1568,90 @@ class G2(unittest.TestCase):
                                                                       "minions-medium"))}), host)
         self.assertEqual(code, M.EXIT_STOP)
         self.assertIn("no job asking for `self-hosted` can land on it", lines[-1])
+
+    def test_G2_23_what_will_refuse_is_asked_before_the_first_write_and_a_later_stop_names_what_it_left(self):
+        # Rule 11, row R155: read in the code and walked here (2026-11-24). Cut at the runner downloads list, at
+        # the registration token, at config.sh, at systemd: each stop after the first write named nothing it left;
+        # systemd's stop came after 48 admin steps and a registration on GitHub, with no next step at all.
+        listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
+        none = (200, {"total_count": 0, "runners": []})
+        next_step = G8Words.NEXT
+        # 1. systemd does not run this computer: setup stops before its first write, here and on GitHub.
+        host, sha = setup_host()
+        host.dirs.pop(M.SYSTEMD_RUN_DIR)
+        fresh_look(host)
+        gh = setup_gh(sha)
+        code, lines = run_setup(gh, host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertTrue(lines[-1].startswith("stop systemd does not run this computer: `systemctl` is here, but "
+                                             f"{M.SYSTEMD_RUN_DIR} is not"), lines)
+        self.assertIn("Nothing was changed, on this computer or on GitHub. Your next step:", lines[-1])
+        self.assertEqual(admin_steps(host), [])
+        self.assertFalse([c for c in gh.calls if c[0] != "GET"], gh.calls)
+        self.assertNotIn("setting_up", M.load_state(host))
+        # look says it too, before setup is asked; an answer that could not be read is not a "no" (rule 11).
+        rep = M.Report(io.StringIO())
+        M.survey(host, rep)
+        self.assertTrue([x for x in rep.lines if x.startswith("warn systemd does not run this computer")], rep.lines)
+        host, sha = setup_host()
+        fresh_look(host)
+        host.there = lambda path: None if path == M.SYSTEMD_RUN_DIR else FakeHost.there(host, path)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        # 2. every admin step of a whole setup, refused in turn, and the two GitHub answers that can refuse after
+        # the first write: the last line names what is left (or that nothing was found made) and the next step.
+        host, sha = setup_host()
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        steps = list(dict.fromkeys(tuple(a) for a in admin_steps(host)))
+        self.assertEqual(steps[0][:3], ("sudo", "-n", "useradd"))  # the first write
+        cuts = [("admin", s) for s in steps] + [("github", ("GET", f"repos/{REPO}/actions/runners/downloads")),
+                                                ("github", ("POST", f"repos/{REPO}/actions/runners/registration-token"))]
+        stopped = 0
+        for kind, cut in cuts:
+            host, sha = setup_host()
+            fresh_look(host)
+            over = {listing: none}
+            if kind == "admin":
+                host.runs[cut] = (1, "refused by the stand-in\n")
+            else:
+                over[cut] = (403, {"message": "Resource not accessible by integration"})
+            code, lines = run_setup(setup_gh(sha, over), host)
+            if not [x for x in lines if x.startswith("stop ")]:
+                continue  # a step whose failure the tool reads past (a clean-up, a read-back that reads again)
+            stopped += 1
+            last = lines[-1]
+            self.assertTrue(last.startswith(f"stop setup of {REPO} stopped"), (cut, lines[-3:]))
+            self.assertIn(f"`setup {REPO}`", last, cut)
+            if "part-way" in last:
+                self.assertIn(f"`uninstall {REPO}` takes it away", last, cut)
+            step = [x for x in lines[:-1] if x.startswith("stop ")]
+            self.assertTrue(step, (cut, lines[-3:]))
+            self.assertTrue(next_step.search(re.sub(r"^stop\s*`[^`]*`", "", step[-1])), (cut, step[-1]))
+        self.assertGreaterEqual(stopped, 15, stopped)
+        # 3. status after a cut says what is true: a setup cut part-way, what is left, and the two commands.
+        host, sha = setup_host()
+        fresh_look(host)
+        config = ("sudo", "-n", "-u", "minions-runner", "--", *M.RUNNER_ENV, "bash", "-c", M.CONFIG_SCRIPT)
+        host.runs[config] = (1, "Http response code: NotFound\n")
+        gh = setup_gh(sha, {listing: none})
+        self.assertEqual(run_setup(gh, host)[0], M.EXIT_STOP)
+        code, lines = run_cmd(M.status, REPO, host=host, gh=gh)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertTrue(lines[0].startswith(f"stop a setup of {REPO} here was cut part-way, and this is left of it: "),
+                        lines)
+        self.assertIn(f"`setup {REPO}` finishes it; or `uninstall {REPO}` takes it away", lines[0])
+        self.assertFalse([x for x in lines if "no runner of ours" in x], lines)
+        # 4. sudo's words are true for both: a password taken with no ticket kept, and a password not taken.
+        for took, words in ((0, "stop sudo took the password, but this computer does not keep admin rights open"),
+                            (1, "stop sudo did not take the password (or it was not typed): nothing was touched")):
+            host, sha = setup_host()
+            fresh_look(host)
+            host.runs[("sudo", "-n", "true")] = (1, "sudo: a password is required\n")
+            host.sudo_validate = lambda took=took: took
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertTrue(lines[-1].startswith(words), lines[-1])
+            self.assertEqual(admin_steps(host), [])
 
 
 # ------------------------------------------------------------------------------------------------------------ G3
@@ -4102,7 +4188,7 @@ class G6(unittest.TestCase):
         gh = setup_gh(sha, {listing: none})
         code, lines = run_setup(gh, host)
         self.assertEqual(code, M.EXIT_STOP, lines)
-        self.assertIn("run the same command again from the terminal where you typed the password", lines[-1])
+        self.assertIn("run the same command again from the terminal where you typed the password", lines[-2])
         self.assertEqual(M.load_state(host)["setting_up"][REPO]["folder"], FOLDER)
         # `uninstall` finds it, never "nothing to uninstall", and takes it away, read back.
         out = io.StringIO()
@@ -4822,7 +4908,7 @@ class P1a(unittest.TestCase):
         host.runs[("sudo", "-n", "systemctl", "start", "minions-watch.service")] = blind_pass
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertTrue(lines[-1].startswith("stop the watch's first pass could not read whether the repository is "
+        self.assertTrue(lines[-2].startswith("stop the watch's first pass could not read whether the repository is "
                                              "private: the GitHub CLI (gh) could not be found"), lines[-1])
 
     def test_G8_9_every_program_a_service_runs_by_name_is_listed_and_resolved(self):
@@ -4890,7 +4976,7 @@ class P1a(unittest.TestCase):
         fresh_look(host)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertIn("awk (/home/person/bin/awk)", lines[-1])
+        self.assertIn(f"awk ({host.home()}/bin/awk)", lines[-2])
 
 
 class G9(unittest.TestCase):
@@ -5204,7 +5290,9 @@ class G8Words(unittest.TestCase):
                 words = " ".join(x.value for x in ast.walk(a) if isinstance(x, ast.Constant) and isinstance(x.value, str))
                 if words.strip() == "start test:":
                     continue  # its words are ZERO_JOB_WORDS, checked below
-                if not self.NEXT.search(words):
+                # R155: a line that opens with another program's command in backticks (`systemctl daemon-reload`
+                # failed: ...) named no step, yet its backtick passed as one. The command it quotes is not a step.
+                if not self.NEXT.search(re.sub(r"^\s*`[^`]*`", "", words)):
                     lacking.append((n.lineno, words[:80]))
         self.assertEqual(lacking, [])
         for built in (M.ZERO_JOB_WORDS, M.public_words(REPO, {"time": "t"}),

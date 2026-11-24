@@ -995,6 +995,8 @@ def survey(host: Host, rep: Report) -> dict:
         s["mem"] = mem.get("MemTotal")
         s["mem_avail"] = mem.get("MemAvailable")
         s["swap_used"] = (mem["SwapTotal"] - mem["SwapFree"]) if "SwapTotal" in mem and "SwapFree" in mem else None
+        if host.which("systemctl") and systemd_runs_here(host) is False:  # R155: look says it before setup is asked
+            rep.warn(no_systemd_words("`setup` stops before it changes anything."))
     elif s["system"] == "Darwin":
         rc, out = host.run(["sw_vers", "-productVersion"])
         s["os"] = f"macOS {out.strip()}" if rc == 0 else "macOS"
@@ -1946,11 +1948,19 @@ def ask_admin_once(host: Host, rep: Report, interactive: bool, cmd: str = "setup
     if interactive:
         rep.need("type this computer's admin password once, where sudo asks for it below (this step is yours)",
                  blocks=False, answered_here=True)
-        if host.sudo_validate() == 0 and host.run(["sudo", "-n", "true"])[0] == 0:
+        took = host.sudo_validate() == 0
+        if took and host.run(["sudo", "-n", "true"])[0] == 0:
             rep.ok("admin rights ready (asked once)")
             return True
-        rep.stop("sudo did not accept the password: nothing was touched. Run the same command again and type the "
-                 "password where sudo asks")
+        if took:  # R155: the password was right; this computer keeps no admin ticket between steps (timestamp_timeout=0)
+            rep.stop("sudo took the password, but this computer does not keep admin rights open between one step and "
+                     "the next (sudo's `timestamp_timeout` is 0 here, or its ticket is not kept for this terminal), and "
+                     "this tool's admin steps each need them: nothing was touched. Your next step: an admin of this "
+                     "computer lets sudo keep them a few minutes (`timestamp_timeout` above 0, with `visudo`), then "
+                     "run the same command again")
+            return False
+        rep.stop("sudo did not take the password (or it was not typed): nothing was touched. Run the same command "
+                 "again and type the password where sudo asks")
         return False
     rep.need(f"this needs this computer's admin password once: run `sudo -v` in your terminal, then run {cmd} again "
              "from that same terminal")
@@ -2340,7 +2350,8 @@ def install_service(host: Host, folder: str, unit: str, survey_: dict, rep: Repo
         journal(host, " ".join(argv))
         rc, out = sudo(host, argv)
         if rc != 0:
-            rep.stop(f"`{' '.join(argv)}` failed: {tail(out)}")
+            rep.stop(f"`{' '.join(argv)}` failed: {tail(out)}. Settle what it says, then run the same command again: "
+                     "what was done is read back, never done twice")
             return None
     rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
                                   "-p", "Wants", "-p", "UnitFileState", "-p", "User", "-p", "OOMPolicy"))
@@ -2411,6 +2422,23 @@ def one_repository_here(host: Host, repo: str, rep: Report) -> bool:
     return True
 
 
+SYSTEMD_RUN_DIR = "/run/systemd/system"  # systemd's own test that it runs this computer (sd_booted)
+
+
+def systemd_runs_here(host: Host) -> bool | None:
+    """Row R155 (rule 11, THE FLOOR IS CHECKED): `systemctl` on the PATH does not mean systemd runs this computer (a
+    container, Linux inside Windows without it). systemd's own test: its run folder is there. True, False, or None
+    when it could not be told; only a seen False is a "no" (rule 11: any other answer is not a "no")."""
+    return host.there(SYSTEMD_RUN_DIR)
+
+
+def no_systemd_words(where: str) -> str:
+    return (f"systemd does not run this computer: `systemctl` is here, but {SYSTEMD_RUN_DIR} is not (a container, or "
+            "Linux inside Windows with systemd not turned on). This version sets up a runner only on a Linux computer "
+            f"that systemd runs. {where} Your next step: run this tool on such a computer; in Linux inside Windows, "
+            "systemd is turned on by `systemd=true` under `[boot]` in /etc/wsl.conf, then `wsl --shutdown` in Windows")
+
+
 def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
           interactive: bool | None = None, limits: tuple[int, int] | None = None, beside_live: bool = False) -> int:
     host = host or Host()
@@ -2427,6 +2455,9 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if host.system() != "Linux" or not host.which("systemctl"):
         rep.stop("this version sets up Linux with systemd only; macOS comes in the next version. Nothing was changed, "
                  "and there is no step to take on this computer now")
+        return rep.code()
+    if systemd_runs_here(host) is False:  # R155: before the first write, on this computer and on GitHub
+        rep.stop(no_systemd_words("Nothing was changed, on this computer or on GitHub."))
         return rep.code()
     if not one_repository_here(host, repo, rep):
         return rep.code()
@@ -2474,32 +2505,48 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
             (rep.ok if kind == "ok" else rep.warn)(words + "; the runner, its service, its limits and a running job "
                                                    "were not touched")
         return rep.code()
-    if not ensure_runner_user(host, rep):
-        return rep.code()
     owner, name_ = repo.split("/", 1)
     folder = f"/home/{RUNNER_USER}/runners/{owner}-{name_}"
     labels = runner_labels(survey_)
     runner_name = f"minions-{re.sub(r'[^A-Za-z0-9-]', '-', host.hostname())}"[:60]
-    rel = runner_release(gh, repo, host, rep)
-    if rel is None:
-        return rep.code()
     known = load_state(host)
-    if repo not in (known.get("runners") or {}):  # R71: written before anything is made, so a cut is found again
+    if repo not in (known.get("runners") or {}):  # R71, R155: written before the first write, so a cut is found again
         known.setdefault("setting_up", {})[repo] = {"name": runner_name, "folder": folder, "labels": labels,
                                                     "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
         save_state(host, known)
+    if not setup_writes(gh, host, repo, folder, labels, runner_name, survey_, lim, rep):
+        # R155 (the stop-line rule): a stop after the first write names what it left and the one next step
+        if rep.stopped or rep.blocked:
+            say_what_setup_left(gh, host, repo, rep)
+        return rep.code()
+    both_sides(gh, host, repo, runner_name, unit_of(host, repo), labels, rep)
+    return rep.code()
+
+
+def unit_of(host: Host, repo: str) -> str:
+    return ((load_state(host).get("runners") or {}).get(repo) or {}).get("unit") or ""
+
+
+def setup_writes(gh: GitHub, host: Host, repo: str, folder: str, labels: list[str], runner_name: str, survey_: dict,
+                 lim: dict, rep: Report) -> bool:
+    """setup's road from its first write (the runner user) to the watch; False at the first step that stopped."""
+    if not ensure_runner_user(host, rep):
+        return False
+    rel = runner_release(gh, repo, host, rep)
+    if rel is None:
+        return False
     if not unpack_runner(host, rel, folder, rep):
-        return rep.code()
+        return False
     if not register(gh, host, repo, folder, runner_name, labels, rep):
-        return rep.code()
+        return False
     if not lock_credentials(host, folder, rep):
-        return rep.code()
+        return False
     if not install_hooks(host, repo, folder, rep):
-        return rep.code()
+        return False
     version = runner_version(host, folder, rep) or rel["version"]
     unit = install_service(host, folder, unit_name(folder, runner_name), survey_, rep, lim)
     if unit is None:
-        return rep.code()
+        return False
     swap_kept = say_swap_cap(host, rep)  # R94: read from the running slice; only "kept" is recorded as kept
     data = load_state(host)
     if swap_kept:
@@ -2514,10 +2561,53 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if "setting_up" in data and not data["setting_up"]:
         data.pop("setting_up")
     save_state(host, data)
-    if not install_watch(host, rep, repo=repo):
-        return rep.code()
-    both_sides(gh, host, repo, runner_name, unit, labels, rep)
-    return rep.code()
+    return install_watch(host, rep, repo=repo)
+
+
+def what_setup_left(gh: GitHub, host: Host, repo: str) -> list[str]:
+    """R155 (rule 11, rule 24): what a setup cut part-way left of itself, each part read now from the thing itself
+    (the user, the folder, the units, GitHub's list), never from the record alone. A read that gave no answer is
+    named as not read, never left out."""
+    data = load_state(host)
+    entry = (data.get("setting_up") or {}).get(repo) or (data.get("runners") or {}).get(repo) or {}
+    items = []
+    if host.run(["id", "-u", RUNNER_USER])[0] == 0:
+        items.append(f"the user {RUNNER_USER} and its home")
+    for what, path in (("the runner's folder", entry.get("folder")), ("the job hooks", hook_dir(repo))):
+        there = root_test(host, path) if path else False
+        if there is not False:
+            items.append(f"{what} {path}" + ("" if there else " (not read: admin rights are not open in this "
+                                                                "terminal, so it is named, not taken for gone)"))
+    units = host.listdir_or_none("/etc/systemd/system")
+    unit = entry.get("unit") or (unit_name(entry["folder"], entry["name"]) if entry.get("folder") and entry.get("name")
+                                 else "")
+    if units is None:
+        items.append("the services: not read")
+    else:
+        items += [f"the service {u}" for u in (unit, f"{WATCH_UNIT}.timer") if u and u in units]
+    if entry.get("name"):
+        s, r = read_runner(gh, repo, entry["name"])
+        if r is not None:
+            items.append(f"on GitHub, the runner {entry['name']} registered to {repo} ({r.get('status') or 'status not read'})")
+        elif s != 200:
+            items.append(f"on GitHub, whether {entry['name']} is registered: not read (HTTP {s})")
+    if data.get("dependency_packages"):
+        items.append("system packages the runner's own dependency script added ("
+                     + ", ".join(data["dependency_packages"]) + "; these stay after `uninstall` too, as another program "
+                     "may use them)")
+    return items
+
+
+def say_what_setup_left(gh: GitHub, host: Host, repo: str, rep: Report) -> None:
+    """R155 (the stop-line rule, rule 11): setup's last line after a stop names what it left and the one next step."""
+    items = what_setup_left(gh, host, repo)
+    if not items:  # the record stays: a read can be wrong, and setup or uninstall finishes from it (R71)
+        rep.stop(f"setup of {repo} stopped, and nothing of it was found made, on this computer or on GitHub (read "
+                 f"now). Your next step: settle what the line above says, then run `setup {repo}` again")
+        return
+    rep.stop(f"setup of {repo} stopped part-way, and this is left of it: {'; '.join(items)}. Your next step: settle "
+             f"what the line above says, then `setup {repo}` again finishes it; or `uninstall {repo}` takes it away, "
+             "read back")
 
 
 # ---------------------------------------------------------------------------------------------------- G4 keep ready
@@ -3383,6 +3473,15 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
     data = load_state(host)
     runners = data.get("runners") or {}
     repos = [repo] if repo else sorted(runners)
+    cut = sorted(r for r in {**(data.get("setting_up") or {}), **{k: v for k, v in runners.items()
+                                                                   if v.get("unfinished")}} if not repo or r == repo)
+    if cut:  # R155 (rule 11): a setup cut part-way is said as what is left of it, never as "no runner of ours"
+        for rp in cut:
+            items = what_setup_left(gh, host, rp)
+            rep.stop(f"a setup of {rp} here was cut part-way, and this is left of it: "
+                     + ("; ".join(items) if items else "nothing, read now")
+                     + f". Your next step: `setup {rp}` finishes it; or `uninstall {rp}` takes it away, read back")
+        return rep.code()
     if not repos or any(r not in runners for r in repos):
         rep.stop(f"no runner of ours serves {repo} on this computer: `setup {repo}` sets one up" if repo else
                  "no runner of ours on this computer: `look <owner/repo>`, then `setup <owner/repo>`, sets one up")
