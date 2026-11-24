@@ -1716,6 +1716,20 @@
    "issue": 305,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R123",
+   "seen": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine: 20 steered tries to land a separate watch pass and setup's own first pass in one second did not hit; setup reads the count sooner than a separate pass can finish. In all 20, setup renewed the watch and never said \"wrote nothing\". Also seen while steering: two passes run at once (one started outside systemd, which a person never does) both read the count N and wrote N+1.",
+   "promise": "The same-second case of R120 is seen on a real machine, steered and said so, by a way of arranging it that does not depend on luck; the round also looks at two passes run at once, and if the count can lose a pass in a way a person can meet, that becomes its own row.",
+   "codon": "G5.19",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "test_G5_19_a_watch_pass_in_the_same_second_as_the_last_is_still_seen",
+   "proven": "",
+   "issue": 311,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
