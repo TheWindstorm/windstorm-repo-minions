@@ -2192,6 +2192,20 @@
    "issue": 348,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R167",
+   "seen": "2026-11-24, read in the code for family rule 30 (Linux) and walked against a stand-in host: the read that decided a unit was gone took a systemctl that answered nothing (no manager reached, not booted with systemd, a timeout) as gone, and its exit code was not looked at; the watch's stop and the runner's were not read stopped before anything was removed, so an uninstall could say the watch and the runner's service were gone, read back, and end on off while systemd still held them.",
+   "promise": "Every unit of ours is read with three answers (rule 6): gone, stopped or running, or could not be read when systemctl's exit is not 0 or its answer lacks the fields; a read with no answer is never taken for gone or stopped. Before anything is removed, the watch's timer and service (uninstall --all), the runner's service and the slice are told to stop and READ stopped; one that is not leaves nothing removed, and the stop says what was read of each and the one step as a whole command line. After a removal, a unit not read gone is said as still there or as could not be read, each as it was read.",
+   "codon": "G6.27",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_27_every_unit_is_read_stopped_before_anything_is_removed",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 0,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

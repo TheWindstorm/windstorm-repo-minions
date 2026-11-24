@@ -71,6 +71,7 @@ Folders, and who can write them:
 | `remove_shared` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_shared` | `systemctl reset-failed` | no | no | nothing |
 | `remove_slice` | `systemctl stop` | no | no | nothing |
+| `watch_off` | `systemctl stop` | no | no | nothing |
 | `remove_slice` | `rm` | no | no | nothing |
 | `remove_slice` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_runner_user` | `crontab` | no | no: root's spool | nothing |

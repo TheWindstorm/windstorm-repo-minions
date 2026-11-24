@@ -771,6 +771,29 @@ def setup_host(**kw):
         M.watch(host=host, gh=StatusGH(), out=io.StringIO())
         return 0, ""
     host.runs[("sudo", "-n", "systemctl", "start", "minions-watch.service")] = first_pass
+    # R167 (rule 30): the runner's unit as systemd answers it: active once set up, inactive once told to stop, not
+    # found once its file is deleted; `show` with LoadState and ActiveState answers those two fields only, as real
+    # systemctl does (the setup reads above ask for other fields, and SHOW answers those).
+    unit_now = {"active": True, "file": True}
+    def unit_said(key, value):
+        def f(argv, inp):
+            unit_now[key] = value
+            return 0, ""
+        return f
+    def unit_show(argv, inp):
+        # its file is there while this stand-in says so to root's own `test -e` (a test may say it is not)
+        there = unit_now["file"] and host._answer(["sudo", "-n", "test", "-e", M.unit_path(UNIT)])[0] == 0
+        if not there and not unit_now["active"]:  # systemd keeps an active unit loaded after its file goes
+            return 0, "LoadState=not-found\nActiveState=inactive\nFragmentPath=\nDropInPaths=\n"
+        return 0, (f"LoadState=loaded\nActiveState={'active' if unit_now['active'] else 'inactive'}\n"
+                   f"FragmentPath={M.unit_path(UNIT)}\nDropInPaths=\n")
+    host.runs[("systemctl", "show", UNIT, "-p", "LoadState", "-p", "ActiveState")] = unit_show
+    host.runs[("sudo", "-n", "systemctl", "stop", UNIT)] = unit_said("active", False)
+    for verb in (("start",), ("restart",), ("enable", "--now")):
+        host.runs[("sudo", "-n", "systemctl", *verb, UNIT)] = unit_said("active", True)
+    host.runs[("sudo", "-n", "rm", "-f", M.unit_path(UNIT))] = unit_said("file", False)
+    host.runs[("systemctl", "is-active", UNIT)] = lambda argv, inp: ((0, "active\n") if unit_now["active"] and
+                                                                     unit_now["file"] else (3, "inactive\n"))
     host.runs.update(extra)
     return host, sha
 
@@ -4097,7 +4120,83 @@ class G6(unittest.TestCase):
                         if list(a[:3]) == ["systemctl", "show", M.SLICE] else real(a, i))(world.answer)
         code, lines = run_uninstall(gh, host, everything=True)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertIn(f"{M.SLICE} is still loaded or active after its removal", lines[-1])
+        # R167 (rule 30): read running after its stop, so its file is not deleted
+        self.assertIn(f"{M.SLICE} was told to stop and reads {M.SLICE}: running (active): its file was not deleted", lines[-1])
+        self.assertIn(SLICE_FILE, world.paths)
+
+    def test_G6_27_every_unit_is_read_stopped_before_anything_is_removed(self):
+        # R167 (family rule 30, Linux, 2026-11-24 3:25 PM ET): a skill's uninstall said "off" and ended 0 while systemd
+        # still held its service; ours read a systemctl that answered nothing (no manager reached, a timeout) as
+        # "gone". Three answers (rule 6): a unit is read gone, stopped or running, or it could not be read; and
+        # every unit of ours is stopped and READ stopped before anything is removed; not read stopped, nothing is.
+        W_SVC, W_TMR = f"{M.WATCH_UNIT}.service", f"{M.WATCH_UNIT}.timer"
+        class H:
+            def __init__(self, a): self.a = a
+            def run(self, argv, timeout=20): return self.a
+        for ans, want in (((1, "Failed to connect to bus: No such file or directory\n"), "unread"),
+                          ((1, "System has not been booted with systemd as init system (PID 1). Can't operate.\n"), "unread"),
+                          ((124, ""), "unread"), ((0, ""), "unread"), ((0, "LoadState=loaded\n"), "unread"),
+                          ((1, "LoadState=not-found\nActiveState=inactive\n"), "unread"),
+                          ((0, "LoadState=loaded\nActiveState=active\n"), "running"),
+                          ((0, "LoadState=loaded\nActiveState=deactivating\n"), "running"),
+                          ((0, "LoadState=not-found\nActiveState=inactive\n"), "gone"),
+                          ((0, "LoadState=loaded\nActiveState=inactive\nFragmentPath=/etc/systemd/system/x.service\n"), "stopped"),
+                          ((0, "LoadState=not-found\nActiveState=failed\n"), "stopped")):
+            self.assertEqual(M.unit_read(H(ans), W_SVC)[0], want, ans)
+        def deleted_none(world):
+            self.assertIn(FOLDER, world.paths)
+            self.assertTrue(set(WATCH_FILES) <= world.paths, world.paths)
+            self.assertIn(SLICE_FILE, world.paths)
+        bus = (1, "Failed to connect to bus: No such file or directory\n")
+        # The watch's service cannot be read (uninstall --all): nothing is removed, the runner's folder included.
+        for unit in (W_SVC, W_TMR):
+            gh, world, host = remove_setup()
+            host._answer = (lambda real, u: lambda a, i=None: bus if list(a[:3]) == ["systemctl", "show", u]
+                            else real(a, i))(world.answer, unit)
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertIn(f"{unit}: could not be read", lines[-1])
+            self.assertIn("nothing was removed", lines[-1])
+            self.assertIn(f"`python3 -I {M.tool_path()} uninstall --all`", lines[-1])
+            deleted_none(world)
+            self.assertFalse(any(m == "DELETE" for m, p in gh.calls), gh.calls)
+        # The watch's service still runs after it was told to stop: the same, with what was read of each.
+        gh, world, host = remove_setup()
+        world.active[W_SVC] = "active"
+        host._answer = (lambda real: lambda a, i=None: (0, "LoadState=loaded\nActiveState=active\n")
+                        if list(a[:3]) == ["systemctl", "show", W_SVC] else real(a, i))(world.answer)
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(f"{W_SVC}: running (active)", lines[-1])
+        self.assertIn(f"{W_TMR}: stopped", lines[-1])
+        self.assertIn("nothing was removed", lines[-1])
+        deleted_none(world)
+        # The runner's own service cannot be read (one repository): nothing of that runner is removed.
+        gh, world, host = remove_setup()
+        host._answer = (lambda real: lambda a, i=None: bus if list(a[:3]) == ["systemctl", "show", UNIT]
+                        else real(a, i))(world.answer)
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(f"{UNIT}: could not be read", lines[-1])
+        self.assertIn("nothing of it was removed", lines[-1])
+        self.assertIn(f"`python3 -I {M.tool_path()} uninstall {REPO}`", lines[-1])
+        self.assertIn(FOLDER, world.paths)
+        self.assertIn(f"/etc/systemd/system/{UNIT}", world.paths)
+        self.assertFalse(any(m == "DELETE" for m, p in gh.calls), gh.calls)
+        # And a unit removed but not read gone afterwards is "could not be read", never "still there".
+        gh, world, host = remove_setup()
+        seen = {"n": 0}
+        def slice_unread_after(real):
+            def ans(a, i=None):
+                if list(a[:3]) == ["systemctl", "show", M.SLICE] and f"rm {SLICE_FILE}" in world.order:
+                    return bus
+                return real(a, i)
+            return ans
+        host._answer = slice_unread_after(world.answer)
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(f"whether {M.SLICE} is gone could not be read", lines[-1])
+        self.assertNotIn("still loaded or active", lines[-1])
 
     def test_G6_2_uninstall_all_leaves_nothing_and_offers_the_workflows_back(self):
         gh, world, host = remove_setup()

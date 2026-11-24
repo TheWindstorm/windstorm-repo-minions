@@ -4994,18 +4994,49 @@ def unit_path(unit: str) -> str:
     return f"/etc/systemd/system/{unit}"
 
 
-def unit_gone(host: Host, unit: str) -> bool:
-    """A unit is gone when systemd no longer has it loaded and nothing of it is active (G6.5's lesson). A slice is never
-    "not-found": systemd makes any slice from its name alone (seen on a stock Ubuntu 24.04, systemd 255: a slice never
-    made reads LoadState=loaded). So a slice is gone when it is inactive with no file and no drop-in loaded."""
+RUNNING_STATES = ("active", "activating", "deactivating", "reloading", "refreshing")
+
+
+def unit_read(host: Host, unit: str) -> tuple[str, str]:
+    """R167 (family rule 30, rule 6's three answers): one read of a unit, as systemd answers it now: ("gone", state)
+    when systemd no longer has it loaded and nothing of it is active (G6.5's lesson); ("stopped", state) when it is
+    loaded but not running (inactive, or failed: R132); ("running", state); or ("unread", why) when systemctl did not
+    answer (no manager reached, a timeout, an answer without both fields): never taken as gone or stopped. A slice is
+    never "not-found": systemd makes any slice from its name alone (seen on a stock Ubuntu 24.04, systemd 255: a slice
+    never made reads LoadState=loaded). So a slice is gone when it is inactive with no file and no drop-in loaded."""
     rc, out = host.run(systemctl("show", unit, "-p", "LoadState", "-p", "ActiveState", "-p", "FragmentPath",
                                  "-p", "DropInPaths"))
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
-    if got.get("ActiveState") not in ("inactive", None):
-        return False
-    if got.get("LoadState") in ("not-found", None):
+    if rc != 0 or not got.get("ActiveState") or not got.get("LoadState"):
+        first = next((x.strip() for x in out.splitlines() if x.strip()), "")
+        return "unread", (first[:160] or f"systemctl answered nothing, exit {rc}")
+    act = got["ActiveState"]
+    if act in RUNNING_STATES:
+        return "running", act
+    if act == "inactive" and (got["LoadState"] == "not-found" or (
+            unit.endswith(".slice") and not got.get("FragmentPath") and not got.get("DropInPaths"))):
+        return "gone", act
+    return "stopped", act
+
+
+def unit_words(unit: str, read: tuple[str, str]) -> str:
+    """What was read of one unit, as the stop lines say it."""
+    kind, what = read
+    return f"{unit}: could not be read ({what})" if kind == "unread" else f"{unit}: {kind} ({what})"
+
+
+def gone_or_stop(host: Host, unit: str, rep: Report, again: str) -> bool:
+    """After a unit's removal: read gone, or a stop that says what was read (a read with no answer is said so)."""
+    read = unit_read(host, unit)
+    if read[0] == "gone":
         return True
-    return unit.endswith(".slice") and not got.get("FragmentPath") and not got.get("DropInPaths")
+    if read[0] == "unread":
+        rep.stop(f"whether {unit} is gone could not be read ({read[1]}). Your next step: `{again}`: it reads again "
+                 "and finishes a removal that was not finished")
+    else:
+        rep.stop(f"{unit} is still there after its removal ({read[0]}, {read[1]}). Run the same command again: it "
+                 "finishes a removal that was not finished")
+    return False
 
 
 def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> bool:
@@ -5051,7 +5082,7 @@ def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Repor
     return True
 
 
-def remove_service(host: Host, mine: dict, rep: Report) -> bool:
+def remove_service(host: Host, mine: dict, rep: Report, again: str = "uninstall") -> bool:
     """R127 (rule 28): the runner's unit and our drop-in, taken out by this tool as root's own files (never through
     the runner's svc.sh); the runner's own note of its unit removed as the runner user; read back gone. Safe to run
     again. The runner's `config.sh remove` refuses while that note is there, so this comes before it."""
@@ -5076,8 +5107,7 @@ def remove_service(host: Host, mine: dict, rep: Report) -> bool:
             sudo(host, ["rm", "-rf", unit_path(unit) + ".d"])
         sudo(host, systemctl("daemon-reload"))
         sudo(host, systemctl("reset-failed", unit))  # R132: a failed unit stays loaded until its failure is forgotten
-        if not unit_gone(host, unit):
-            rep.stop(f"the runner's service {unit} is still there after its removal. Run the same command again: it finishes a removal that was not finished")
+        if not gone_or_stop(host, unit, rep, again):
             return False
     rep.ok("the runner's service and our drop-in are gone, read back")
     return True
@@ -5155,12 +5185,23 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
         rep.wait(f"a job process of this runner still runs here, while GitHub no longer lists it; nothing is cut. "
                  f"Next: `{next_cmd}` again")
         return False
-    if runner_pids(host, folder) or host.run(systemctl("is-active", mine.get("unit") or "none"))[1].strip() == "active":
-        if not stop_runner(host, mine.get("unit") or "", folder, rep, drained=True):
+    unit = mine.get("unit") or ""
+    if not unit and folder:  # R96: a setup cut before it recorded the unit; the runner's own file names it
+        rc, named = as_runner(host, ["cat", f"{folder}/.service"])
+        unit = named.strip() if rc == 0 and re.fullmatch(UNIT_RE, named.strip()) else ""
+    again = f"python3 -I {tool_path()} {next_cmd}"
+    if runner_pids(host, folder) or (unit and unit_read(host, unit)[0] != "gone"):
+        if not stop_runner(host, unit, folder, rep, drained=True):
+            return False
+    if unit:  # R167 (rule 30): read stopped before anything of it is removed; not read stopped, nothing is
+        read = unit_read(host, unit)
+        if read[0] not in ("stopped", "gone"):
+            rep.stop(f"the runner's service was told to stop and reads {unit_words(unit, read)}: nothing of it was "
+                     f"removed. Your next step: `{again}`")
             return False
     # The runner's own `config.sh remove` refuses while its service is installed, so the unit goes first, taken out
     # by this tool (R127); the GitHub side still goes before anything of its folders is deleted (G6.6).
-    if not remove_service(host, mine, rep):
+    if not remove_service(host, mine, rep, again):
         return False
     if not remove_github_side(gh, host, repo, mine, rep):
         return False
@@ -5434,6 +5475,23 @@ def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None
              "where they ran before; until then they wait for a runner")
 
 
+def watch_off(host: Host, rep: Report) -> bool:
+    """R167 (family rule 30, Linux): before `uninstall --all` removes anything, the watch's timer and service are told
+    to stop and both are READ stopped (or gone). If either is not, nothing was removed: the stop says what was read of
+    each and the one step as a whole command line."""
+    units = (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service")
+    for unit in units:
+        if exists_as_root(host, unit_path(unit)):
+            journal(host, "stop", unit)
+            sudo(host, systemctl("stop", unit))
+    reads = {u: unit_read(host, u) for u in units}
+    if all(r[0] in ("stopped", "gone") for r in reads.values()):
+        return True
+    rep.stop("the watch was told to stop and reads " + "; ".join(unit_words(u, r) for u, r in reads.items())
+             + f": nothing was removed. Your next step: `python3 -I {tool_path()} uninstall --all`")
+    return False
+
+
 def remove_shared(host: Host, rep: Report) -> bool:
     """G6.2: the watch, the slice (stopped first, G6.5), the tool's own folders, then the runner user."""
     ok = True
@@ -5447,8 +5505,7 @@ def remove_shared(host: Host, rep: Report) -> bool:
     # "failed" after its file is gone, until systemd is told to forget that failure.
     sudo(host, systemctl("reset-failed", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"))
     for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):
-        if not unit_gone(host, unit):
-            rep.stop(f"{unit} is still there after its removal. Run the same command again: it finishes a removal that was not finished")
+        if not gone_or_stop(host, unit, rep, f"python3 -I {tool_path()} uninstall --all"):
             ok = False
     if ok:
         rep.ok("the watch's timer and service are gone, read back")
@@ -5600,11 +5657,21 @@ def remove_slice(host: Host, rep: Report) -> bool:
     path = unit_path(SLICE)
     journal(host, "stop", SLICE)
     sudo(host, systemctl("stop", SLICE))
+    read = unit_read(host, SLICE)  # R167 (rule 30): read stopped before its file is deleted
+    if read[0] not in ("stopped", "gone"):
+        rep.stop(f"{SLICE} was told to stop and reads {unit_words(SLICE, read)}: its file was not deleted. Your next "
+                 f"step: `python3 -I {tool_path()} uninstall --all`")
+        return False
     if exists_as_root(host, path):
         journal(host, "delete", path)
         sudo(host, ["rm", "-f", path])
     sudo(host, systemctl("daemon-reload"))
-    if not unit_gone(host, SLICE):
+    read = unit_read(host, SLICE)
+    if read[0] == "unread":
+        rep.stop(f"whether {SLICE} is gone could not be read ({read[1]}). Your next step: `python3 -I {tool_path()} "
+                 "uninstall --all`: it reads again and finishes a removal that was not finished")
+        return False
+    if read[0] != "gone":
         rep.stop(f"{SLICE} is still loaded or active after its removal. Run the same command again: it finishes a removal that was not finished")
         return False
     rep.ok(f"{SLICE} was stopped before its file was deleted, and is gone, read back")
@@ -5780,6 +5847,8 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
     repos = [repo] if repo and not everything else sorted(runners)
     known = sorted(set(repos) | set(data.get("moves") or {}) | ({repo} if repo else set()))
     next_cmd = "uninstall --all" if everything else f"uninstall {repo}"
+    if everything and not watch_off(host, rep):
+        return rep.code()
     for rp in repos:
         if not remove_one(gh, host, rp, data, rep, wait_s, poll_s, next_cmd):
             return rep.code()
