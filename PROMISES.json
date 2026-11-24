@@ -2331,6 +2331,48 @@
    "issue": 366,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R179",
+   "seen": "2026-11-24, in the code (the owner's change 1): with GitHub's API limit for this login spent, GitHub answers 403 (or 429) and the tool read the limit's time, but its stop said GitHub refused this login and to give the account admin rights: false twice (rights were not the refusal, and they change nothing). The same words were given for 401 and 404; look's read of the repository said to check the name, setup's token stop said admin is needed, and setup's privacy stop said to make the repository private, each with the limit spent.",
+   "promise": "A refusal of GitHub's is named by what it was: a spent limit (403 or 429) says the limit and its time first, never rights; 401 is the saved login refused, with the person's own login as the step; 404 is no access to the repository, or it was renamed or removed. Every stop that names a refusal of GitHub's reads the limit first.",
+   "codon": "G7.19",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G7_19_githubs_refusal_is_named_by_what_it_was",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 367,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R180",
+   "seen": "2026-11-24, in the code (the owner's change 2): for a runner user's home that stayed, the tool said \"the user was removed outside this tool\", also where its own userdel had left the home (the census after it, and the next run, with the record that it made the user dropped) and where its record said nothing (setup with a kept home): the tool had not read that.",
+   "promise": "The why says what was read (that user is not on this computer, the folder is, and this tool deletes in a runner's home only as that user); how it came about is said only from this tool's record. The delete line is the one step only where the record says this tool made the user; with no record it is offered as \"if you know it is left from this tool's runner\", and moving it away as the other step. What stayed carries its own why to the census.",
+   "codon": "G6.30",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_30_a_home_left_by_this_tools_own_userdel_is_said_from_the_record",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 368,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R181",
+   "seen": "2026-11-24, a stock Ubuntu 24.04.5 virtual machine (cron 3.0pl1-184ubuntu2; at 3.2.5-2.1ubuntu3, not on a stock machine, installed for the probe only; passwd 1:4.13): userdel with no -r left the user's crontab file and its at jobs. While the user was gone, cron refused the line each minute and atd aborted the job due then (\"Userid 1001 not found\"), which stayed in the queue twice. useradd as setup does it gave uid 1001 again; cron ran the old line as the new user from the next minute (23:36:01Z to 23:40:01Z), crontab -l -u listed it, and the at job due after the re-add ran as the new user. crontab -l -u and -r -u for the gone user both answered that the user is unknown, exit 1. userdel -r left both as well. Removing the one spool file and atrm with the job's number, each typed by hand with sudo, left nothing: no crontab, no at job, no line run after the re-add.",
+   "promise": "setup, with the runner user read absent (home kept or not), reads as root, after the one admin ask and before useradd, the crontab and the at jobs a user of that name left, three answers each, and stops naming what it found with those steps; uninstall with the user absent names them as what stayed and deletes neither; uninstall with the user there removes both and reads them back before userdel, and one that stays stops it. Not read in 0.1.0: files of that user number outside the home (a mail spool, /tmp, /var/tmp, /dev/shm), a linger mark, units in a kept home. Fedora's and Arch's spool folders are known from their packages, not seen.",
+   "codon": "G2.14",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G2_14_setup_with_the_user_gone_reads_what_it_left_scheduled_before_useradd",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 369,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

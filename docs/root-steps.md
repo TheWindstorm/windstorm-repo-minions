@@ -79,6 +79,7 @@ Folders, and who can write them:
 | `remove_slice` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_runner_user` | `crontab` | no | no: root's spool | nothing |
 | `remove_runner_user` | `atq` | no | no | nothing |
+| `left_schedules` | `find` | no | no: root's own at spool folder (`/var/spool/cron/atjobs`, or `/var/spool/at`), which no job can write; `-maxdepth 1 -type f -nouser -printf '%f %U\n'` reads each file's name and owner number only, and follows nothing. Read only when the runner user reads absent: setup before `useradd`, uninstall to name what stayed (change 4) | nothing |
 | `remove_runner_user` | `atrm` | no | no | nothing |
 | `remove_runner_user` | `loginctl` | no | no | nothing |
 | `remove_runner_user` | `userdel` | no | no: the home is emptied first, as the runner user. `userdel -r` then removes an empty folder | nothing |

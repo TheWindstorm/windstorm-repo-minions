@@ -3,13 +3,17 @@
 This tool asks every program in one language. On Linux, each program it starts gets `LC_ALL=C.UTF-8`, and
 `LANGUAGE` is removed (`c_language`). It does not use plain `C`. Nothing the tool starts for you or for a job gets this
 environment: the runner's own `.env` is written apart from it. On a Mac, the environment is passed on unchanged, because
-macOS 13 has no `C.UTF-8`. There, the system's programs were seen answering in English whatever the account's
-language. So wherever an exit code or a field can be read instead of words, the tool reads that.
+macOS 13 has no `C.UTF-8`. So wherever an exit code or a field can be read instead of words, the tool reads that.
 
 Below is every phrase the tool matches in another program's answer: the program, how it is asked, the phrase exactly
 as the code matches it, the stream it comes on, the version it was seen in, and whether it was seen translated. A test
 (`test_G6_29_every_phrase_matched_is_on_the_list`) fails when the code matches a phrase this page does not list, or
 when this page lists one the code no longer matches.
+
+That test's limit: it finds a phrase only where the code matches it against an answer held in a variable named `out`,
+`head`, `mode`, `words` or `entry`, or passed through `said()`. A phrase matched against an answer under any other name
+is not found by it. Row R183, due 0.1.1, turns the test around: it starts from every answer the tool reads from another
+program, whatever its name, and finds each phrase matched against it.
 
 "Seen" means seen on a real computer. "German guest" is a stock Ubuntu 24.04.5 computer with the German language
 pack, `LANG=de_DE.UTF-8` and `LANGUAGE=de_DE:de`, on 2026-11-24.

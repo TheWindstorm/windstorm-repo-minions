@@ -15,6 +15,9 @@ every claim the skill makes has a test, and each part is seen on a fresh machine
 A computer of yours should do jobs only for **private** repositories. On a public repository, a stranger's pull
 request could run code on that computer, as GitHub's own documentation warns.
 
+A job's code runs as the runner's own user, and it could leave a cron line or an at job behind. Uninstall and setup
+read for both and say what they find.
+
 ## Family
 
 Part of the Windstorm skills: [Pit Stop](https://github.com/TheWindstorm/windstorm-pit-stop),

@@ -751,6 +751,7 @@ jobs:
 FOLDER = "/home/minions-runner/runners/example-org-example-repo"
 UNIT = "actions.runner.example-org-example-repo.minions-box-1.service"
 R_TEST = ("sudo", "-n", "-u", "minions-runner", "--", "test", "-e")
+R_ROOT = ("sudo", "-n", "test", "-e")  # root_test of a path of root's own, as the stand-ins answer it
 DEPS = "/tmp/minions-download.AbCd1234"  # R127: root's own folder for the checked download
 TOKEN = "AB" + "FAKE" + "REGISTRATION" + "TOKEN" + "0123"  # built from pieces, so no recorded file holds it whole
 
@@ -1734,7 +1735,9 @@ class G2(unittest.TestCase):
         fresh_look(host)
         self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
         steps = list(dict.fromkeys(tuple(a) for a in admin_steps(host)))
-        self.assertEqual(steps[0][:3], ("sudo", "-n", "useradd"))  # the first write
+        # change 4: before useradd, the reads of what a gone user left scheduled (marked tests, find): reads, not writes
+        writes = [a for a in steps if a[2:4] != ("sh", "-c") and a[2] != "find"]
+        self.assertEqual(writes[0][:3], ("sudo", "-n", "useradd"))  # the first write
         cuts = [("admin", s) for s in steps] + [("github", ("GET", f"repos/{REPO}/actions/runners/downloads")),
                                                 ("github", ("POST", f"repos/{REPO}/actions/runners/registration-token"))]
         stopped = 0
@@ -3909,6 +3912,142 @@ class G6(unittest.TestCase):
         self.assertTrue(world.user)
         self.assertIn("/tmp/kept-by-a-job", " ".join(lines))
 
+    def test_G6_17_with_the_user_there_its_crontab_and_at_jobs_go_before_userdel_or_the_leave_stops(self):
+        # Change 4, the owner's 6:46 PM ET 11-24 point 2: this tool's own uninstall is never the road that leaves a
+        # crontab or an at job for the next user of that name (userdel leaves both, seen on run61). With the user
+        # there, both are removed while crontab -r -u and atrm still answer, and read back; one that stays stops the
+        # leave before userdel, named, the user kept.
+        def world_with(cron_goes=True, at_goes=True):
+            gh, world, host = remove_setup()
+            host._which.add("atq")
+            sched = {"cron": True, "at": True}
+            real = host._answer
+            def answer(a, i=None):
+                a = list(a)
+                if a[:3] == ["sudo", "-n", "crontab"]:
+                    world.order.append(" ".join(a[2:4]))
+                    if a[3] == "-r" and cron_goes:
+                        sched["cron"] = False
+                    return ((0, "* * * * * echo left-by-a-job\n") if sched["cron"] else
+                            (1, "no crontab for minions-runner\n")) if a[3] == "-l" else (0, "")
+                if a[:3] == ["sudo", "-n", "atq"]:
+                    return 0, "7\tTue Nov 24 23:33:00 2026 a minions-runner\n" if sched["at"] else ""
+                if a[:3] == ["sudo", "-n", "atrm"]:
+                    world.order.append(" ".join(a[2:]))
+                    if at_goes:
+                        sched["at"] = False
+                    return 0, ""
+                return real(a, i)
+            host._answer = answer
+            return gh, world, host
+        gh, world, host = world_with()
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        o = world.order
+        self.assertLess(o.index("crontab -r"), o.index("userdel"), o)
+        self.assertLess(o.index("atrm 7"), o.index("userdel"), o)
+        self.assertTrue(any("no crontab, no at job" in x for x in lines), lines)
+        for cron_goes, at_goes, named in ((False, True, "its crontab"), (True, False, "its at jobs 7")):
+            gh, world, host = world_with(cron_goes, at_goes)
+            code, lines = run_uninstall(gh, host)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertIn(f"the user {M.RUNNER_USER} is not deleted", lines[-1])
+            self.assertIn(named, lines[-1])
+            self.assertNotIn("userdel", world.order)
+            self.assertTrue(world.user)
+
+    def test_G2_14_setup_with_the_user_gone_reads_what_it_left_scheduled_before_useradd(self):
+        # Change 4 (seen on a stock Ubuntu 24.04.5, vm/run61): userdel, with or without -r, leaves the user's crontab
+        # (cron runs it by the NAME) and its at jobs (at runs them as the NUMBER, which useradd gives again): a new user
+        # of that name ran the old crontab line each minute and the at job. Setup, with the user read absent, reads both
+        # as root after the one admin ask and before useradd, three answers each, and stops naming what it found, each
+        # rehearsed step its own; taken twice it is the same stop with its step named first; the steps taken, it goes on.
+        cron = f"/var/spool/cron/crontabs/{M.RUNNER_USER}"
+        at = "/var/spool/cron/atjobs"
+        def no_runner_gh(sha):  # GitHub as it is: no runner until this run registers one
+            listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
+            token = ("POST", f"repos/{REPO}/actions/runners/registration-token")
+            gh = setup_gh(sha)
+            gh.overrides[listing] = lambda body: runners_answer() if token in gh.calls else (200, {"total_count": 0,
+                                                                                                 "runners": []})
+            return gh
+        def world(cron_file=True, at_dir=True, listing="a0000401c8a2cd 1001\n=0000401c8a2cd 1001\n"):
+            host, sha = setup_host()
+            fresh_look(host)
+            host.runs[R_ROOT + ("/var/spool/cron/crontabs",)] = (0, "")
+            host.runs[R_ROOT + (cron,)] = (0 if cron_file else 1, "")
+            host.runs[R_ROOT + (at,)] = (0 if at_dir else 1, "")
+            host.runs[("sudo", "-n", "find", at)] = (0, listing)
+            return host, sha
+        host, sha = world()
+        for n in (1, 2):
+            code, lines = run_setup(no_runner_gh(sha), host)
+            self.assertEqual(code, M.EXIT_STOP, (n, lines))
+            self.assertFalse([a for a in host.ran if a[2:3] == ("useradd",)], "no user is made")
+            x = next(x for x in lines if x.startswith(f"stop the user {M.RUNNER_USER} is not on this computer"))
+            self.assertIn(f"the crontab {cron}", x)
+            self.assertIn("at job 4 (its file's owner is number 1001, which no user on this computer has)", x)
+            self.assertIn(f"`sudo rm {cron}`", x)
+            self.assertIn("`sudo atrm 4`", x)
+            self.assertEqual(x.count("sudo atrm"), 1, "the running copy (=) is the same job, named once")
+            self.assertIn("remove them first", x)
+        host.runs[R_ROOT + (cron,)] = (1, "")  # the steps taken as printed
+        host.runs[("sudo", "-n", "find", at)] = (0, "")
+        self.assertEqual(run_setup(no_runner_gh(sha), host)[0], M.EXIT_OK)
+        # Three answers each: no cron folder or no at folder is "none" (the folder's own absence); a read that gave
+        # no answer stops, saying what was not read, never "none".
+        host, sha = world(cron_file=False, at_dir=False)
+        host.runs[R_ROOT + ("/var/spool/cron/crontabs",)] = (1, "")
+        self.assertEqual(run_setup(no_runner_gh(sha), host)[0], M.EXIT_OK)
+        fails = {"cron's folder": (R_ROOT + ("/var/spool/cron/crontabs",), "whether cron's folder"),
+                 "the crontab": (R_ROOT + (cron,), f"whether {cron} is there"),
+                 "at's folder": (R_ROOT + (at,), "whether at's folder"),
+                 "find": (("sudo", "-n", "find", at), "the at jobs in /var/spool/cron/atjobs (find answered code 1)")}
+        for name, (key, words) in fails.items():
+            with self.subTest(read=name):
+                host, sha = world()
+                host.runs[key] = (1, "sudo: unable to resolve host box\n") if key[2] == "find" else (
+                    2, "test: extra argument\n")
+                code, lines = run_setup(no_runner_gh(sha), host)
+                self.assertEqual(code, M.EXIT_STOP, lines)
+                x = next(x for x in lines if x.startswith(f"stop could not read what a user named {M.RUNNER_USER}"))
+                self.assertIn(words, x)
+                self.assertNotIn("none", x)
+                self.assertFalse([a for a in host.ran if a[2:3] == ("useradd",)])
+        # A file name that is not at's own form is a value this tool did not write: could not be read, never a job.
+        host, sha = world(listing="a0000401c8a2cd 1001\n$(reboot) 1001\n")
+        code, lines = run_setup(no_runner_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        x = next(x for x in lines if x.startswith(f"stop could not read what a user named {M.RUNNER_USER}"))
+        self.assertIn("1 file(s) in /var/spool/cron/atjobs whose owner has no user and whose name is not at's own form", x)
+        self.assertNotIn("reboot", " ".join(lines))
+        # A kind of system whose layout this tool does not know: said in a line of its own, never "none".
+        host, sha = setup_host(files={"/etc/os-release": 'ID=gentoo\n'})
+        fresh_look(host)
+        code, lines = run_setup(no_runner_gh(sha), host)
+        said_ = [x for x in lines if x.startswith("warn not read: where cron and at keep their jobs")]
+        self.assertTrue(said_, lines)
+
+    def test_G6_30_uninstall_with_the_user_gone_names_what_it_left_scheduled(self):
+        # Change 4: uninstall with the user absent runs nothing as it and deletes none of its schedules; it names them
+        # as what stayed, with the rehearsed steps, in its warning and in the census; the leave finishes.
+        cron = f"/var/spool/cron/crontabs/{M.RUNNER_USER}"
+        gh, world, host = remove_setup(moved=False)
+        world.user, world.listener = False, False
+        world.paths |= {"/var/spool/cron/crontabs", cron, "/var/spool/cron/atjobs"}
+        real = host._answer
+        host._answer = lambda a, i=None: ((0, "a0000401c8a2cd 1001\n") if list(a[:4]) == [
+            "sudo", "-n", "find", "/var/spool/cron/atjobs"] else real(a, i))
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(cron, world.paths, "not deleted")
+        census = [x for x in lines if x.startswith("ok census: left by a user named minions-runner")]
+        warned = [x for x in lines if x.startswith("warn left by a user named minions-runner")]
+        for x in census + warned:
+            self.assertIn(f"`sudo rm {cron}`", x)
+            self.assertIn("`sudo atrm 4`", x)
+        self.assertEqual((len(census), len(warned)), (1, 1), lines)
+
     def test_G6_18_a_unit_that_failed_is_not_left_loaded_after_uninstall(self):
         # R132: a failed oneshot unit stays loaded as "failed" after its file is deleted, until reset-failed (seen on
         # a stock Ubuntu 24.04 virtual machine, 2026-11-24): uninstall resets the units it deleted after the reload.
@@ -4376,8 +4515,19 @@ class G6(unittest.TestCase):
                 self.assertTrue(named, lines)
                 for x in named:
                     self.assertIn("`sudo rm -rf --one-file-system /home/minions-runner`", x)
-                    self.assertIn("the user was removed outside this tool; this tool deletes inside a runner's home "
-                                  "only as that user", x)
+                    # change 2: what was read, then how, from the record. This world's says the tool made the user;
+                    # uninstall --all deletes the tool's state folder, record and all, so its second run has none.
+                    read = ("the user minions-runner is not on this computer, the folder is, and this tool deletes in "
+                            "a runner's home only as that user; ")
+                    if everything and n == 2:
+                        self.assertIn(read + "this tool's record does not say it made a user of that name", x)
+                        self.assertIn("If you know it is left from this tool's runner, your next step: delete that "
+                                      "folder first: `sudo rm", x)
+                        self.assertTrue(x.endswith("If it is something else of yours, move it away"), x)
+                    else:
+                        self.assertIn(read + "this tool made that user and it is no longer here", x)
+                        self.assertIn("Your next step: delete that folder first: `sudo rm", x)
+                    self.assertNotIn("outside this tool", x)
                 if everything:
                     self.assertTrue([x for x in lines if x.startswith(f"ok census: the folder {home}: stayed")], lines)
                     self.assertEqual(lines[-1], "ok this tool is off this computer; what stayed is yours, named above "
@@ -4396,6 +4546,58 @@ class G6(unittest.TestCase):
         x = next(x for x in lines if f"{home} stayed" in x)
         self.assertIn(f"a disk is mounted inside it ({home}/mnt)", x)
         self.assertLess(x.index("unmount it first"), x.index("`sudo rm -rf"))
+
+    def test_G6_30_a_home_left_by_this_tools_own_userdel_is_said_from_the_record(self):
+        # Change 2 (the owner's 6:19 PM ET 11-24, cases a and b): this tool's own userdel left the home (a file of
+        # root's in it); the census said "the user was removed outside this tool", which the tool had not read, and the
+        # record that it made the user was dropped. Now the why says what was read, and how it came about only from
+        # the record (runner_home_left), in that run's census and in the next run's.
+        home = f"/home/{M.RUNNER_USER}"
+        gh, world, host = remove_setup(moved=False)
+        real = host._answer
+        def answer(a, i=None):
+            r = real(a, i)
+            if list(a[:3]) == ["sudo", "-n", "userdel"]:
+                world.paths.add(home)  # something in it was not deleted as that user
+            return r
+        host._answer = answer
+        how = "this tool made that user and removed it"
+        read = (f"the user {M.RUNNER_USER} is not on this computer, the folder is, and this tool deletes in a runner's "
+                "home only as that user; ")
+        for n, (repo, everything) in enumerate(((REPO, False), (REPO, False), (None, True))):
+            code, lines = run_uninstall(gh, host, repo=repo, everything=everything)
+            self.assertEqual(code, M.EXIT_OK, (n, lines))
+            census = [x for x in lines if x.startswith(f"ok census: the folder {home}: stayed")]
+            self.assertEqual(len(census), 1, (n, lines))
+            self.assertIn(read + how, census[0])
+            self.assertIn("Your next step: delete that folder first: `sudo rm -rf --one-file-system "
+                          f"{home}`", census[0])
+            self.assertFalse([x for x in lines if "outside this tool" in x], (n, lines))
+            self.assertFalse([x for x in lines if "If you know it is left" in x], (n, lines))
+            if not everything:
+                self.assertTrue(M.load_state(host).get("runner_home_left"), n)
+                self.assertNotIn("runner_user_made", M.load_state(host))
+
+    def test_G2_14_setup_with_a_kept_home_and_no_record_says_only_what_it_read(self):
+        # Change 2 (case c): setup with the home there, the user not, and no record of this tool: the stop says what
+        # was read and that the record does not say this tool made such a user; the rm line is offered only as "if
+        # you know it is left from this tool's runner", and moving it away as the other step (as NOT_OURS_USER).
+        home = f"/home/{M.RUNNER_USER}"
+        host, sha = setup_host()
+        host.dirs[home] = True
+        fresh_look(host)
+        self.assertFalse({"runner_user_made", "runner_home_left"} & set(M.load_state(host)), "no record of this tool")
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        x = lines[-1]
+        self.assertIn(f"the user {M.RUNNER_USER} is not on this computer, the folder is, and this tool deletes in a "
+                      "runner's home only as that user; this tool's record does not say it made a user of that name", x)
+        self.assertNotIn("outside this tool", x)
+        self.assertNotIn("Your next step: delete", x)
+        self.assertIn("If you know it is left from this tool's runner, your next step: delete that folder first: "
+                      "`sudo rm -rf --one-file-system /home/minions-runner`; then run the same command again", x)
+        self.assertIn("If it is something else of yours, move it away first; then run the same command again", x)
+        self.assertLess(x.index("If you know"), x.index("If it is something else"))
 
     def test_G2_14_setup_refuses_a_home_left_by_a_user_removed_outside_the_tool(self):
         # R173 (owner 5:14 PM ET 11-24, point 4; R130): with the runner user absent and its home there, setup went on
@@ -4468,12 +4670,21 @@ class G6(unittest.TestCase):
             def make():
                 gh, world, host = remove_setup(moved=False)
                 real_api = gh.api
-                gh.down = False
-                gh.api = lambda m, p, b=None: (502, {}) if gh.down and "actions/runners" in p else real_api(m, p, b)
+                gh.down, gh.spent = False, False
+                def api(m, p, b=None):
+                    if gh.spent and "actions/runners" in p:
+                        gh.limited_until = M.parse_stamp("2026-11-24T23:23:21Z")
+                        return 403, {"message": "API rate limit exceeded for user ID 1."}
+                    return (502, {}) if gh.down and "actions/runners" in p else real_api(m, p, b)
+                gh.api = api
                 w = (gh, world, host)
                 mutate(w)
                 return w
             return make
+        def spend(w):  # change 1: GitHub's API limit for this login spent, as G8.14 reads it from the headers
+            w[0].spent = True
+        def reset(w):
+            w[0].spent, w[0].limited_until = False, None
         def gone(w):
             w[1].user, w[1].listener = False, False
         def stuck_unit(w):
@@ -4491,6 +4702,7 @@ class G6(unittest.TestCase):
         worlds = {
             "the runner user removed outside the tool, its home kept": (gone, None),
             "GitHub answers 502": (gh_down, gh_up),
+            "GitHub answers 403 with no calls left": (spend, reset),
             "pgrep cannot answer": (answer_wrap(lambda a: a[:3] == ["pgrep", "-u", "1001"], (3, "")), mended),
             "getent cannot answer": (answer_wrap(lambda a: a[:1] == ["getent"], (3, "")), mended),
             "the service does not stop": (stuck_unit, mended),
@@ -4512,6 +4724,44 @@ class G6(unittest.TestCase):
                 ends[name] = (code, e)
         self.assertEqual(ends["the runner user removed outside the tool, its home kept"], (M.EXIT_OK, None))
         self.assertEqual(ends["the jobs' records cannot be read"][1], None)  # kept and named; the leave finishes
+        limit = ends["GitHub answers 403 with no calls left"][1]  # change 1: the limit and its time, never rights
+        self.assertIn("GitHub's API limit for this login is spent until 23:23Z", limit)
+        self.assertIn("wait until 23:23Z first; then run the same command again", limit)
+        self.assertNotIn("admin rights", limit)
+
+    def test_G7_19_githubs_refusal_is_named_by_what_it_was(self):
+        # Change 1 (the owner's 6:19 PM ET 11-24): github_next said "give the account admin rights" for a spent API
+        # limit (false twice: rights were not the refusal, and they change nothing). The limit is read first, for 403
+        # and 429 alike; 401 is the saved login refused; 404 is no access, or the repository renamed or removed.
+        class G:
+            pass
+        gh = G()
+        gh.limited_until = M.parse_stamp("2026-11-24T23:23:21Z")
+        for s in (403, 429):
+            words = M.github_next(s, REPO, gh=gh)
+            self.assertIn("GitHub's API limit for this login is spent until 23:23Z", words)
+            self.assertIn("wait until 23:23Z first; then run the same command again", words)
+            self.assertNotIn("admin rights", words)
+        gh.limited_until = None
+        self.assertIn("admin rights on", M.github_next(403, REPO, gh=gh))
+        self.assertNotIn("admin", M.github_next(429, REPO, gh=gh))
+        w401 = M.github_next(401, REPO, gh=gh)
+        self.assertIn("GitHub refused the login gh saved for this tool (HTTP 401)", w401)
+        self.assertIn("log in to GitHub again as yourself, `gh auth login`, first", w401)
+        self.assertNotIn("admin", w401)
+        w404 = M.github_next(404, REPO, gh=gh)
+        self.assertIn(f"{REPO} is not there for this login (HTTP 404)", w404)
+        self.assertIn("has no access to it, or it was renamed or removed", w404)
+        self.assertNotIn("admin", w404)
+        # The stops that named a refusal on their own say the limit first too: look's read of the repository.
+        host = linux_host()
+        gh = StandIn([], {("GET", f"repos/{REPO}"): (403, {"message": "API rate limit exceeded for user ID 1."})})
+        gh.limited_until = M.parse_stamp("2026-11-24T23:23:21Z")
+        rep = M.Report(io.StringIO())
+        self.assertIsNone(M.check_repository(gh, host, REPO, rep))
+        self.assertTrue(rep.lines[-1].startswith(f"stop could not read {REPO} on GitHub (HTTP 403): "), rep.lines)
+        self.assertIn("spent until 23:23Z", rep.lines[-1])
+        self.assertNotIn("check the name", rep.lines[-1])
 
     def test_G7_19_every_stop_of_setups_first_steps_taken_as_printed_twice_does_not_come_back(self):
         # R174: the same for setup's first steps: the look, the runner user, its home, the Enter and the admin password.
