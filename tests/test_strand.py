@@ -81,27 +81,47 @@ def tests_that_ran(tests_dir: str = TESTS) -> set:
     for name in sorted(os.listdir(tests_dir)):
         if not (name.startswith("test_") and name.endswith(".py")):
             continue
-        tests = collect(os.path.join(tests_dir, name))
         if os.path.abspath(os.path.join(tests_dir, name)) == os.path.abspath(__file__):
-            ran |= {t._testMethodName for t in tests}
+            ran |= {t._testMethodName for t in collect(os.path.join(tests_dir, name))}
             continue
-
-        class Passed(unittest.TestResult):
-            def __init__(self):
-                super().__init__()
-                self.passed = []
-
-            def addSuccess(self, test):
-                super().addSuccess(test)
-                self.passed.append(test)
-
-        res = Passed()
-        with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn):
-            unittest.TestSuite(tests).run(res)
-        ran |= {t._testMethodName for t in res.passed}
-        for test, why in res.skipped:  # an honest skip is "not run here", never a pass
-            NOT_RUN_HERE.append(f"{name}: {test._testMethodName} ({why})")
+        # R169 (the gate recipe's ninth case): each other file runs in its OWN process, and what it ran is read from
+        # the outcome that process writes only once its whole run has ended. A process that ended early (a test, or
+        # the tool under test, calling os._exit(0); a parent leaving after a fork) wrote none: nothing of it counts,
+        # and the gate fails, whatever that exit was. Outcomes come from the runner's own result (addSuccess), never
+        # from report text a test can write into (the eighth case).
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "outcome.json")
+            p = subprocess.run([sys.executable, "-c", OUTCOME_RUNNER, tests_dir, name, out], capture_output=True,
+                               text=True, timeout=1800)
+            if not os.path.exists(out):
+                raise AssertionError(f"{name} ended before its run finished (exit {p.returncode}, no outcome written): "
+                                     "an early end is never a pass (R169)")
+            got = jload(out)
+        ran |= set(got["passed"])
+        for test, why in got["skipped"]:  # an honest skip is "not run here", never a pass
+            NOT_RUN_HERE.append(f"{name}: {test} ({why})")
     return ran
+
+
+OUTCOME_RUNNER = """
+import contextlib, json, os, sys, unittest
+tests_dir, name, out = sys.argv[1:4]
+sys.path.insert(0, tests_dir)
+suite = unittest.TestLoader().discover(tests_dir, pattern=name, top_level_dir=tests_dir)
+class Passed(unittest.TestResult):
+    def __init__(self):
+        super().__init__()
+        self.passed = []
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        self.passed.append(test._testMethodName)
+res = Passed()
+with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn):
+    suite.run(res)
+with open(out, "w") as f:
+    json.dump({"passed": res.passed, "skipped": [[t._testMethodName, w] for t, w in res.skipped],
+               "run": res.testsRun}, f)
+"""
 
 
 NOT_RUN_HERE: list = []
@@ -230,6 +250,40 @@ class Strand(unittest.TestCase):
         self.assertTrue(any("test_probe_skipped (a planted skip)" in x for x in NOT_RUN_HERE[before:]), NOT_RUN_HERE)
         del NOT_RUN_HERE[before:]
 
+    def test_G9_14_a_run_that_ends_early_or_prints_a_pass_is_never_green(self):
+        """R169 (the gate recipe's eighth and ninth cases, 4:04 PM ET 11-24). Ninth: a test (or the tool under test,
+        a parent leaving after a fork) calls os._exit(0): exit 0, no summary, and a gate in the same process never
+        ran; seen green on this repository's own CI step before R169. Each other file now runs in its own process
+        and counts only from the outcome written at its end: the early end fails the gate. Eighth: a test writes a
+        line shaped like the runner's report for a name no file defines: outcomes come from the runner's result,
+        never its text. And the CI step is green only with each file's "Ran" and "OK" lines and the gate's own
+        last line, which it writes only after its whole run."""
+        early = ("import os, unittest\n\n"
+                 "class T(unittest.TestCase):\n"
+                 "    def test_a_ends_early(self):\n"
+                 "        os._exit(0)\n\n"
+                 "    def test_b_after(self):\n"
+                 "        pass\n")
+        printed = ("import sys, unittest\n\n"
+                   "class T(unittest.TestCase):\n"
+                   "    def test_probe_writes(self):\n"
+                   "        sys.stderr.write('test_probe_ghost (test_probe.T.test_probe_ghost) ... ok\\n')\n")
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
+                f.write(early)
+            with self.assertRaises(AssertionError) as caught:
+                tests_that_ran(d)
+            self.assertIn("ended before its run finished (exit 0, no outcome written)", str(caught.exception))
+            with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
+                f.write(printed)
+            self.assertEqual(tests_that_ran(d), {"test_probe_writes"})
+        step = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+        for line in ("set -o pipefail", "python \"$t\" -v 2>&1 | tee \"$log\" || exit 1",
+                     "grep -qE '^Ran [0-9]+ tests? in ' \"$log\" && grep -qE '^OK( \\(.*\\))?$' \"$log\" || {",
+                     "tail -n 1 \"$RUNNER_TEMP/test_strand.py.log\" | grep -qE '^gate: passed: ' || {"):
+            self.assertIn(line, step)
+        self.assertIn('print(f"gate: {\'passed\' if result.wasSuccessful() else \'FAILED\'}', fread(__file__))
+
     def test_no_test_file_defines_one_name_twice(self):
         for name in sorted(os.listdir(TESTS)):
             if name.startswith("test_") and name.endswith(".py"):
@@ -328,4 +382,9 @@ def tearDownModule():
 
 
 if __name__ == "__main__":
-    unittest.main()
+    # R169 (the gate recipe's ninth case): the gate's own last line, written only after its whole run has ended; the
+    # CI job is green only with it (and with each file's own "Ran"/"OK" summary), so a run that ends early is red
+    result = unittest.main(exit=False).result
+    print(f"gate: {'passed' if result.wasSuccessful() else 'FAILED'}: {result.testsRun} test(s) of the gate, every "
+          "other test file run in its own process to its end", flush=True)
+    sys.exit(0 if result.wasSuccessful() else 1)

@@ -2219,6 +2219,19 @@
    "proven": "",
    "issue": 356,
    "moved_why": "",
+   "moved_by_person": ""  },
+  {
+   "id": "R169",
+   "seen": "2026-11-24, in a throwaway copy of this repository (the gate recipe's ninth case): a test calling os._exit(0) ended its file's run with exit 0 and no summary; the gate ran the other test files inside its own process, so it ended the same way, and the CI step, which read only each file's exit, was green with most tests never run.",
+   "promise": "A run that ends early is never green: the gate runs each other test file in its own process and counts only from the outcome that process writes once its whole run has ended (a process that wrote none fails the gate, whatever its exit); outcomes come from the runner's own result, never from report text a test can write into (the eighth case); the CI step is green only with each file's own Ran and OK lines and the gate's own last line, written only after its whole run.",
+   "codon": "G9.14",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G9_14_a_run_that_ends_early_or_prints_a_pass_is_never_green",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 357,
+   "moved_why": "",
    "moved_by_person": ""
   }
  ],

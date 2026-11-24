@@ -26,7 +26,16 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: |
-          for t in tests/test_*.py; do python "$t" -v || exit 1; done
+          # R169 (the gate recipe's ninth case): a test process that ends early with exit 0 (os._exit, a parent
+          # leaving after a fork) writes no summary: green only with each file's own "Ran" and "OK" lines, and the
+          # gate's own last line, which it writes only after its whole run has ended
+          set -o pipefail
+          for t in tests/test_*.py; do
+            log="$RUNNER_TEMP/$(basename "$t").log"
+            python "$t" -v 2>&1 | tee "$log" || exit 1
+            grep -qE '^Ran [0-9]+ tests? in ' "$log" && grep -qE '^OK( \(.*\))?$' "$log" || { echo "::error::$t ended without its runner's summary: a run that ends early is not a pass"; exit 1; }
+          done
+          tail -n 1 "$RUNNER_TEMP/test_strand.py.log" | grep -qE '^gate: passed: ' || { echo "::error::the gate's own last line is not there: it did not run to its end"; exit 1; }
   release-place:
     runs-on: ubuntu-24.04
     steps:
