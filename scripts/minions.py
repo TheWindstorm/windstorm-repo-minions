@@ -4553,6 +4553,15 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if not ask_admin_once(host, rep, interactive):
         return rep.code()
     known = load_state(host)
+    if ((known.get("runners") or {}).get(repo) or {}) and runner_gone(host):
+        # R178: the runner user was removed outside this tool, its home with it (a home still there stopped setup
+        # above, R173). Nothing of the old runner can be kept or registered again in place: what this tool recorded
+        # of it is taken away first, read back (nothing is tried as that user), then setup starts fresh.
+        rep.ok(f"the user {RUNNER_USER} was removed outside this tool, its home with it: what this tool recorded of "
+               f"{repo}'s runner here is taken away first, read back, then setup starts fresh")
+        if not remove_one(gh, host, repo, known, rep, DRAIN_WAIT_S, 10, f"setup {repo}"):
+            return rep.code()
+        known = load_state(host)
     if ((known.get("runners") or {}).get(repo) or {}).get("gone_on_github"):
         reregister(gh, host, repo, known, rep)  # G5.12
         return rep.code()
@@ -5252,7 +5261,8 @@ def runner_version(host: Host, folder: str, rep: Report) -> str | None:
     if v and re.fullmatch(r"\d+\.\d+\.\d+", v):
         rep.ok(f"runner version {v}; GitHub's own self-update stays on")
         return v
-    rep.warn("could not read the runner's version; GitHub's own self-update stays on")
+    rep.warn(f"could not read the runner's version ({tail(out) or f'it answered code {rc}'}); GitHub's own self-update "
+             "stays on")  # R178: with what it answered
     return None
 
 
@@ -8261,10 +8271,22 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
         broken.append(f"{repo} {what}")
 
     # G2.2: the runner's user has no admin rights and its home is closed.
-    rc, groups = host.run(["id", "-nG", RUNNER_USER])
-    extra = sorted(set(words_of(groups)) - {RUNNER_USER}) if rc == 0 else None
-    if extra is None:
+    # R178 (rule 6): whether the user is there is getent's exit code (runner_user_state), never id's exit: an id that
+    # could not answer is not "not there". With the user gone, nothing is tried as it, and each read skipped says so.
+    ukind, uwhy = runner_user_state(host)
+    gone_why = f"the user {RUNNER_USER} is not there (removed outside this tool), so nothing is tried as it"
+    extra: list[str] | None = None
+    if ukind == "absent":
         bad("runner user", f"the user {RUNNER_USER} is not there: {again}")
+    elif ukind == "unread":
+        rep.warn(f"{repo}: whether the user {RUNNER_USER} is here: not read ({uwhy})")
+    else:
+        rc, groups = host.run(["id", "-nG", RUNNER_USER])
+        extra = sorted(set(words_of(groups)) - {RUNNER_USER}) if rc == 0 and words_of(groups) else None
+        if extra is None:
+            rep.warn(f"{repo}: the groups of {RUNNER_USER}: not read ({tail(groups) or f'id answered code {rc}'})")
+    if extra is None:
+        pass
     elif extra:
         bad("runner user", f"{RUNNER_USER} is in other groups ({', '.join(extra)}): take it out of them "
                            "(" + ", ".join(f"{C0}sudo gpasswd -d {RUNNER_USER} {shlex.quote(g)}{C1}" for g in extra) + ")")
@@ -8286,9 +8308,11 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
             bad("folder", f"the runner's folder {folder} is gone: {again}")
     # G2.8: the credential files are the runner's own, 600.
     files = [f"{folder}/.credentials", f"{folder}/.runner", f"{folder}/.credentials_rsaparams"]
-    rc, out = as_runner(host, ["stat", "-c", "%a %U %n"] + files)  # R128: read as the runner user
+    rc, out = (0, "") if ukind == "absent" else as_runner(host, ["stat", "-c", "%a %U %n"] + files)  # R128, R178
     rows = [words_of(x, 2) for x in lines_of(out) if x.strip(BLANKS)]
-    if "a password is required" in said(out):  # R168: sudo's refusal is on its standard error
+    if ukind == "absent":
+        rep.warn(f"{repo}: the credential files: not read: {gone_why}")
+    elif "a password is required" in said(out):  # R168: sudo's refusal is on its standard error
         rep.warn(f"{repo}: the credential files: not read")
     elif rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
         bad("credential files", f"the runner's credential files are not 600 and its own ({tail(out, 3)}): "
@@ -8354,7 +8378,10 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     else:
         rep.ok(f"{repo}: {gb(free[0])} free for the work folders, over the {gb(DISK_FLOOR)} floor")
     # G4.5: the version, GitHub's self-update on.
-    runner_version(host, folder, rep)
+    if ukind == "absent":  # R178
+        rep.warn(f"could not read the runner's version: {gone_why}; GitHub's own self-update stays on")
+    else:
+        runner_version(host, folder, rep)
     # G4.7: never two copies.
     try:
         listeners = runner_pids(host, folder, "Runner.Listener")

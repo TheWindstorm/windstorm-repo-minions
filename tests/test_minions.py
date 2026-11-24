@@ -3754,6 +3754,7 @@ class G5(unittest.TestCase):
         fresh_look(host2)
         data = M.load_state(host2)
         data["runners"] = {REPO: dict(M.load_state(host)["runners"][REPO], folder=FOLDER, unit=UNIT)}
+        data["runner_user_made"] = True  # R178: a runner set up here, so the user setup made is here (getent: there)
         M.save_state(host2, data)
         code, lines = run_setup(setup_gh(sha), host2)
         self.assertEqual(code, M.EXIT_OK, lines)
@@ -6036,6 +6037,66 @@ class G6(unittest.TestCase):
                           "again", lines[-1])
         del host.dirs[home]  # the step taken as printed
         self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+
+    def test_G6_30_doctor_with_the_runner_user_gone_tries_nothing_as_it_and_names_why(self):
+        # R178 (rule 6): doctor read the user with `id -nG` and took any exit but 0 as "not there"; with the user
+        # gone, its read of the credential files as that user got sudo's refusal and said they "are not 600 and its
+        # own", and the version was "could not read" with no why. Now the user is getent's exit code; with it gone
+        # nothing is tried as it, and each read skipped says why; getent that could not answer is "not read".
+        host, sha = doctor_world()
+        host.runs[("getent", "passwd", "minions-runner")] = (2, "")
+        before = len(host.ran)
+        code, lines = run_doctor(host, sha)
+        self.assertFalse([a for a in host.ran[before:] if a[:4] == ("sudo", "-n", "-u", "minions-runner")],
+                         "nothing is tried as a user that is gone")
+        self.assertFalse([a for a in host.ran[before:] if a[:2] == ("id", "-nG")], "id's exit is never the answer")
+        gone = "the user minions-runner is not there (removed outside this tool), so nothing is tried as it"
+        self.assertIn(f"warn {REPO}: the credential files: not read: {gone}", lines)
+        self.assertIn(f"warn could not read the runner's version: {gone}; GitHub's own self-update stays on", lines)
+        self.assertTrue(any(f"the user {M.RUNNER_USER} is not there: `setup {REPO}` again" in x for x in lines), lines)
+        self.assertFalse([x for x in lines if "are not 600" in x], lines)
+        host, sha = doctor_world()
+        host.runs[("getent", "passwd", "minions-runner")] = (3, "getent: enumeration not supported\n")
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(any(x.startswith(f"warn {REPO}: whether the user {M.RUNNER_USER} is here: not read (")
+                            and "getent: enumeration not supported" in x for x in lines), lines)
+        self.assertFalse([x for x in lines if f"the user {M.RUNNER_USER} is not there" in x], lines)
+
+    def test_G6_30_setup_with_the_runner_user_and_its_home_gone_starts_fresh(self):
+        # R178: setup again for a runner of this tool, with the runner user removed outside the tool and its home
+        # with it, went on as if the runner were there: re-registered in place as the user that is gone (sudo's
+        # refusal), or took the runner as installed. Now what the tool recorded of it is taken away first (nothing
+        # tried as that user), then setup starts fresh: the user made again, one registration, exit 0.
+        for gone_on_github in (True, False):
+            host, sha = setup_host()
+            fresh_look(host)
+            data = M.load_state(host)
+            data["runners"] = {REPO: {"name": "minions-box-1", "folder": FOLDER, "unit": UNIT,
+                                      "labels": ["minions", "minions-medium"], "gone_on_github": gone_on_github}}
+            M.save_state(host, data)
+            gh_state = {"labels": ["minions", "minions-medium"], "deleted": False}
+            def runners(_body, host=host, gone_on_github=gone_on_github, gh_state=gh_state):
+                if any(M.CONFIG_SCRIPT in a for a in host.ran):  # registered fresh by this setup
+                    return runners_answer()
+                if gone_on_github or gh_state["deleted"]:
+                    return 200, {"total_count": 0, "runners": []}
+                return runners_answer(labels=gh_state["labels"])
+            def put_labels(body, gh_state=gh_state):
+                gh_state["labels"] = list(body["labels"])
+                return 200, {"labels": [{"name": x, "type": "custom"} for x in body["labels"]]}
+            def delete(_body, gh_state=gh_state):
+                gh_state["deleted"] = True
+                return 204, None
+            gh = setup_gh(sha, {("GET", f"repos/{REPO}/actions/runners?per_page=100"): runners,
+                                ("PUT", f"repos/{REPO}/actions/runners/7/labels"): put_labels,
+                                ("DELETE", f"repos/{REPO}/actions/runners/7"): delete})
+            code, lines = run_setup(gh, host)
+            self.assertEqual(code, M.EXIT_OK, (gone_on_github, lines[-3:]))
+            self.assertTrue(any("taken away first, read back, then setup starts fresh" in x for x in lines), lines)
+            self.assertNotIn(("sudo", "-n", "-u", "minions-runner", "--", "rm", "-f", f"{FOLDER}/.runner",
+                              f"{FOLDER}/.credentials", f"{FOLDER}/.credentials_rsaparams"), host.ran)
+            self.assertTrue([a for a in host.ran if a[:3] == ("sudo", "-n", "useradd")], "the user made again")
+            self.assertEqual(len([a for a in host.ran if M.CONFIG_SCRIPT in a]), 1)
 
     # Rule 7 (THE SAME STOP MUST NOT COME BACK; A WAIT THAT MAY NOT END): the words that name, in a stop's FIRST
     # printing, what must change or what a second run can find different, and what to do when the same lines come back
