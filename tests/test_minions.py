@@ -2339,6 +2339,16 @@ class G9Version(unittest.TestCase):
                     continue  # before the first release: main's README has no install lines (rule 15)
                 self.assertIn(opts.strip(), (f"--branch v{M.VERSION}", f"--branch release-{M.VERSION}"),
                               f"{rel}: a clone line names this version's tag or release branch, never main")
+        # Rule 10 (the family's one version): the README's own status heading is one of the places. A README that
+        # carries install lines says, in its status heading, the version they install; so 0.1.1 cannot ship with a
+        # README that still says 0.1.0, or "not released" (found 2026-11-24 in the release README before the tag).
+        with open(os.path.join(root, "README.md"), encoding="utf-8") as f:
+            readme = f.read()
+        if M.VERSION != "0.0.0" and re.search(r"git clone [^`]*https://github\.com/TheWindstorm/windstorm-repo-minions", readme):
+            status = re.search(r"^## Status: (.*)$", readme, re.M)
+            self.assertIsNotNone(status, "README: a README with install lines has a status heading")
+            self.assertRegex(status.group(1), rf"^{re.escape(M.VERSION)}(?![0-9.])",
+                             "README: the status heading names the version its install lines install")
 
 
 class G5(unittest.TestCase):
