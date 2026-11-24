@@ -17,6 +17,7 @@ import contextlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -264,6 +265,44 @@ class Hygiene(unittest.TestCase):
             self.assertIn("group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}", text)
             self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", text)
 
+
+    def test_G9_10_main_carries_install_lines_only_pinned_to_a_released_tag(self):
+        # Rules 15 and 16 (the maintainer's rulings, 2026-11-23): before a release, main's README has no install
+        # lines; after it, every clone there names a version tag that exists. Runs the CI step itself, as written.
+        text = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+        job = text[text.index("\n  release-place:"):]
+        lines = job.splitlines()
+        i = next(n for n, x in enumerate(lines) if x.strip() == "run: |")
+        indent = len(lines[i]) - len(lines[i].lstrip()) + 2
+        body = []
+        for x in lines[i + 1:]:
+            if x.strip() and len(x) - len(x.lstrip()) < indent:
+                break
+            body.append(x[indent:])
+        script = "set -e\n" + "\n".join(body) + "\n"
+        url = "https://github.com/TheWindstorm/windstorm-repo-minions"
+        cases = [  # (README text, tags made here, passes)
+            ("No install lines here.\n", [], True),
+            (f"`git clone --branch v0.1.0 {url}`\n", [], False),  # the tag does not exist yet
+            (f"`git clone --branch v0.1.0 {url}`\n`python3 -I x/minions.py look O/N`\n", ["v0.1.0"], True),
+            (f"`git clone {url}`\n", ["v0.1.0"], False),  # hands out main
+            (f"`git clone --branch release-0.1.0 {url}`\n", ["v0.1.0"], False),  # a branch moves; main names a tag
+            (f"`git clone --branch v0.1.0 {url}`\n`git clone {url}`\n", ["v0.1.0"], False),  # one unpinned
+            ("`python3 -I x/minions.py setup O/N`\n", ["v0.1.0"], False),  # an install line with no pinned clone
+        ]
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(BRANCH="main", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        for readme, tags, ok in cases:
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "README.md"), "w", encoding="utf-8") as f:
+                    f.write(readme)
+                run = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)
+                run("git", "init", "-q"); run("git", "add", "."); run("git", "commit", "-qm", "r")
+                for tag in tags:
+                    run("git", "tag", tag)
+                r = run("bash", "-c", script)
+                self.assertEqual(r.returncode == 0, ok, f"{readme!r} tags {tags}: {r.stdout}{r.stderr}")
 
 @atexit.register
 def _say_what_did_not_run():

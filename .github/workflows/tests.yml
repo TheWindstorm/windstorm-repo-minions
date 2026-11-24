@@ -44,10 +44,21 @@ jobs:
               if [ -n "$other" ]; then echo "::error::$BRANCH differs from main outside README, changelog and manifest:"; echo "$other"; exit 1; fi
               echo "ok $BRANCH differs from main only in: $(git diff --name-only origin/main HEAD | tr '\n' ' ')" ;;
             *)
-              if grep -nE 'git clone|minions\.py (look|setup|move)' README.md; then
-                echo "::error::README on $BRANCH carries install lines; before a release they live on the release branch only"; exit 1
+              # Before a release, install lines live on the release branch only (rule 15). After it, main's README
+              # may carry them, every clone pinned to a version tag that exists here (rule 16: never main).
+              if ! grep -qE 'git clone|minions\.py (look|setup|move)' README.md; then echo "ok README on $BRANCH has no install lines"; exit 0; fi
+              git fetch -q --tags origin 2>/dev/null || true
+              clones=$(grep -cE 'git clone' README.md || true)
+              pinned=$(grep -cE 'git clone --branch v[0-9]+\.[0-9]+\.[0-9]+ https://github\.com/TheWindstorm/windstorm-repo-minions' README.md || true)
+              tags=$(grep -oE 'git clone --branch v[0-9]+\.[0-9]+\.[0-9]+ ' README.md | awk '{print $4}' | sort -u)
+              if [ "$clones" = 0 ] || [ "$clones" != "$pinned" ]; then
+                grep -nE 'git clone|minions\.py (look|setup|move)' README.md
+                echo "::error::README on $BRANCH carries install lines; on main every clone names a released version tag (--branch vX.Y.Z)"; exit 1
               fi
-              echo "ok README on $BRANCH has no install lines" ;;
+              for t in $tags; do
+                if ! git rev-parse -q --verify "refs/tags/$t" >/dev/null; then echo "::error::README on $BRANCH clones $t, which is not a tag of this repository yet"; exit 1; fi
+              done
+              echo "ok README on $BRANCH carries install lines pinned to released tags: $(echo $tags)" ;;
           esac
   skill-spec:
     runs-on: ubuntu-24.04
