@@ -1342,11 +1342,11 @@ def sleep_setting(host: Host) -> str | None:
             return None
         return "off (never sleeps by itself)" if m.group(1) == "0" else f"after {m.group(1)} min idle"
     if host.system() == "Linux" and host.which("systemctl"):
-        rc, out = host.run(systemctl("is-enabled", "sleep.target", "suspend.target"))
-        states = out.split()
-        if states and all(x == "masked" for x in states[:2]):
+        # R167 (rule 30, ONE CALL, ONE UNIT): each target read by a call of its own
+        states = [(host.run(systemctl("is-enabled", t))[1].split() or [""])[0] for t in ("sleep.target", "suspend.target")]
+        if all(x == "masked" for x in states):
             return "off (sleep and suspend masked)"
-        if states:
+        if any(states):
             return "the system may sleep (sleep.target not masked)"
     return None
 
@@ -5664,7 +5664,8 @@ def remove_shared(host: Host, rep: Report) -> bool:
     sudo(host, systemctl("daemon-reload"))
     # R132 (seen 2026-11-24): a watch whose last pass stopped (exit 2, a repository read public) stays loaded as
     # "failed" after its file is gone, until systemd is told to forget that failure.
-    sudo(host, systemctl("reset-failed", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"))
+    for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):  # R167 (rule 30): one call, one unit
+        sudo(host, systemctl("reset-failed", unit))
     for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):
         if not gone_or_stop(host, unit, rep, f"python3 -I {tool_path()} uninstall --all"):
             return False  # R167: a unit not read gone, so this run removes nothing more

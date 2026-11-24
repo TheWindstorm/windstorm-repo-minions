@@ -3730,6 +3730,9 @@ class World:
             return 0, ""
         if a[:1] == ["systemctl"] and argv[0] == "sudo":
             verb, rest = a[1], [x for x in a[2:] if not x.startswith("--")]
+            gone = [u for u in rest if verb == "disable" and f"/etc/systemd/system/{u}" not in self.paths]
+            if gone:  # as systemd 255 answered (rule 30, ONE CALL, ONE UNIT): no unit of that call is stopped
+                return 1, f"Failed to disable unit: Unit file {gone[0]} does not exist.\n"
             if verb == "stop" or (verb == "disable" and "--now" in a):
                 for u in rest:
                     self.order.append(f"stop {u}")
@@ -3894,7 +3897,7 @@ class G6(unittest.TestCase):
         code, lines = run_uninstall(gh, host, everything=True)
         self.assertIn("ok census: the slice and the watch (scheduled checks): none", lines)
         ran = [a[2:] for a in host.ran if a[2:3] == ("systemctl",)]
-        for units in ((UNIT,), (f"{M.WATCH_UNIT}.timer", f"{M.WATCH_UNIT}.service")):
+        for units in ((UNIT,), (f"{M.WATCH_UNIT}.timer",), (f"{M.WATCH_UNIT}.service",)):  # one call each (rule 30)
             reset = [i for i, a in enumerate(ran) if a[1] == "reset-failed" and set(units) <= set(a)]
             self.assertTrue(reset, units)
             self.assertTrue(any(a[1] == "daemon-reload" for a in ran[:reset[0]]), units)
@@ -4361,6 +4364,32 @@ class G6(unittest.TestCase):
             self.assertIn("systemctl answered code 1: Failed to connect to bus", lines[-1])
             self.assertNotIn(f"stop {M.SLICE}", world.order)
             self.assertIn(SLICE_FILE, world.paths)
+
+    def test_G6_27_one_call_one_unit_and_each_unit_file_removed_by_hand(self):
+        # R167 (rule 30, ONE CALL, ONE UNIT; owner 4:24 PM ET 11-24): every systemctl call that acts on units names one
+        # unit; a stop is its own call by name, never only the --now of a disable (seen, systemd 255: `disable --now A
+        # B` with A's file gone stopped neither, and the world answers so). Each unit file of ours is removed by hand
+        # in turn under its running unit, and `uninstall --all` finishes in one run with every unit read gone.
+        units = lambda a: [x for x in a if re.search(r"\.(service|timer|slice|target)$", x)]
+        timer, service = f"{M.WATCH_UNIT}.timer", f"{M.WATCH_UNIT}.service"
+        for unit, path in ((UNIT, f"/etc/systemd/system/{UNIT}"), (timer, WATCH_FILES[0]), (service, WATCH_FILES[1]),
+                           (M.SLICE, SLICE_FILE)):
+            gh, world, host = remove_setup()
+            world.active[unit] = "active"  # the watch's service: a pass running when the file went
+            world.gone(path)
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertNotIn(code, (M.EXIT_STOP, M.EXIT_WAIT), (unit, lines))
+            self.assertIn(f"stop {unit}", world.order, unit)
+            for u in (UNIT, timer, service, M.SLICE):
+                self.assertEqual(M.unit_read(host, u)[0], "gone", (unit, u))
+            many = [a for a in host.ran if "systemctl" in a and len(units(a)) > 1]
+            self.assertEqual(many, [], unit)
+            self.assertFalse([a for a in host.ran if "systemctl" in a and "--now" in a and "disable" in a], unit)
+        # the sleep read too: one unit a call
+        host = linux_host(runs={("systemctl", "is-enabled"): (0, "masked\n")})
+        self.assertEqual(M.sleep_setting(host), "off (sleep and suspend masked)")
+        reads = [a for a in host.ran if "is-enabled" in a]
+        self.assertEqual([units(a) for a in reads], [["sleep.target"], ["suspend.target"]])
 
     def test_G6_27_no_process_read_is_made_without_the_runners_own_folder(self):
         # R167 (owner 3:51 PM ET 11-24, answer 5): with a record that lost its folder (none of the tool's roads writes
