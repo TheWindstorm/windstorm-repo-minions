@@ -2980,8 +2980,10 @@ def start_runner(host: Host, unit: str, folder: str, rep: Report) -> bool:
     return True
 
 
-def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why: str = "drain") -> dict | None:
-    """The hold (Part 7 C3): our runner carries only `minions-held`, so no new job lands on it. Labels kept to lift it."""
+def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why: str = "drain",
+                moved: list | None = None) -> dict | None:
+    """The hold (Part 7 C3): our runner carries only `minions-held`, so no new job lands on it. Labels kept to lift it.
+    R154: `moved` gets the repository only when this call moved the runner from live labels to held."""
     mine = data["runners"][repo]
     s, r = read_runner(gh, repo, mine["name"])
     if s != 200:
@@ -3005,6 +3007,15 @@ def hold_runner(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, why:
                 rep.stop("GitHub did not take the hold label: nothing else was changed. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
                 return None
             journal(host, "hold read back", f"{repo} {mine['name']}: GitHub answered an error, and lists it held")
+        if moved is not None:
+            moved.append(repo)
+    elif moved is not None and mine.get("held_for") == why:
+        moved.append(repo)  # held by this same road earlier (a `drain --restart` that had to wait), so still its own
+    elif moved is not None:  # R154: already held before this call (read from GitHub's labels now); said as it is
+        rep.ok(f"{mine['name']} for {repo} was already held (for {mine.get('held_for') or 'a hold this tool did not write down'}), "
+               "read from GitHub now: it stays held after the restart; "
+               f"`resume {repo}` lifts it")
+        return r
     rep.ok(f"held: {mine['name']} now carries only `{HELD_LABEL}`, so no new job lands on it; jobs wait on GitHub")
     return r
 
@@ -3057,8 +3068,10 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
                  "no runner of ours on this computer: `look <owner/repo>`, then `setup <owner/repo>`, sets one up")
         return rep.code()
     states = {}
+    moved: list = []
     for rp in repos:
-        if hold_runner(gh, host, rp, data, rep, "a restart" if restart else "drain") is None:
+        if hold_runner(gh, host, rp, data, rep, "a restart" if restart else "drain",
+                       moved if restart else None) is None:
             return rep.code()
         if not restart:  # R154: held by name now, so a restart must not lift it, and the hold is said as a drain
             end_restart_hold(host, rp, data, "held by `drain` by name")
@@ -3078,12 +3091,21 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
             rep.warn(f"drained: no job process runs here, but GitHub says {mine['name']} is offline, so nothing can "
                      "be running on it")
     if restart:
-        data["restart_hold"] = {"time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ"), "boot_id": boot_id(host),
-                                "repos": repos}
+        # R154: the restart's lift undoes only what this road held; a hold set before it stays the person's
+        ours = sorted(set(moved) | set((data.get("restart_hold") or {}).get("repos") or []) & set(repos))
+        if ours:
+            data["restart_hold"] = {"time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ"), "boot_id": boot_id(host),
+                                    "repos": ours}
+            journal(host, "restart hold", ",".join(ours))
+        else:
+            data.pop("restart_hold", None)
         save_state(host, data)
-        journal(host, "restart hold", ",".join(repos))
-        rep.ok("online and idle: safe to restart now. The hold lifts by itself once this computer has restarted and "
-               "GitHub reads the runner online again (the watch does it)")
+        if ours:
+            rep.ok("online and idle: safe to restart now. The hold on " + ", ".join(ours) + " lifts by itself once "
+                   "this computer has restarted and GitHub reads the runner online again (the watch does it)")
+        else:
+            rep.ok("online and idle: safe to restart now. Every runner here was already held before this, and stays "
+                   "held after the restart until you `resume` it")
         return rep.code()
     if stop:
         # R73: stopping the service is an admin step: the password is asked here, once, never assumed.
@@ -3469,7 +3491,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
             save_state(host, fresh)
     rh = data.get("restart_hold")
     if rh:
-        rest.append(("ok", f"held for a restart since {rh['time']}: the hold lifts by itself once this computer has "
+        rest.append(("ok", f"held for a restart since {rh['time']} ({', '.join(rh.get('repos') or [])}): the hold lifts by itself once this computer has "
                            "restarted and GitHub reads the runner online"))
     for kind, text in first + rest:
         {"ok": rep.ok, "warn": rep.warn, "stop": rep.stop, "need": rep.need}[kind](text)
@@ -4823,6 +4845,7 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
     if not remove_folders(host, repo, mine, rep):
         return False
     journal(host, "removed", f"{repo} {mine.get('name')}")
+    end_restart_hold(host, repo, data, "its runner was removed")  # R154: never said held for a runner gone or set up anew
     data["runners"].pop(repo, None)
     save_state(host, data)
     rep.ok(f"uninstalled: {repo} has no runner on this computer now")

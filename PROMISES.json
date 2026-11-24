@@ -2139,8 +2139,8 @@
   },
   {
    "id": "R154",
-   "seen": "2026-11-24, read in the code at the release head while listing the lines family rule 24 names, then walked in the stand-in: after `drain --restart`, a `resume` without a restart left the restart hold kept; `status` then said both \"idle\" and \"held for a restart ... the hold lifts by itself\", and a later `drain REPO` (the person's own hold) was lifted by the watch after any restart, so jobs landed on a runner the person had held.",
-   "promise": "`resume REPO` ends the restart hold kept for that repository, and `drain REPO` by name makes the hold the person's, said as a drain; a restart never lifts a hold the person set, and `status` never says a hold that `resume` lifted.",
+   "seen": "2026-11-24, read in the code at the release head while listing the lines family rule 24 names, then walked in the stand-in: after `drain --restart`, a `resume` without a restart left the restart hold kept; `status` then said both \"idle\" and \"held for a restart ... the hold lifts by itself\", and a later `drain REPO` (the person's own hold) was lifted by the watch after any restart, so jobs landed on a runner the person had held. The maintainer's reading then found the reverse order: `drain A`, then `drain --restart`, then the restart lifted A's own hold; and `drain --restart`, then `uninstall A`, left a restart hold naming A.",
+   "promise": "A restart's lift undoes only what the restart itself held: a runner already held before `drain --restart` is said as staying held and is not lifted by the restart; `resume REPO` and `uninstall REPO` end that repository's restart hold, and `drain REPO` by name makes the hold the person's, said as a drain; `status` names the repositories still held for a restart, and never says a hold that `resume` lifted.",
    "codon": "G5.24",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",

@@ -3014,6 +3014,51 @@ class G5(unittest.TestCase):
         self.assertTrue([x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1] if "held for drain since" in x])
         with open(os.path.join(host.state_dir(), "journal.log")) as f:
             self.assertIn("restart hold ended", f.read())
+        # The reverse order (the maintainer's reading): `drain A` first, then `drain --restart`, then the restart. The
+        # restart's lift undoes only what the restart itself held; A's own hold is said as already held and stays.
+        other = "example-org/other-repo"
+        host, clock = g5_host(repos=(REPO, other))
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-one\n"
+        gh = StatusGH(repos=(REPO, other))
+        run_cmd(M.drain, REPO, host=host, gh=gh)
+        code, lines = run_cmd(M.drain, None, host=host, gh=gh, restart=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(f"ok minions-box-1 for {REPO} was already held (for drain), read from GitHub now: it stays held "
+                      f"after the restart; `resume {REPO}` lifts it", lines)
+        self.assertEqual(M.load_state(host)["restart_hold"]["repos"], [other])
+        self.assertIn(f"The hold on {other} lifts by itself", lines[-1])
+        self.assertTrue([x for x in run_cmd(M.status, None, host=host, gh=gh)[1]
+                         if f"held for a restart since" in x and f"({other})" in x])
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-two\n"
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertIn((other, ["minions", "minions-medium"]), gh.puts)  # the restart's own hold lifted
+        self.assertEqual([x for x in gh.puts if x[0] == REPO], [(REPO, ["minions-held"])])  # the person's stays
+        # Every runner already held: no restart hold is kept, and the line says they stay held.
+        host, clock = g5_host()
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-one\n"
+        gh = StatusGH()
+        run_cmd(M.drain, REPO, host=host, gh=gh)
+        code, lines = run_cmd(M.drain, None, host=host, gh=gh, restart=True)
+        self.assertNotIn("restart_hold", M.load_state(host))
+        self.assertTrue(lines[-1].endswith("Every runner here was already held before this, and stays held after the "
+                                           "restart until you `resume` it"), lines[-1])
+        # A `drain --restart` that had to wait, run again as its line says: the hold it set is still its own.
+        host, clock = g5_host(worker=True)
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-one\n"
+        gh = StatusGH(busy=True)
+        self.assertEqual(run_cmd(M.drain, None, host=host, gh=gh, restart=True, wait_s=60)[0], M.EXIT_WAIT)
+        host.runs[("pgrep", "-u", "minions-runner", "-f")] = (1, "")
+        gh.r[REPO]["busy"] = False
+        self.assertEqual(run_cmd(M.drain, None, host=host, gh=gh, restart=True)[0], M.EXIT_OK)
+        self.assertEqual(M.load_state(host)["restart_hold"]["repos"], [REPO])
+        # The third road: `drain --restart`, then `uninstall REPO` (then `setup REPO` again, G6.22) before any restart:
+        # the removal ends that repository's restart hold, so status never says a live runner is held for a restart.
+        gh, world, host = remove_setup(moved=False)
+        d = M.load_state(host)
+        d["restart_hold"] = {"time": "2026-11-22T23:00:00Z", "boot_id": "boot-one", "repos": [REPO]}
+        M.save_state(host, d)
+        self.assertEqual(run_uninstall(gh, host)[0], M.EXIT_OK)
+        self.assertNotIn("restart_hold", M.load_state(host))
 
     def test_G4_3_below_the_floor_the_watch_holds_and_lifts_by_itself(self):
         # P4 (seen 2026-11-23: 4 GB free and the watch said only "online, not busy"): held before the disk fills.
