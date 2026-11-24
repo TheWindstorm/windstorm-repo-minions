@@ -1912,6 +1912,20 @@
    "issue": "",
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R138",
+   "seen": "2026-11-24, a stock Ubuntu 24.04.5 virtual machine: a job of the repository set a crontab and an at job as the runner user; both ran outside the service, after the job ended, until the last uninstall removed them (R130). The owner's ruling the same night: inside 0.1.0's circle (one repository, one user, its uninstall the last), on the README saying it plainly.",
+   "promise": "Setup refuses the runner user cron and at on a stock machine by a line of its own (marked as this tool's, removed at the last uninstall, with what an existing allow file changes read first), or the README says it stays open and why. Closed before R137 ships.",
+   "codon": "G2.19",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
