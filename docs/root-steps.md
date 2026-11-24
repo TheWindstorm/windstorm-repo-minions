@@ -68,6 +68,7 @@ Folders, and who can write them:
 | `remove_shared` | `systemctl stop` | no | no | nothing |
 | `remove_shared` | `systemctl disable` | no | no | nothing |
 | `remove_shared` | `rm` | no | no: root's folders, and `seen` (yours) | nothing |
+| `remove_copy` | `rm` | no | no: the tool's copy and the job hooks (root's), the very last removal of `uninstall --all` (R167) | nothing |
 | `remove_shared` | `rmdir` | no | no | nothing |
 | `remove_shared` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_shared` | `systemctl reset-failed` | no | no | nothing |

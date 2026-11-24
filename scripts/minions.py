@@ -1772,9 +1772,18 @@ def load_state(host: Host) -> dict:
     try:
         with open(state_path(host), encoding="utf-8") as f:
             d = json.load(f)
-        return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
+    if not isinstance(d, dict):
+        return {}
+    # R167 (owner 3:51 PM ET 11-24, answer 5): a runner's folder is its repository's own (setup's rule, and every
+    # record the tool writes carries it); a record that lost it (a hand edit) gets it back here, so no road reads
+    # processes or paths with an empty folder
+    for key in ("runners", "setting_up"):
+        for repo, mine in (d.get(key) or {}).items() if isinstance(d.get(key), dict) else ():
+            if isinstance(mine, dict) and not mine.get("folder") and re.fullmatch(r"[^/]+/[^/]+", str(repo)):
+                mine["folder"] = runner_folder(repo)
+    return d
 
 
 def save_state(host: Host, data: dict) -> None:
@@ -2230,8 +2239,12 @@ def unpack_runner(host: Host, rel: dict, folder: str, rep: Report) -> bool:
     R127/R128 (rule 28): the copy that is checked is the copy that is used. Root copies the download into a folder of
     root's own, checks its checksum there, takes the dependency script out there and runs it from there; the runner
     user unpacks from that same read-only copy. Every step in the runner user's home is done as the runner user."""
-    rc, out = as_runner(host, ["test", "-e", folder])
-    if rc == 0:
+    there = root_test(host, folder)  # R167: the marked read; a read with no answer stops here too
+    if there is None:
+        rep.stop(f"whether {folder} exists could not be read (as {RUNNER_USER}): nothing was changed. Run the same "
+                 "command again")
+        return False
+    if there:
         rep.stop(f"{folder} exists already: a runner for this repository is set up here, or a removal was not "
                  "finished; nothing was changed. `uninstall <owner/repo>` finishes a removal that was not finished; then "
                  "setup again")
@@ -2644,8 +2657,7 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
             (rep.ok if kind == "ok" else rep.warn)(words + "; the runner, its service, its limits and a running job "
                                                    "were not touched")
         return rep.code()
-    owner, name_ = repo.split("/", 1)
-    folder = f"/home/{RUNNER_USER}/runners/{owner}-{name_}"
+    folder = runner_folder(repo)
     labels = runner_labels(survey_)
     runner_name = f"minions-{re.sub(r'[^A-Za-z0-9-]', '-', host.hostname())}"[:60]
     known = load_state(host)
@@ -2660,6 +2672,12 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
         return rep.code()
     both_sides(gh, host, repo, runner_name, unit_of(host, repo), labels, rep)
     return rep.code()
+
+
+def runner_folder(repo: str) -> str:
+    """The one folder a repository's runner has (setup's own rule; every record carries it)."""
+    owner, name_ = repo.split("/", 1)
+    return f"/home/{RUNNER_USER}/runners/{owner}-{name_}"
 
 
 def unit_of(host: Host, repo: str) -> str:
@@ -2777,7 +2795,7 @@ PROGRAMS = {
     "systemd-detect-virt": "the disk kind", "pgrep": "runner processes", "kill": "a stop by exact PID",
     "useradd": "the runner's user", "userdel": "removing it", "install": "folders and the tool's copy",
     "tee": "writing root's files from standard input", "cat": "reading root's files", "chown": "ownership",
-    "chmod": "modes", "stat": "reading modes back", "id": "your group", "rm": "removing files", "test": "a path exists",
+    "chmod": "modes", "stat": "reading modes back", "id": "your group", "rm": "removing files", "test": "a path exists", "sh": "runs `test -e` with its answer marked (R167)",
     "bash": "the runner's own scripts", "systemd-inhibit": "the two locks during a job",
     "journalctl": "the runner's own log lines", "sha256sum": "the runner's checksum", "tar": "unpacking the runner",
     "mktemp": "a root-only folder for the download", "find": "emptying the runner's records, as the runner",
@@ -3147,6 +3165,11 @@ def pgrep_read(host: Host, argv: list[str]) -> list[str]:
         return [x for x in out.split() if x.isdigit()]
     if rc == 1:
         return []
+    # R167 (owner 3:51 PM ET 11-24, change 2): pgrep answers exit 2 for a user that does not exist (seen: procps-ng
+    # 4.0.4, "pgrep: invalid user name: NAME"). Where the runner user reads absent (a setup cut before it was made, a
+    # user removed by hand), no process of it runs: none. A user read as there, or not read, stays could not be read.
+    if argv[1:3] == ["-u", RUNNER_USER] and runner_user_state(host)[0] == "absent":
+        return []
     first = next((x.strip() for x in out.splitlines() if x.strip()), "")
     raise PidsUnread(f"pgrep answered code {rc}: " + (first[:160] or "nothing"))
 
@@ -3154,6 +3177,10 @@ def pgrep_read(host: Host, argv: list[str]) -> list[str]:
 def runner_pids(host: Host, folder: str, part: str = "Runner.") -> list[int]:
     """Processes of THIS runner (its own folder's programs), by exact PID. Read only; never a broad kill. Raises
     PidsUnread when pgrep could not answer: never taken for "no process"."""
+    # R167 (owner 3:51 PM ET 11-24, answer 5): with no folder the pattern would be "/bin/Runner.", every runner of
+    # the runner user's, another repository's too: no process read is ever made without this runner's own folder
+    if not folder.startswith(RUNNERS_HOME) or len(folder) <= len(RUNNERS_HOME) or "/.." in folder:
+        raise PidsUnread(f"no runner folder is known ({folder!r}), so no process is read for it")
     return [int(x) for x in pgrep_read(host, ["pgrep", "-u", RUNNER_USER, "-f", f"{folder}/bin/{part}"])]
 
 
@@ -5043,12 +5070,25 @@ def root_test(host: Host, path: str) -> bool | None:
     # R128 (rule 28): a path in the runner user's home is read as the runner user, so a link a job planted there
     # leads nowhere root can see; root's own folders are read as root.
     how = as_runner if path.startswith(f"/home/{RUNNER_USER}/") else sudo
-    rc, out = how(host, ["test", "-e", path])
-    if rc == 0:
-        return True
-    # R167 (rule 6): `test -e` says "not there" with exit 1 and nothing written; sudo's own refusal is also exit 1, with
-    # its words: that, and any other exit, could not be read
-    return False if rc == 1 and not out.strip() else None
+    # R167 (rule 6): the answer is the test's OWN mark, never sudo's exit or words. sudo can write a warning and still
+    # run the command (seen: "sudo: unable to resolve host NAME: ...", on a computer whose name does not resolve, with
+    # the test's exit passed on), and its own refusal is an exit 1 with words; neither is taken for the test's answer.
+    # No mark, or both: could not be read.
+    rc, out = how(host, marked_test(path))
+    marks = {x.strip() for x in out.splitlines()} & {TEST_THERE, TEST_NOT_THERE}
+    if rc != 0 or len(marks) != 1:
+        return None
+    return TEST_THERE in marks
+
+
+TEST_THERE, TEST_NOT_THERE = "minions-test: there", "minions-test: not there"
+TEST_SH = f'if test -e "$1"; then echo "{TEST_THERE}"; else echo "{TEST_NOT_THERE}"; fi'
+
+
+def marked_test(path: str) -> list[str]:
+    """R167: `test -e PATH`, run by sh with the path as its one argument (never in the script's text), printing its
+    own mark for each answer."""
+    return ["sh", "-c", TEST_SH, "sh", path]
 
 
 def empty_then_rmdir(host: Host, path: str) -> None:
@@ -5074,7 +5114,8 @@ def unit_read(host: Host, unit: str) -> tuple[str, str]:
     """R167 (family rule 30, rule 6's three answers): one read of a unit, as systemd answers it now: ("gone", state)
     when systemd no longer has it loaded and nothing of it is active (G6.5's lesson); ("stopped", state) when it is
     loaded but not running (inactive, or failed: R132); ("running", state); or ("unread", why) when systemctl did not
-    answer (no manager reached, a timeout, an answer without both fields): never taken as gone or stopped. A slice is
+    answer (no manager reached, a timeout, an answer without both fields) or answered a word neither running nor
+    stopped: never taken as gone or stopped. A slice is
     never "not-found": systemd makes any slice from its name alone (seen on a stock Ubuntu 24.04, systemd 255: a slice
     never made reads LoadState=loaded). So a slice is gone when it is inactive with no file and no drop-in loaded."""
     rc, out = host.run(systemctl("show", unit, "-p", "LoadState", "-p", "ActiveState", "-p", "FragmentPath",
@@ -5089,7 +5130,11 @@ def unit_read(host: Host, unit: str) -> tuple[str, str]:
     if act == "inactive" and (got["LoadState"] == "not-found" or (
             unit.endswith(".slice") and not got.get("FragmentPath") and not got.get("DropInPaths"))):
         return "gone", act
-    return "stopped", act
+    if act in ("inactive", "failed"):
+        return "stopped", act
+    # R167 (owner 3:51 PM ET 11-24, change 3): stopped is said only from the two words seen; any other word (one a
+    # later systemd adds, too) is named and could not be read
+    return "unread", f"systemctl answered ActiveState={act[:60]}, a word this tool does not read as stopped"
 
 
 def unit_words(unit: str, read: tuple[str, str]) -> str:
@@ -5241,7 +5286,7 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
         journal(host, "uninstall", f"{repo} {mine.get('name')}")
         mine["removing"] = host.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         save_state(host, data)
-    folder = mine.get("folder") or ""
+    folder = mine.get("folder") or runner_folder(repo)  # R167 (answer 5): load_state gives it back to a hand edit
     s, listed = read_runner(gh, repo, mine["name"])
     if s != 200:
         rep.stop(f"GitHub could not be read for {repo}'s runners (HTTP {s}): nothing is changed. Run `uninstall "
@@ -5602,7 +5647,10 @@ def remove_shared(host: Host, rep: Report) -> bool:
     else:
         kept_here = [x for x in (f"{RECORDS_ROOT}/{n}" for n in names if n != os.path.basename(SEEN_ROOT))
                      if not keep_jobs_record(host, x, rep)]
-    for path in [HOOKS_ROOT] + ([SEEN_ROOT] if kept_here else [RECORDS_ROOT]):
+    # R167 (owner 3:51 PM ET 11-24, answer 6): the tool's copy (HOOKS_ROOT) is the one the person is told to run
+    # uninstall from (the skill's own words); it goes LAST (remove_copy), so every step that stops before it names a
+    # copy that is still there
+    for path in [SEEN_ROOT] if kept_here else [RECORDS_ROOT]:
         if exists_as_root(host, path):
             journal(host, "delete", path)
             if path == RECORDS_ROOT:  # R128: each repository's records folder is the runner user's to empty
@@ -5614,14 +5662,39 @@ def remove_shared(host: Host, rep: Report) -> bool:
                 sudo(host, ["rmdir", path])
             else:
                 sudo(host, ["rm", "-rf", "--one-file-system", path])
-    if any(exists_as_root(host, x) for x in [HOOKS_ROOT] + ([SEEN_ROOT] if kept_here else [RECORDS_ROOT])):
-        rep.stop(f"could not delete {HOOKS_ROOT} or {RECORDS_ROOT}. Run the same command again: it finishes a removal that was not finished")
+    if any(exists_as_root(host, x) for x in ([SEEN_ROOT] if kept_here else [RECORDS_ROOT])):
+        rep.stop(f"could not delete {RECORDS_ROOT}. Run the same command again: it finishes a removal that was not "
+                 "finished")
         ok = False
     else:
-        rep.ok(f"the tool's copy and the job hooks are deleted ({HOOKS_ROOT}); the jobs' records are "
-               + (f"kept where they are, not deleted: {', '.join(kept_here)}" if kept_here else
-                  f"in your record ({host.record_dir()}), and {RECORDS_ROOT} is deleted"))
-    return remove_runner_user(host, rep) and ok
+        rep.ok("the jobs' records are " + (f"kept where they are, not deleted: {', '.join(kept_here)}" if kept_here
+                                           else f"in your record ({host.record_dir()}), and {RECORDS_ROOT} is deleted"))
+    return ok and remove_runner_user(host, rep)
+
+
+def journal_copy_removal(host: Host) -> None:
+    """R167 (answer 6): the copy's removal is journaled before the journal goes to the person's record."""
+    if exists_as_root(host, HOOKS_ROOT):
+        journal(host, "delete", f"{HOOKS_ROOT} (the tool's copy and the job hooks: the very last step)")
+
+
+def remove_copy(host: Host, rep: Report) -> bool:
+    """R167 (owner 3:51 PM ET 11-24, answer 6): the tool's copy and the job hooks, the very last removal of
+    `uninstall --all`: the skill tells the person to run uninstall from this copy, so nothing that may stop comes
+    after it. A copy still there names itself; one not read names the clone the person set up from."""
+    if exists_as_root(host, HOOKS_ROOT):
+        sudo(host, ["rm", "-rf", "--one-file-system", HOOKS_ROOT])
+    t = root_test(host, HOOKS_ROOT)
+    if t is None:
+        rep.stop(f"whether {HOOKS_ROOT} (the tool's copy and the job hooks) is deleted could not be read: everything "
+                 "else is off. Run uninstall --all again from the clone you set this tool up from: it finishes here")
+        return False
+    if t:
+        rep.stop(f"could not delete {HOOKS_ROOT} (the tool's copy and the job hooks): everything else is off. Run the "
+                 "same command again: it finishes a removal that was not finished")
+        return False
+    rep.ok(f"the tool's copy and the job hooks are deleted ({HOOKS_ROOT}), the very last removal")
+    return True
 
 
 PUBLIC_TMP = ("/tmp", "/var/tmp", "/dev/shm")  # the places any user can write outside its home
@@ -5765,10 +5838,56 @@ def end_runner_users_processes(host: Host, rep: Report) -> bool:
     return True
 
 
+def first_words(rc: int, out: str) -> str:
+    first = next((x.strip() for x in out.splitlines() if x.strip()), "")
+    return f"systemctl answered code {rc}: " + (first[:160] or "nothing")
+
+
+def slice_running_units(host: Host) -> tuple[list[str] | None, str]:
+    """R167 (owner 3:51 PM ET 11-24, change 4; rule 30): a stop of the slice ends every unit in it, a job too. So its
+    own units are read first: the list of those that read running, or None and why when that could not be read.
+    Its units are systemd's own list of them (SliceOf, seen on systemd 255; an older systemd that does not know it
+    prints nothing for it) and every unit of our names whose Slice= is ours (a runner whose record was lost)."""
+    rc, out = host.run(systemctl("show", SLICE, "-p", "SliceOf"))
+    if rc != 0:
+        return None, f"the units in {SLICE} could not be read ({first_words(rc, out)})"
+    inside = {u for x in out.splitlines() if x.startswith("SliceOf=") for u in x[len("SliceOf="):].split()}
+    rc, out = host.run(systemctl("list-units", "--all", "--plain", "--no-legend", "actions.runner.*", "minions*"))
+    if rc != 0:
+        return None, f"systemd's units of ours could not be listed ({first_words(rc, out)})"
+    for u in sorted({x.split()[0] for x in out.splitlines() if x.strip() and not x.startswith("0 ")} - {SLICE} - inside):
+        rc, got = host.run(systemctl("show", u, "-p", "Slice"))
+        said = [x[len("Slice="):].strip() for x in got.splitlines() if x.startswith("Slice=")]
+        if rc != 0 or not said:
+            return None, f"which slice {u} is in could not be read ({first_words(rc, got)})"
+        if said[0] == SLICE:
+            inside.add(u)
+    running = []
+    for u in sorted(inside):
+        kind, what = unit_read(host, u)
+        if kind == "unread":
+            return None, f"{u} could not be read ({what})"
+        if kind == "running":
+            running.append(f"{u} ({what})")
+    return running, ""
+
+
 def remove_slice(host: Host, rep: Report) -> bool:
     """G6.5: a slice whose file is deleted stays loaded and active after a reload until it is stopped; so stop it
-    first, then delete the file, reload, and read back that it is gone."""
+    first, then delete the file, reload, and read back that it is gone. R167 (rule 30): a stop that would end a
+    running job is never sent: the slice's own units are read first, and while one reads running it is not stopped."""
     path = unit_path(SLICE)
+    running, why = slice_running_units(host)
+    if running is None:
+        rep.stop(f"{why}: {SLICE} is not stopped, as its stop would end whatever runs in it, and its file is not "
+                 f"deleted. Your next step: `python3 -I {tool_path()} uninstall --all`: it reads again and finishes")
+        return False
+    if running:
+        rep.stop(f"{SLICE} still holds {', '.join(running)}: it is not stopped, as its stop would end what runs there "
+                 f"(a job of yours too), and its file is not deleted. Your next step, once no job of yours runs on it "
+                 f"(GitHub shows that runner idle or gone): stop that service yourself; then "
+                 f"`python3 -I {tool_path()} uninstall --all` finishes")
+        return False
     journal(host, "stop", SLICE)
     sudo(host, systemctl("stop", SLICE))
     read = unit_read(host, SLICE)  # R167 (rule 30): read stopped before its file is deleted
@@ -5978,7 +6097,8 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
             return rep.code()
         for rp in sorted(data.get("moves") or {}):
             put_back(gh, host, rp, data, rep)
-        journal(host, "delete", f"{host.state_dir()} (the last step)")
+        journal_copy_removal(host)
+        journal(host, "delete", f"{host.state_dir()} (the last step but the tool's copy)")
         if keep_journal_record(host, rep):  # G6.10: the journal is the person's record; not kept, not deleted
             left = delete_ours(host.state_dir(), STATE_NAMES)  # R129 (rule 23): only ours, by name
             if left:
@@ -5987,6 +6107,7 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
                 rep.stayed["state"] = left  # R136 (rule 8): the person's, named in the census with why
         if delete_record:
             delete_record_if_typed(host, rep)
+        remove_copy(host, rep)  # R167 (answer 6): the copy the person runs uninstall from goes last
         # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
         census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()),
                skill_folder=kept_skill_from(data), packages={k: data.get(k) for k in (

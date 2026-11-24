@@ -108,7 +108,7 @@ class FakeHost(M.Host):
     def run_in(self, argv, input, timeout=600):
         self.ran.append(tuple(argv))
         self.fed.append((tuple(argv), input))
-        return self._answer(argv, input)
+        return self.warned(argv, *self.answer_marked(argv, input))
 
     def state_dir(self):
         return self._state
@@ -146,9 +146,36 @@ class FakeHost(M.Host):
         self.ran.append(("own", *argv))
         return self._answer(["own", *argv])
 
+    def marked(self, argv):
+        """R167: root_test's marked `test -e` (sh -c SCRIPT sh PATH) is answered by the stand-ins for `test -e PATH`
+        under the same sudo; their (0, "") / (1, "") become the test's own mark, any other answer is passed on with no
+        mark. A stand-in set for the marked form itself is used as it is."""
+        argv = list(argv)
+        for i in range(len(argv) - 4):
+            if argv[i:i + 2] == ["sh", "-c"] and argv[i + 2] == M.TEST_SH and len(argv) == i + 5:
+                if any(len(k) > i and tuple(argv[:len(k)]) == k for k in self.runs):
+                    return None
+                return argv[:i] + ["test", "-e", argv[i + 4]]
+        return None
+
+    def answer_marked(self, argv, input=None):
+        inner = self.marked(argv)
+        if inner is None:
+            return self._answer(argv, input)
+        rc, out = self._answer(inner, input)
+        if rc in (0, 1) and not out.strip():
+            return 0, (M.TEST_THERE if rc == 0 else M.TEST_NOT_THERE) + "\n"
+        return rc, out
+
+    def warned(self, argv, rc, out):
+        """R167: sudo's own warning, written before the command's words, on every sudo call (as a computer whose name
+        does not resolve gets it: the command runs and its exit is passed on)."""
+        w = getattr(self, "sudo_warning", "")
+        return (rc, w + out) if w and argv[:1] in (["sudo"], ("sudo",)) else (rc, out)
+
     def run(self, argv, timeout=20):
         self.ran.append(tuple(argv))
-        rc, out = self._answer(argv)
+        rc, out = self.warned(argv, *self.answer_marked(argv))
         if rc == 0 and argv[:3] == ["sudo", "-n", "install"] and argv[-1] == M.TOOL_COPY:  # G4.10: the copy is there
             with open(argv[-2], encoding="utf-8") as f:
                 self.files[M.TOOL_COPY] = f.read()
@@ -1268,7 +1295,9 @@ class G2(unittest.TestCase):
         self.assertLess(i_copy, i_sum)
         self.assertLess(i_sum, i_deps)
         self.assertIn(("tar", "xzf", f"{DEPS}/runner.tgz", "-C", FOLDER), runner)  # same copy
-        ran_scripts = [a for a in root if a[:1] in (("bash",), ("sh",)) or (a and a[0].endswith(".sh"))]
+        ran_scripts = [a for a in root if (a[:1] in (("bash",), ("sh",)) or (a and a[0].endswith(".sh")))
+                       and a[:3] != ("sh", "-c", M.TEST_SH)]  # R167: the tool's own marked `test -e`, its text fixed
+        self.assertNotIn("$", M.TEST_SH.replace('"$1"', ""))  # its one argument is the path, never in its text
         self.assertEqual(ran_scripts, [("bash", f"{DEPS}/root/bin/installdependencies.sh")])
         unit = [inp for argv, inp in host.fed if argv[2:4] == ("tee", f"/etc/systemd/system/{UNIT}")]
         self.assertEqual(unit, [M.unit_text(FOLDER, UNIT)])
@@ -3619,6 +3648,7 @@ class World:
         self.active = {UNIT: "active", M.SLICE: "active", f"{M.WATCH_UNIT}.timer": "active"}
         self.loaded = set(self.active) | {f"{M.WATCH_UNIT}.service"}
         self.user, self.listener, self.worker, self.order = True, True, False, []
+        self.slice_of, self.old_systemd = {UNIT: M.SLICE}, False  # R167: which units are in our slice (Slice=)
         self.files, self.links = {}, set()  # remove_setup shares the host's files; links a job planted (R128)
 
     def gone(self, path):
@@ -3697,17 +3727,26 @@ class World:
         if a[:2] == ["systemctl", "show"]:
             u = a[2]
             # As systemd 255 answers: a slice always reads "loaded" (systemd makes any slice from its name); what
-            # tells a loaded file is FragmentPath.
+            # tells a loaded file is FragmentPath. Only the fields asked for, in systemd's own order; a field this
+            # systemd does not know prints nothing (seen, 255), as `old_systemd` stands in for SliceOf.
             frag = f"/etc/systemd/system/{u}" if u in self.loaded else ""
-            return 0, (f"LoadState={'loaded' if u in self.loaded or u.endswith('.slice') else 'not-found'}\n"
-                       f"ActiveState={self.active.get(u, 'inactive') if u in self.loaded else 'inactive'}\n"
-                       f"FragmentPath={frag}\nDropInPaths=\n")
+            in_slice = sorted(x for x in self.loaded if self.slice_of.get(x) == M.SLICE)
+            have = {"LoadState": "loaded" if u in self.loaded or u.endswith(".slice") else "not-found",
+                    "ActiveState": self.active.get(u, "inactive") if u in self.loaded else "inactive",
+                    "FragmentPath": frag, "DropInPaths": "",
+                    "Slice": "-.slice" if u.endswith(".slice") else self.slice_of.get(u, "system.slice")}
+            if u == M.SLICE and not self.old_systemd:
+                have["SliceOf"] = " ".join(in_slice)
+            asked = [a[i + 1] for i in range(3, len(a) - 1) if a[i] == "-p"]
+            return 0, "".join(f"{k}={have[k]}\n" for k in asked if k in have)
         if a[:2] == ["systemctl", "is-active"]:
             st = self.active.get(a[2], "inactive")
             return (0 if st == "active" else 3), st + "\n"
         if a[:2] == ["systemctl", "list-units"]:
             return 0, "".join(f"{u} loaded {self.active.get(u, 'inactive')}\n" for u in sorted(self.loaded))
         if a[:2] == ["pgrep", "-u"]:
+            if not self.user:  # as procps-ng 4.0.4 answers for a user that does not exist (seen, R167)
+                return 2, "pgrep: invalid user name: minions-runner\n"
             if a[-1].endswith("Runner.Worker"):
                 return (0, "3333\n") if self.worker else (1, "")
             return (0, "2222\n") if self.listener else (1, "")
@@ -4084,7 +4123,8 @@ class G6(unittest.TestCase):
         first_delete = min(i for i, x in enumerate(o) if x.startswith(("rm ", "empty ")) and not x.endswith(
             (".service", UNIT, ".d")))
         self.assertLess(o.index("config.sh remove"), first_delete)
-        self.assertEqual(o[-1], "userdel")
+        # R167 (answer 6): then the tool's copy, the one the person runs uninstall from, the very last removal
+        self.assertEqual(o[-2:], ["userdel", f"rm {M.HOOKS_ROOT}"])
         removal = next(a for a in host.ran if M.REMOVE_SCRIPT in a)
         self.assertEqual(removal[:5], ("sudo", "-n", "-u", "minions-runner", "--"))
         # Nothing the person runs enters the runner's home: every command that names it goes through sudo.
@@ -4149,8 +4189,13 @@ class G6(unittest.TestCase):
                           ((0, "LoadState=loaded\nActiveState=deactivating\n"), "running"),
                           ((0, "LoadState=not-found\nActiveState=inactive\n"), "gone"),
                           ((0, "LoadState=loaded\nActiveState=inactive\nFragmentPath=/etc/systemd/system/x.service\n"), "stopped"),
-                          ((0, "LoadState=not-found\nActiveState=failed\n"), "stopped")):
+                          ((0, "LoadState=not-found\nActiveState=failed\n"), "stopped"),
+                          # change 3 (owner 3:51 PM ET): stopped only from the two words seen; another word is unread
+                          ((0, "LoadState=loaded\nActiveState=maintenance\n"), "unread"),
+                          ((0, "LoadState=loaded\nActiveState=\u00abnew\u00bb\n"), "unread")):
             self.assertEqual(M.unit_read(H(ans), W_SVC)[0], want, ans)
+        self.assertIn("ActiveState=maintenance", M.unit_read(H((0, "LoadState=loaded\nActiveState=maintenance\n")),
+                                                             W_SVC)[1])
         def deleted_none(world):
             self.assertIn(FOLDER, world.paths)
             self.assertTrue(set(WATCH_FILES) <= world.paths, world.paths)
@@ -4211,9 +4256,11 @@ class G6(unittest.TestCase):
         # read (a user that does not exist answers 2 with one line, seen; a timeout is the host's 127). No stop,
         # start, removal or "no job runs" takes that third answer for none.
         PG = ("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.")
+        # (Here the runner user reads there: an exit 2 for a user read absent is none, test_G6_27_an_absent_user...)
+        THERE = {("id", "-u", "minions-runner"): (0, "998\n")}
         for bad in ((2, "pgrep: invalid user name: minions-runner\n"), (127, "Command timed out after 20 seconds"),
                     (3, "")):
-            host = setup_host(runs={PG: bad, ("systemctl", "is-active", UNIT): (3, "inactive\n")})[0]
+            host = setup_host(runs={PG: bad, ("systemctl", "is-active", UNIT): (3, "inactive\n"), **THERE})[0]
             rep = M.Report(io.StringIO())
             self.assertFalse(M.stop_runner(host, UNIT, FOLDER, rep, drained=True), bad)
             self.assertIn("could not be read", rep.lines[-1])
@@ -4224,7 +4271,7 @@ class G6(unittest.TestCase):
             self.assertIn("could not be read", rep.lines[-1])
             self.assertFalse(any(a[:4] == ("sudo", "-n", "systemctl", "start") for a in host.ran))
             # The runner user's processes, before the user is deleted.
-            host = setup_host(runs={("pgrep", "-u", "minions-runner"): bad})[0]
+            host = setup_host(runs={("pgrep", "-u", "minions-runner"): bad, **THERE})[0]
             rep = M.Report(io.StringIO())
             self.assertFalse(M.end_runner_users_processes(host, rep), bad)
             self.assertIn("could not be read", rep.lines[-1])
@@ -4240,6 +4287,103 @@ class G6(unittest.TestCase):
         self.assertNotIn(f"stop {UNIT}", world.order)
         self.assertIn(FOLDER, world.paths)
         self.assertFalse(any(m == "DELETE" for m, p in gh.calls), gh.calls)
+
+    def test_G6_27_an_absent_user_has_no_process_and_the_uninstall_finishes(self):
+        # R167 (owner 3:51 PM ET 11-24, change 2): pgrep answers exit 2 for a user that does not exist (seen). With a
+        # runner in the record and the runner user absent (a setup cut before the user was made; a user removed by
+        # hand), "could not be read" could never finish. Where the user reads absent, no process of it runs: none.
+        # A user that could not be read stays could not be read.
+        for everything in (False, True):
+            gh, world, host = remove_setup()
+            world.user, world.listener = False, False
+            world.gone(f"/home/{M.RUNNER_USER}")  # its home and the runner's folder went with the user
+            code, lines = run_uninstall(gh, host, repo=None if everything else REPO, everything=everything)
+            self.assertNotIn(code, (M.EXIT_STOP, M.EXIT_WAIT), lines)
+            self.assertFalse([x for x in lines if "could not be read" in x], lines)
+            self.assertNotIn(f"/etc/systemd/system/{UNIT}", world.paths, lines)
+            if everything:
+                self.assertIn("ok census: the runner user: none", lines)
+        # The runner user not read: pgrep's exit 2 stays could not be read.
+        host = setup_host(runs={("pgrep", "-u", "minions-runner"): (2, "pgrep: invalid user name: minions-runner\n"),
+                                ("id", "-u", "minions-runner"): (1, "id: cannot find name for user ID 998\n")})[0]
+        self.assertIsNone(M.pids_list_or_none(host))
+        host.runs[("id", "-u", "minions-runner")] = (1, "id: 'minions-runner': no such user")
+        self.assertEqual(M.pids_list_or_none(host), [])
+
+    def test_G6_27_the_slice_is_never_stopped_while_a_unit_in_it_runs(self):
+        # R167 (owner 3:51 PM ET 11-24, change 4; rule 30): a stop of the slice ends every unit in it, a running job
+        # too, a runner unit whose record was lost included. Its own units are read first (systemd's SliceOf, and,
+        # for a systemd that does not know that field, each unit of our names whose Slice= is ours); while one reads
+        # running the slice is not stopped and its file stays; a read with no answer is the same refusal.
+        LOST = "actions.runner.example-org-lost.minions-box-1.service"
+        for old in (False, True):
+            gh, world, host = remove_setup()
+            world.old_systemd = old
+            world.loaded.add(LOST)
+            world.active[LOST], world.slice_of[LOST] = "active", M.SLICE
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertIn(f"{M.SLICE} still holds {LOST} (active): it is not stopped", lines[-1])
+            self.assertNotIn(f"stop {M.SLICE}", world.order)
+            self.assertNotIn(f"stop {LOST}", world.order)
+            self.assertIn(SLICE_FILE, world.paths)
+            # once that unit is stopped (by the person), the same command finishes
+            world.active[LOST] = "inactive"
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertNotIn(code, (M.EXIT_STOP, M.EXIT_WAIT), lines)
+            self.assertNotIn(SLICE_FILE, world.paths)
+        # The slice's own list not read: nothing of the slice is stopped or deleted.
+        for match in (lambda a: a[:4] == ["systemctl", "show", M.SLICE, "-p"] and "SliceOf" in a,
+                      lambda a: a[:2] == ["systemctl", "list-units"]):
+            gh, world, host = remove_setup()
+            host._answer = (lambda real, m: lambda a, i=None: (1, "Failed to connect to bus: No such file or "
+                            "directory\n") if m(list(a)) else real(a, i))(world.answer, match)
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertIn(f"{M.SLICE} is not stopped", lines[-1])
+            self.assertIn("systemctl answered code 1: Failed to connect to bus", lines[-1])
+            self.assertNotIn(f"stop {M.SLICE}", world.order)
+            self.assertIn(SLICE_FILE, world.paths)
+
+    def test_G6_27_no_process_read_is_made_without_the_runners_own_folder(self):
+        # R167 (owner 3:51 PM ET 11-24, answer 5): with a record that lost its folder (none of the tool's roads writes
+        # one so; a hand edit could), pgrep's pattern would have been "/bin/Runner.": every runner of the runner
+        # user's, another repository's too, named as "of it". The folder is the repository's own; an empty one is
+        # never read.
+        gh, world, host = remove_setup()
+        data = M.load_state(host)
+        del data["runners"][REPO]["folder"]
+        M.save_state(host, data)
+        run_uninstall(gh, host)
+        bare = [a for a in host.ran if a[:1] == ("pgrep",) and a[-1].startswith("/bin/")]
+        self.assertEqual(bare, [])
+        self.assertTrue(any(a[:1] == ("pgrep",) and a[-1] == f"{FOLDER}/bin/Runner." for a in host.ran), host.ran)
+        self.assertEqual(M.runner_folder(REPO), FOLDER)
+        for folder in ("", "/", M.RUNNERS_HOME, M.RUNNERS_HOME + "../x"):
+            with self.assertRaises(M.PidsUnread):
+                M.runner_pids(host, folder)
+
+    def test_G6_27_the_copy_uninstall_runs_from_goes_last(self):
+        # R167 (owner 3:51 PM ET 11-24, answer 6): the skill tells the person to run `uninstall --all` from the copy
+        # setup installed. That copy was deleted before the runner user, whose stops say "run the same command
+        # again": a command that was gone. Now every stop names a copy that is still there; the copy goes last.
+        real = M.tool_path
+        M.tool_path = lambda: M.TOOL_COPY
+        try:
+            for match in (lambda a: a == ["pgrep", "-u", "minions-runner"],  # the runner user's processes
+                          lambda a: a[:2] == ["systemctl", "list-units"]):  # the slice's own units
+                gh, world, host = remove_setup()
+                host._answer = (lambda r, m: lambda a, i=None: (3, "") if m(list(a)) else r(a, i))(world.answer, match)
+                code, lines = run_uninstall(gh, host, repo=None, everything=True)
+                self.assertEqual(code, M.EXIT_STOP, lines)
+                self.assertIn(M.HOOKS_ROOT, world.paths, lines[-1])
+                self.assertNotIn(f"rm {M.HOOKS_ROOT}", world.order)
+            gh, world, host = remove_setup()
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(world.order[-1], f"rm {M.HOOKS_ROOT}")
+            self.assertTrue(any(x.endswith("the very last removal") for x in lines), lines)
+        finally:
+            M.tool_path = real
 
     def test_G6_27_stopped_is_said_only_from_a_word_seen_after_a_real_stop(self):
         # R167 (rule 30): after the stop and no process left, the service's is-active word decides: "inactive" (every
@@ -4279,6 +4423,23 @@ class G6(unittest.TestCase):
         code, lines = run_uninstall(gh, host, repo=None, everything=True)
         self.assertEqual(code, M.EXIT_STOP, lines)
         self.assertGreaterEqual(world.order[n:].count(f"stop {W_SVC}"), 2, world.order[n:])  # watch_off and the removal
+
+    def test_G6_27_a_warning_of_sudo_is_never_taken_for_the_answer(self):
+        # R167 (owner 3:51 PM ET 11-24, change 1): sudo on a computer whose name does not resolve writes "sudo: unable to
+        # resolve host NAME: ..." and runs the command, its exit passed on (seen: sudo 1.9.15p5, Ubuntu 24.04). Taken
+        # for "could not be read", every absent path read "there": an uninstall that never finished. The answer is
+        # the test's own mark; neither sudo's words nor its exit is taken for it.
+        WARN = "sudo: unable to resolve host box-1: Name or service not known\n"
+        said = {}
+        for warn in ("", WARN):  # the same world with and without the warning: the same lines, the same end
+            gh, world, host = remove_setup()
+            host.sudo_warning = warn
+            one = run_uninstall(gh, host)
+            every = run_uninstall(gh, host, repo=None, everything=True)
+            said[warn] = (one, every, sorted(world.paths), world.user)
+        self.assertEqual(said[""][0][0], M.EXIT_OK, said[""][0][1])
+        self.assertFalse(said[""][3])
+        self.assertEqual(said[WARN], said[""])
 
     def test_G6_27_an_answer_that_is_not_the_list_is_never_none(self):
         # R167 (rule 6, the uninstall road's other reads, each failed in turn): root's `test -e` says "not there" only
