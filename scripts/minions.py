@@ -41,6 +41,19 @@ EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUP
 LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting", "tell the person")
 COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain", "doctor", "uninstall")  # built so far, in G8.3's order
 RUNNER_USER = "minions-runner"
+# R143 (rule 2, part 1): the runner's own config.sh, at registration and at removal, runs with an environment this tool
+# builds, by name: nothing of the person's shell crosses, whatever sudo on this computer is set to keep. LANG is
+# C.UTF-8, and the tool writes it into the runner's .env itself, so a person's locale never reaches every job.
+RUNNER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+RUNNER_ENV = ("env", "-i", f"HOME=/home/{RUNNER_USER}", f"USER={RUNNER_USER}", f"LOGNAME={RUNNER_USER}",
+              "SHELL=/bin/bash", f"PATH={RUNNER_PATH}", "LANG=C.UTF-8")
+# R144 (rule 2, part 2): the tool's own gh calls go to github.com as the login gh saved, always, so setup (run from
+# the person's shell) and the watch (run without it) act as the same account by the same road. These, from a shell,
+# would move that road or that account; the tool's gh never gets them, and setup says which it found.
+GH_NOT_HANDED = ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+# Where gh keeps its saved login moves with these two; the watch has neither, so the place setup read is kept in the
+# tool's state and handed to every gh call of the tool as GH_CONFIG_DIR, setup's and the watch's alike.
+GH_PLACE_SETTINGS = ("GH_CONFIG_DIR", "XDG_CONFIG_HOME")
 SLICE = "minions.slice"
 DROPIN = "50-minions.conf"
 LOOK_MAX_AGE_S = 3600
@@ -165,23 +178,55 @@ class Report:
 
 # ----------------------------------------------------------------------------------------------------- the computer
 
+def gh_config_dir(env, home: str) -> str:
+    """R144: where gh keeps its saved login, by gh's own order: GH_CONFIG_DIR, then XDG_CONFIG_HOME/gh, then
+    ~/.config/gh."""
+    if env.get("GH_CONFIG_DIR"):
+        return env["GH_CONFIG_DIR"]
+    if env.get("XDG_CONFIG_HOME"):
+        return os.path.join(env["XDG_CONFIG_HOME"], "gh")
+    return os.path.join(home, ".config", "gh")
+
+
+def gh_environ(env, config_dir: str) -> dict:
+    """R144: the environment the tool's own gh runs with: the person's, without GH_NOT_HANDED, and with the one place
+    its saved login is read from. Proxy and certificate settings stay as the person has them."""
+    out = {k: v for k, v in env.items() if k not in GH_NOT_HANDED}
+    out["GH_CONFIG_DIR"] = config_dir
+    return out
+
+
 class Host:
     """The computer, read through these few calls so tests can stand in for it."""
 
     def which(self, name: str) -> str | None:
         return shutil.which(name)
 
+    def environ(self):
+        """The environment this run of the tool was started with (the person's shell, or the watch's unit)."""
+        return os.environ
+
+    def gh_env(self) -> dict:
+        """R144: every gh call of the tool reads the saved login from the same place: the one setup or look kept in
+        the tool's state, else where this environment says gh keeps it."""
+        kept = (load_state(self).get("gh") or {}).get("config_dir")
+        env = self.environ()
+        return gh_environ(env, kept or gh_config_dir(env, self.home()))
+
     def run(self, argv: list[str], timeout: int = 20) -> tuple[int, str]:
+        env = self.gh_env() if argv[:1] == ["gh"] else None  # R144
         try:
-            p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+            p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
+                               env=env)
             return p.returncode, (p.stdout or "") + (p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
             return 127, str(e)
 
     def run_in(self, argv: list[str], input: str, timeout: int = 600) -> tuple[int, str]:
         """Like run(), with `input` on standard input: the only way a secret reaches another program (INV2)."""
+        env = self.gh_env() if argv[:1] == ["gh"] else None  # R144
         try:
-            p = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout)
+            p = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout, env=env)
             return p.returncode, (p.stdout or "") + (p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
             return 127, str(e)
@@ -391,13 +436,17 @@ class GitHub:
         if self.limited():  # G8.14: no call while the limit is spent; each one would only be refused
             self.why = limit_words(self.limited_until)
             return 429, {"message": self.why}
-        argv = ["gh", "api", "-i", "-X", method, path, "-H", "Accept: application/vnd.github+json"]
+        # R144: github.com, as the login gh saved, whatever the shell exports (GH_HOST, GH_TOKEN, ...)
+        argv = ["gh", "api", "-i", "-X", method, path, "-H", "Accept: application/vnd.github+json",
+                "--hostname", "github.com"]
         stdin = None
         if body is not None:
             argv += ["--input", "-"]
             stdin = json.dumps(body)
         try:
-            p = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=60)
+            p = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=60,
+                               env=self.host.gh_env() if getattr(self, "host", None) is not None
+                               else gh_environ(os.environ, gh_config_dir(os.environ, os.path.expanduser("~"))))
             raw = p.stdout
         except FileNotFoundError:
             self.why = ("the GitHub CLI (gh) could not be found with this PATH: "
@@ -562,11 +611,57 @@ def check_github_cli(host: Host, rep: Report) -> bool:
                   f"tool has seen no install command run on this kind of system, so it names none: read {GH_DOCS}. ")
                  + GH_ONLY)
         return False
-    rc, _ = host.run(["gh", "auth", "status", "--hostname", "github.com"])
+    return check_gh_road(host, rep)
+
+
+def saved_account(status: str) -> str | None:
+    """R144: the account gh acts as on github.com, from `gh auth status --hostname github.com`. A newer gh lists every
+    saved account with "Active account: true|false" under each; an older one lists one, with no such line. None when
+    no name can be read, or when several are listed and none is marked active."""
+    blocks = re.split(r"(?=Logged in to github\.com (?:account|as) )", status)[1:]
+    names = [(re.match(r"Logged in to github\.com (?:account|as) ([A-Za-z0-9-]+)", b), b) for b in blocks]
+    names = [(m.group(1), b) for m, b in names if m]
+    if not names:
+        return None
+    active = [n for n, b in names if re.search(r"Active account:\s*true", b)]
+    if active:
+        return active[0]
+    return names[0][0] if len(names) == 1 else None
+
+
+def check_gh_road(host: Host, rep: Report) -> bool:
+    """G1.17 (R144, rule 2): the tool's gh goes to github.com as the login gh saved, the same for setup (run from the
+    person's shell) and the watch (run without it). Names the account it acts as; what of the shell it found and does
+    not use, and why; where the saved login is read, kept for the watch. No saved login for github.com: need you."""
+    env = host.environ()
+    found = [n for n in GH_NOT_HANDED if env.get(n)]
+    place = gh_config_dir(env, host.home())
+    moved = [n for n in GH_PLACE_SETTINGS if env.get(n)]
+    data = load_state(host)
+    if (data.get("gh") or {}).get("config_dir") != place:
+        data["gh"] = dict(data.get("gh") or {}, config_dir=place)
+        try:
+            save_state(host, data)
+        except OSError as e:
+            rep.stop(f"could not keep where gh saves its login ({place}) in {host.state_dir()}: {e}. The watch runs "
+                     "without your shell and would read another place; nothing was changed. Settle what it says, then "
+                     "run the same command again")
+            return False
+    unused = (f" Found in your shell and not used by this tool: {', '.join(found)}. The watch runs without your "
+              "shell, so this tool's every GitHub call, setup's and the watch's alike, goes to github.com as the login "
+              "gh saved; your own use of gh is unchanged.") if found else ""
+    rc, out = host.run(["gh", "auth", "status", "--hostname", "github.com"])
     if rc != 0:
-        rep.need(f"log in to GitHub: run `gh auth login` and follow its steps. {GH_ONLY}")
+        rep.need(f"log in to GitHub: run `gh auth login` and follow its steps. {GH_ONLY}{unused}")
         return False
-    rep.ok("GitHub CLI installed and logged in")
+    name = saved_account(out)
+    who = f"as {name}, the login gh saved for github.com" if name else \
+        "as the login gh saved for github.com (its name could not be read from gh's answer)"
+    where = (f", read from {place} (your shell's {' and '.join(moved)}; the watch reads it there too)"
+             if moved else "")
+    rep.ok(f"GitHub CLI installed and logged in: this tool acts {who}{where}")
+    if found:
+        rep.warn(unused.strip())
     return True
 
 
@@ -647,7 +742,7 @@ def token_scopes(host: Host) -> set[str] | None:
         # R97: an older gh (2.4.0 on Ubuntu 22.04) prints no scopes; GitHub itself sends them with every answer to a
         # classic token, in the X-OAuth-Scopes header. Only that header's names are read; a token without it
         # (fine-grained) stays "could not read".
-        rc, out = host.run(["gh", "api", "-i", "user"])
+        rc, out = host.run(["gh", "api", "-i", "user", "--hostname", "github.com"])
         head = out.split("\r\n\r\n", 1)[0].split("\n\n", 1)[0] if rc == 0 else ""
         h = re.search(r"^X-Oauth-Scopes:[ \t]*(.*?)\r?$", head, re.M | re.I)
         if not h:
@@ -2111,8 +2206,9 @@ def register(gh: GitHub, host: Host, repo: str, folder: str, name: str, labels: 
         return False
     journal(host, "register", f"{repo} as {name} with labels {','.join(labels)}")
     url = f"https://github.com/{repo}"
-    rc, out = as_runner(host, ["bash", "-c", CONFIG_SCRIPT, "minions-config", folder, url, name, ",".join(labels)],
-                        input=token + "\n")
+    # R143: an environment built by name (RUNNER_ENV); nothing of the person's shell crosses into config.sh
+    rc, out = as_runner(host, [*RUNNER_ENV, "bash", "-c", CONFIG_SCRIPT, "minions-config", folder, url, name,
+                               ",".join(labels)], input=token + "\n")
     out = mask(out, token)
     token = None  # dropped (INV2)
     if rc != 0:
@@ -2314,6 +2410,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
         return rep.code()
     entry = check_fresh_look(host, repo, rep)
     if entry is None:
+        return rep.code()
+    if not check_gh_road(host, rep):  # R144: setup's own line names the account it acts as
         return rep.code()
     if host.system() != "Linux" or not host.which("systemctl"):
         rep.stop("this version sets up Linux with systemd only; macOS comes in the next version. Nothing was changed, "
@@ -2744,7 +2842,10 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
             rep.stop(f"could not write {d}/{name}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
     rc, env = as_runner(host, ["cat", f"{folder}/.env"])  # R128: read as the runner user, never followed by root
-    keep = [x for x in (env.splitlines() if rc == 0 else []) if not x.startswith("ACTIONS_RUNNER_HOOK_JOB_")]
+    # R143: the locale every job gets is the tool's (C.UTF-8), never one that came from a person's shell
+    keep = [x for x in (env.splitlines() if rc == 0 else [])
+            if not x.startswith(("ACTIONS_RUNNER_HOOK_JOB_", "LANG=", "LANGUAGE=", "LC_"))]
+    keep = ["LANG=C.UTF-8"] + keep
     keep += [f"ACTIONS_RUNNER_HOOK_JOB_STARTED={d}/job-started.sh", f"ACTIONS_RUNNER_HOOK_JOB_COMPLETED={d}/job-completed.sh"]
     rc, out = as_runner(host, ["tee", f"{folder}/.env"], input="\n".join(keep) + "\n")
     if rc != 0:
@@ -4553,7 +4654,8 @@ def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Repor
         token = (d or {}).get("token") if s in (200, 201) else None
         if token:
             journal(host, "config.sh remove", f"{repo} {mine['name']} (as {RUNNER_USER}, token by standard input)")
-            rc, out = as_runner(host, ["bash", "-c", REMOVE_SCRIPT, "minions-remove", folder], input=token + "\n")
+            rc, out = as_runner(host, [*RUNNER_ENV, "bash", "-c", REMOVE_SCRIPT, "minions-remove", folder],
+                                input=token + "\n")  # R143
             out = mask(out, token)
             token = None  # dropped (INV2)
             own = rc == 0

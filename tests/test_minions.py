@@ -731,7 +731,7 @@ def setup_host(**kw):
         ("sudo", "-n", "tar"): (0, ""),
         ("sudo", "-n", "bash", f"{DEPS}/root/bin/installdependencies.sh"): (0, "-----\nlibicu found\n"),
         ("sudo", "-n", "rm"): (0, ""),
-        ("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT):
+        ("sudo", "-n", "-u", "minions-runner", "--", *M.RUNNER_ENV, "bash", "-c", M.CONFIG_SCRIPT):
             (0, "√ Connected to GitHub\n√ Runner successfully added\n√ Settings Saved.\n"),
         ("sudo", "-n", "-u", "minions-runner", "--", "cat", f"{FOLDER}/.service"): (0, UNIT + "\n"),
         ("sudo", "-n", "tee"): (0, ""),
@@ -969,7 +969,7 @@ class G2(unittest.TestCase):
         data["runners"] = {"example-org/other-repo": {"name": "minions-box-1"}}
         M.save_state(host, data)
         code, lines = run_setup(setup_gh(sha), host)
-        self.assertEqual((code, len(lines)), (M.EXIT_STOP, 2), lines)
+        self.assertEqual((code, len(lines)), (M.EXIT_STOP, 3), lines)  # the look, the GitHub login (R144), the stop
         self.assertTrue(lines[-1].startswith("stop this computer already serves example-org/other-repo"), lines)
         self.assertIn("nothing was changed", lines[-1])
         self.assertIn(f"run `uninstall example-org/other-repo` first, then `setup {REPO}` again", lines[-1])
@@ -1112,8 +1112,8 @@ class G2(unittest.TestCase):
 
     def test_G2_5_the_registration_token_goes_by_stdin_only(self):
         host, sha = setup_host()
-        echo = host.runs[("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT)]
-        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT)] = \
+        echo = host.runs[("sudo", "-n", "-u", "minions-runner", "--", *M.RUNNER_ENV, "bash", "-c", M.CONFIG_SCRIPT)]
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", *M.RUNNER_ENV, "bash", "-c", M.CONFIG_SCRIPT)] = \
             lambda argv, input: (echo[0], echo[1] + f"token was {input.strip()}\n")  # a runner that echoes it
         fresh_look(host)
         out = io.StringIO()
@@ -1123,7 +1123,7 @@ class G2(unittest.TestCase):
         fed = [(a, i) for a, i in host.fed if i and TOKEN in i]
         self.assertEqual(len(fed), 1)
         self.assertEqual(fed[0][1], TOKEN + "\n")
-        self.assertIn("read -r T", fed[0][0][7])
+        self.assertIn("read -r T", fed[0][0][7 + len(M.RUNNER_ENV)])
         self.assertNotIn("--token", " ".join(fed[0][0]))
         self.assertFalse(re.search(r"\benv\b", M.CONFIG_SCRIPT))
         self.assertNotIn(TOKEN, out.getvalue())
@@ -3382,7 +3382,7 @@ class World:
             raise KeyboardInterrupt
         if a[:2] == ["sudo", "-n"]:
             a = a[2:]
-            if a[:3] == ["-u", "minions-runner", "--"] and a[3:5] != ["bash", "-c"]:
+            if a[:3] == ["-u", "minions-runner", "--"] and a[3:5] != ["bash", "-c"] and a[3:5] != ["env", "-i"]:
                 a = a[3:]  # R128: the runner user's own steps (read, rm, find, kill) in its own folders
                 if a[:3] == ["stat", "-c", "%F"]:  # R128: what kind of thing a job may have left there
                     if a[3] in self.links:
@@ -3981,7 +3981,7 @@ class G6(unittest.TestCase):
         # stopped on the half-made folder and sent to `uninstall`, which said there was nothing to uninstall.
         host, sha = setup_host()
         fresh_look(host)
-        config = ("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT)
+        config = ("sudo", "-n", "-u", "minions-runner", "--", *M.RUNNER_ENV, "bash", "-c", M.CONFIG_SCRIPT)
         good = host.runs[config]
         host.runs[config] = (1, "sudo: a password is required\n")
         listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
@@ -4957,7 +4957,7 @@ class INV(unittest.TestCase):
         # A setup cut part-way is undone by doctor, read back; it says how to set up again.
         host, sha = setup_host()
         fresh_look(host)
-        config = ("sudo", "-n", "-u", "minions-runner", "--", "bash", "-c", M.CONFIG_SCRIPT)
+        config = ("sudo", "-n", "-u", "minions-runner", "--", *M.RUNNER_ENV, "bash", "-c", M.CONFIG_SCRIPT)
         host.runs[config] = (1, "sudo: a password is required\n")
         none = (200, {"total_count": 0, "runners": []})
         listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
@@ -5129,6 +5129,135 @@ class G8Words(unittest.TestCase):
                             f"python3 -I {script} look not-a-name 2>&1 | head -c 0"],
                            capture_output=True, text=True, timeout=60)
         self.assertNotIn("Traceback", r.stdout + r.stderr)
+
+
+class RuleTwo(unittest.TestCase):
+    """Rule 2 (A PERSON'S MACHINE IS FULL WHERE A STOCK ONE IS EMPTY): what of the person's shell reaches the programs
+    the tool starts (R143) and the road of the tool's own gh (R144)."""
+    LIVED = {"GH_TOKEN": "made-up-token-value", "GITHUB_TOKEN": "made-up-too", "GH_HOST": "ghe.invalid",
+             "GH_ENTERPRISE_TOKEN": "made-up-ent", "HTTPS_PROXY": "http://proxy.invalid:3128",
+             "SSL_CERT_FILE": "/etc/ssl/person.pem", "LANG": "de_DE.UTF-8", "HOME": "/home/person"}
+
+    def test_G2_21_the_runners_configuration_gets_an_environment_built_by_name(self):
+        # R143: config.sh, at registration and at removal, runs under `env -i` with six names and nothing else, so
+        # nothing of the person's shell crosses, whatever sudo here keeps; the locale every job gets is the tool's.
+        self.assertEqual(M.RUNNER_ENV[:2], ("env", "-i"))
+        self.assertEqual([x.split("=", 1)[0] for x in M.RUNNER_ENV[2:]],
+                         ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG"])
+        self.assertIn("LANG=C.UTF-8", M.RUNNER_ENV)
+        self.assertNotIn(os.path.expanduser("~"), " ".join(M.RUNNER_ENV))
+        host, sha = setup_host()
+        # the runner's own env.sh had saved a person's locale into .env: the tool's line replaces it
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "cat", f"{FOLDER}/.env")] = \
+            (0, "LANG=de_DE.UTF-8\nLC_ALL=de_DE.UTF-8\nLANGUAGE=de_DE:de\nJAVA_HOME=/opt/java\n")
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        config = [a for a in host.ran if M.CONFIG_SCRIPT in a]
+        self.assertEqual(len(config), 1)
+        self.assertEqual(config[0][:5 + len(M.RUNNER_ENV) + 2],
+                         ("sudo", "-n", "-u", "minions-runner", "--", *M.RUNNER_ENV, "bash", "-c"))
+        envtext = next(x for a, x in host.fed if a[-1] == f"{FOLDER}/.env")
+        self.assertTrue(envtext.startswith("LANG=C.UTF-8\n"), envtext)
+        self.assertNotIn("de_DE", envtext)
+        self.assertNotRegex(envtext, r"(?m)^LC_")
+        self.assertIn("JAVA_HOME=/opt/java\n", envtext)  # what the runner itself saved, not a locale, stays
+        gh, world, host = remove_setup()
+        run_uninstall(gh, host, everything=True)
+        removal = [a for a in host.ran if M.REMOVE_SCRIPT in a]
+        self.assertTrue(removal)
+        self.assertTrue(all(a[5:5 + len(M.RUNNER_ENV)] == M.RUNNER_ENV for a in removal), removal)
+
+    def test_G1_17_the_tools_gh_goes_to_github_com_as_the_saved_login(self):
+        # R144: every gh call of the tool names github.com and runs without the shell's token and host settings;
+        # proxy and certificate settings stay; setup and the watch read the saved login from the same place.
+        env = M.gh_environ(self.LIVED, "/home/person/.config/gh")
+        for name in M.GH_NOT_HANDED:
+            self.assertNotIn(name, env)
+        self.assertEqual(env["HTTPS_PROXY"], "http://proxy.invalid:3128")
+        self.assertEqual(env["SSL_CERT_FILE"], "/etc/ssl/person.pem")
+        self.assertEqual(env["GH_CONFIG_DIR"], "/home/person/.config/gh")
+        self.assertEqual(M.gh_config_dir({}, "/home/p"), "/home/p/.config/gh")
+        self.assertEqual(M.gh_config_dir({"XDG_CONFIG_HOME": "/x"}, "/home/p"), "/x/gh")
+        self.assertEqual(M.gh_config_dir({"XDG_CONFIG_HOME": "/x", "GH_CONFIG_DIR": "/g"}, "/home/p"), "/g")
+        # every gh argv in the tool's source names github.com
+        with open(M.__file__, encoding="utf-8") as f:
+            src = f.read()
+        argvs = re.findall(r'\["gh", .*?\]', src, re.S)
+        self.assertGreaterEqual(len(argvs), 3)
+        for a in argvs:
+            self.assertIn('"--hostname", "github.com"', a, a)
+        # the real Host and GitHub hand gh that environment (nothing is started: subprocess.run is stood in for)
+        seen = []
+
+        def fake_run(argv, **kw):
+            seen.append((list(argv), kw.get("env")))
+            return subprocess.CompletedProcess(argv, 0, "HTTP/2.0 200 OK\r\n\r\n{}", "")
+        host = M.Host()
+        with mock.patch.dict(os.environ, self.LIVED), mock.patch.object(M.subprocess, "run", fake_run):
+            host.run(["gh", "auth", "status", "--hostname", "github.com"])
+            host.run_in(["gh", "api", "--hostname", "github.com", "x"], "{}")
+            M.GitHub(host).api("GET", "repos/o/r")
+            host.run(["true"])
+        for argv, e in seen[:3]:
+            self.assertIsNotNone(e, argv)
+            self.assertFalse([n for n in M.GH_NOT_HANDED if n in e], argv)
+            self.assertEqual(e.get("HTTPS_PROXY"), "http://proxy.invalid:3128")
+        self.assertEqual(seen[2][0][-2:], ["--hostname", "github.com"])
+        self.assertIsNone(seen[3][1], "a program other than gh runs with the environment as it is")
+        # look, from a shell carrying a token and a host of its own: it names the account and what it does not use
+        host = linux_host()
+        host.environ = lambda: dict(self.LIVED, XDG_CONFIG_HOME="/home/person/.lived")
+        code, lines = look(StandIn(load("look-recent-runs.jsonl")), host)
+        self.assertIn("ok GitHub CLI installed and logged in: this tool acts as example-person, the login gh saved "
+                      "for github.com, read from /home/person/.lived/gh (your shell's XDG_CONFIG_HOME; the watch reads "
+                      "it there too)", lines)
+        warn = [x for x in lines if x.startswith("warn Found in your shell and not used by this tool:")]
+        self.assertEqual(len(warn), 1, lines)
+        self.assertIn("GH_TOKEN, GITHUB_TOKEN, GH_HOST, GH_ENTERPRISE_TOKEN", warn[0])
+        self.assertIn("The watch runs without your shell", warn[0])
+        self.assertNotIn("made-up", "\n".join(lines))
+        # the watch, run without the shell, reads the saved login where setup's look found it
+        host.environ = lambda: {"HOME": "/home/person", "PATH": "/usr/bin"}
+        self.assertEqual(host.gh_env()["GH_CONFIG_DIR"], "/home/person/.lived/gh")
+        # no saved login for github.com: need you, and the shell's token is said as not used
+        host = linux_host(runs={("gh", "auth", "status"): (1, "You are not logged into any GitHub hosts.")})
+        host.environ = lambda: dict(self.LIVED)
+        code, lines = look(StandIn(load("look-recent-runs.jsonl")), host)
+        self.assertEqual(code, M.EXIT_NEED)
+        self.assertTrue(lines[0].startswith("need you: log in to GitHub: run `gh auth login`"), lines)
+        self.assertIn("Found in your shell and not used by this tool: GH_TOKEN", lines[0])
+        # three answers: the name read; not logged in (above); logged in, the name not readable
+        host = linux_host(runs={("gh", "auth", "status"): (0, "github.com\n  something gh may say one day\n")})
+        _, lines = look(StandIn(load("look-recent-runs.jsonl")), host)
+        self.assertTrue([x for x in lines if "its name could not be read from gh's answer" in x], lines)
+        # several accounts saved for github.com (a newer gh): the active one is named, never the first listed
+        two = ("github.com\n  ✓ Logged in to github.com account other-person (keyring)\n  - Active account: false\n"
+               "  ✓ Logged in to github.com account example-person (keyring)\n  - Active account: true\n")
+        self.assertEqual(M.saved_account(two), "example-person")
+        self.assertIsNone(M.saved_account(two.replace("true", "false")))
+        self.assertEqual(M.saved_account("  ✓ Logged in to github.com as old-gh (/home/x/.config/gh/hosts.yml)\n"),
+                         "old-gh")
+        # setup says it too, in its own lines
+        host, sha = setup_host()
+        fresh_look(host)
+        host.environ = lambda: dict(self.LIVED)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue(lines[1].startswith("ok GitHub CLI installed and logged in: this tool acts as example-person"),
+                        lines)
+        self.assertTrue(lines[2].startswith("warn Found in your shell and not used by this tool: GH_TOKEN"), lines)
+
+    def test_G9_13_the_lived_in_list_holds_to_the_code(self):
+        # R145: the lived-in round's list (tests/lived-in.md) names every setting the tool takes away from gh or
+        # moves gh's login with, and what was not tried says so.
+        with open(os.path.join(ROOT, "tests", "lived-in.md"), encoding="utf-8") as f:
+            text = f.read()
+        for name in (*M.GH_NOT_HANDED, *M.GH_PLACE_SETTINGS, "LANG", "LC_ALL", "LANGUAGE", "GIT_CONFIG_GLOBAL",
+                     "insteadOf", "credential.helper", "core.hooksPath", "NODE_OPTIONS", "PYTHONPATH",
+                     "env_keep", "timestamp_timeout", "HTTPS_PROXY"):
+            self.assertIn(name, text, name)
+        self.assertIn("not tried", text)
+        self.assertIn("made-up", text)  # a planted token is never a real one
 
 
 class Helpers(unittest.TestCase):

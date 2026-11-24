@@ -1982,6 +1982,48 @@
    "issue": "",
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R143",
+   "seen": "2026-11-24, family rule 2 (A PERSON'S MACHINE IS FULL WHERE A STOCK ONE IS EMPTY), read on a stock Ubuntu 24.04 virtual machine: the runner's configuration ran as `sudo -u minions-runner` with the person's environment as sudo resets it; the person's LANG, LC_ALL and LANGUAGE crossed, and LANG was saved in the runner's .env, so it reached every job. GIT_*, GH_TOKEN and GITHUB_TOKEN did not cross there (env_reset); a sudoers that keeps them would hand them on.",
+   "promise": "The runner's own configuration, at registration and at removal, runs with an environment the tool builds by name: env -i with HOME, USER, LOGNAME, SHELL, PATH (the system's) and LANG=C.UTF-8; nothing of the person's shell crosses, whatever sudo keeps. The tool writes LANG=C.UTF-8 into the runner's .env itself and drops any other locale line there.",
+   "codon": "G2.21",
+   "test": "test_G2_21_the_runners_configuration_gets_an_environment_built_by_name",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R144",
+   "seen": "2026-11-24, family rule 2, read in the code at the release head: every GitHub call ran `gh api` with no --hostname and with the person's whole environment, while the login was checked with `gh auth status --hostname github.com`. So an exported GH_TOKEN or GITHUB_TOKEN would replace the saved login, an exported GH_HOST would move every call, and the watch, run without the person's shell, would act by another road than setup did. Not seen on a machine yet.",
+   "promise": "The tool's own GitHub calls go to github.com as the login gh saved, always: every gh call names --hostname github.com; GH_TOKEN, GITHUB_TOKEN, GH_HOST, GH_ENTERPRISE_TOKEN and GITHUB_ENTERPRISE_TOKEN are not handed to the tool's gh; look and setup name the account they act as (the active one, where gh has saved several), and say which of those they found in the shell and do not use, and why. Where gh keeps its saved login (GH_CONFIG_DIR, then XDG_CONFIG_HOME) is read and kept, and every gh call of the tool, the watch's too, reads it there. No saved login for github.com: need you, with gh auth login. Proxy and certificate settings stay as the person has them.",
+   "codon": "G1.17",
+   "test": "test_G1_17_the_tools_gh_goes_to_github_com_as_the_saved_login",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R145",
+   "seen": "2026-11-24, family rule 2: one skill's suite, given a home of its own, showed two faults in one night that every stock virtual machine, test account and fleet box had hidden, because none carried a person's git settings and environment.",
+   "promise": "Before a tag, after the stock machine, one round runs lived-in: the same stock virtual machine with the settings in tests/lived-in.md in the person's shell (a made-up token, never a real one), the tool run from that shell through look, setup, one real job, the watch's passes and uninstall --all; what reached the runner user's processes, files and service is read by name; what was not tried is said as not tried. A test holds the list to the names the tool takes away from gh or moves gh's login with.",
+   "codon": "G9.13",
+   "test": "test_G9_13_the_lived_in_list_holds_to_the_code",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

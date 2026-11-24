@@ -36,6 +36,13 @@ the cap (row R94).
 - No test reaches the computer it runs on: one guard, imported first by every test file, gives the tests and their
   children a temporary home and loud stand-ins for the admin, service, package, scheduling, user and login
   commands, and fails the run on any test that reaches the real ones (row R142).
+- What your shell carries no longer moves the tool. Its own GitHub calls go to github.com as the login gh saved,
+  for `setup` and the watch alike: a `GH_TOKEN`, `GITHUB_TOKEN` or `GH_HOST` in your shell is named and not used,
+  `look` and `setup` say which account they act as, and where gh keeps its login (`GH_CONFIG_DIR`,
+  `XDG_CONFIG_HOME`) is read once and used by the watch too (row R144). The runner's own configuration runs with an
+  environment the tool builds by name, so your locale no longer reaches every job; jobs get `LANG=C.UTF-8`
+  (row R143). Before a tag, one round runs on a machine set up as a person's is, listed in `tests/lived-in.md`
+  (row R145).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for

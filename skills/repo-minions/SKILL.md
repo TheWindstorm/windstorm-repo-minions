@@ -84,7 +84,9 @@ find another route (a download instead of the named install, another package sou
 folder).
 
 - **Logging in to GitHub.** If look says `need you: log in to GitHub`, ask the person to run `gh auth login` in
-  their own terminal.
+  their own terminal. The tool acts only as the login gh saved for github.com; a token or host exported in the
+  shell (`GH_TOKEN`, `GH_HOST`) is named and not used, because the watch runs without that shell. Never export one
+  to get past this line.
 - **The admin password, once.** Setup needs this computer's admin password one time, to make the runner's own
   user and its boot service. Say: "Setup will ask for this computer's admin password once. Please type it where
   sudo asks, in your own terminal. I never see it." Run setup in that same terminal: the permission belongs to one
