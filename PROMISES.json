@@ -2290,6 +2290,20 @@
    "issue": null,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R165",
+   "seen": "2026-11-24, read in the code with R160's cure: on a computer that already holds the tool's record, a look that stops writes that repository's look entry, marked stopped and with an empty survey, over the earlier one, as designed; no test holds that it changes nothing else.",
+   "promise": "A stopped look on a computer with a record changes only that repository's look entry (marked stopped, so setup asks for a new look); every other byte of the record is the same, read by a test.",
+   "codon": "G1.22",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
