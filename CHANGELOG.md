@@ -55,6 +55,12 @@ the cap (row R94).
   Windows without systemd, it stops having changed nothing here or on GitHub, and `look` says so first. A setup that
   stops after its first step names what it left and the next step (`setup` again finishes it, `uninstall` takes it
   away), and `status` says such a setup as cut part-way (row R155).
+- A GitHub login that gh keeps only in a keyring (as on a desktop) cannot be read by the check every 5 minutes, which
+  runs when nobody is logged in. `look` and `setup` read the login as that check will, before anything is made, and
+  stop with where it is kept, the one step (`gh auth login --insecure-storage`) and what that step means for the
+  login. Every GitHub call of the tool is read that way; no answer to a call sent without a login is read as
+  anything, and the watch and `status` say each reason by its kind: no login, a repository not there for this
+  login, or no answer (row R160).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for

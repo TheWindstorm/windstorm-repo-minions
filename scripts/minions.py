@@ -54,6 +54,10 @@ GH_NOT_HANDED = ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN", "
 # Where gh keeps its saved login moves with these two; the watch has neither, so the place setup read is kept in the
 # tool's state and handed to every gh call of the tool as GH_CONFIG_DIR, setup's and the watch's alike.
 GH_PLACE_SETTINGS = ("GH_CONFIG_DIR", "XDG_CONFIG_HOME")
+# R160: every gh call of the tool runs as the watch runs when nobody is logged in: with no session bus, so a login gh
+# keeps only in a keyring is not read by setup either (seen 2026-11-24: the watch, a system timer, never reaches it).
+# An address that cannot connect, never "no bus in this shell": a library may look for a session's bus by itself.
+NO_BUS = "unix:path=/nonexistent/windstorm-repo-minions-no-session-bus"
 SLICE = "minions.slice"
 DROPIN = "50-minions.conf"
 LOOK_MAX_AGE_S = 3600
@@ -193,6 +197,7 @@ def gh_environ(env, config_dir: str) -> dict:
     its saved login is read from. Proxy and certificate settings stay as the person has them."""
     out = {k: v for k, v in env.items() if k not in GH_NOT_HANDED}
     out["GH_CONFIG_DIR"] = config_dir
+    out["DBUS_SESSION_BUS_ADDRESS"] = NO_BUS  # R160
     return out
 
 
@@ -218,6 +223,15 @@ class Host:
         try:
             p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
                                env=env)
+            return p.returncode, (p.stdout or "") + (p.stderr or "")
+        except (OSError, subprocess.SubprocessError) as e:
+            return 127, str(e)
+
+    def run_own(self, argv: list[str], timeout: int = 20) -> tuple[int, str]:
+        """R160: one read only, with this run's own environment unchanged (the person's shell, its session bus too):
+        where gh keeps a login the tool's own gh cannot read. Never a call whose answer the tool acts on."""
+        try:
+            p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
             return p.returncode, (p.stdout or "") + (p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
             return 127, str(e)
@@ -432,7 +446,23 @@ class GitHub:
         now = host.now() if host is not None else dt.datetime.now(dt.timezone.utc)
         return until is not None and now < until
 
+    def login_gate(self) -> str:
+        """R160 (owner's ruling 11-24): an answer GitHub gives to a call sent without a login is never read as
+        anything (a private repository answers 404 to it). Read once per command, before the first call: "" when
+        the tool's gh has a login it can read, else why not, and no call is sent."""
+        host = getattr(self, "host", None)
+        if host is None:
+            return ""
+        if getattr(self, "_gate", None) is None:
+            kept, why = login_kept(host)
+            self._gate = "" if kept == "yes" else why
+        return self._gate
+
     def api(self, method: str, path: str, body: dict | None = None) -> tuple[int, object]:
+        gate = self.login_gate()
+        if gate:
+            self.why = gate
+            return 0, {"message": gate}
         if self.limited():  # G8.14: no call while the limit is spent; each one would only be refused
             self.why = limit_words(self.limited_until)
             return 429, {"message": self.why}
@@ -545,6 +575,10 @@ PRINTED_COMMANDS = {
     "gh auth login":
         "2026-11-23, the same three stock virtual machines: run as printed up to GitHub's one-time code, gh's own "
         "questions answered with their first choice; the login itself is the person's own act and was not done",
+    "gh auth login --insecure-storage":  # R160
+        "2026-11-24, a stock Ubuntu 24.04.5 virtual machine (gh 2.45.0, whose own help names the flag): run as "
+        "printed up to GitHub's one-time code, gh's own questions answered with their first choice; the login itself "
+        "is the person's own act and was not done",
     "sudo -v": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, as printed, the password typed at sudo's prompt",
     "journalctl -u {}.service": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, as printed, as the person",
     "sudo systemctl start {}.timer":
@@ -601,7 +635,7 @@ GH_ONLY = ("This skill reaches GitHub only through the GitHub CLI and its own lo
            "login on this computer is used or looked for. This step is yours, in your own terminal")
 
 
-def check_github_cli(host: Host, rep: Report) -> bool:
+def check_github_cli(host: Host, rep: Report, repo: str | None = None) -> bool:
     """G1.10: the first check. Without the GitHub CLI and a login, nothing else runs."""
     if not host.which("gh"):
         key = "Darwin" if host.system() == "Darwin" else os_release_id(host)
@@ -611,7 +645,7 @@ def check_github_cli(host: Host, rep: Report) -> bool:
                   f"tool has seen no install command run on this kind of system, so it names none: read {GH_DOCS}. ")
                  + GH_ONLY)
         return False
-    return check_gh_road(host, rep)
+    return check_gh_road(host, rep, repo)
 
 
 def login_read(host: Host) -> tuple[str, str | None, str]:
@@ -637,7 +671,95 @@ def login_read(host: Host) -> tuple[str, str | None, str]:
     return "unread", None, (f"HTTP {status}: " if status else "") + (" / ".join(words[-2:]) or f"gh exit {rc}, no words")
 
 
-def check_gh_road(host: Host, rep: Report) -> bool:
+NO_LOGIN = "could not read your GitHub login"
+TOKEN_SHAPE = re.compile(r"gh[opsur]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+")
+
+
+def login_kept(host: Host) -> tuple[str, str]:
+    """R160 (rule 11, rule 6): whether the tool's own gh, run as the watch runs when nobody is logged in (no session
+    bus: NO_BUS), has a login for github.com. Three answers, from `gh auth token`: ("yes", "") a token came back;
+    ("no", why) gh says it has none; ("unread", why) anything else. The token is never kept, printed or copied: only
+    whether one line came back is read. gh older than 2.17 has no `auth token` and keeps a login only in its file or
+    the shell (a keyring came in 2.26), so there its file is read for whether a token line is there."""
+    rc, out = host.run(["gh", "auth", "token", "--hostname", "github.com"])
+    lines = [x.strip() for x in out.splitlines() if x.strip()]
+    if rc == 0 and len(lines) == 1 and re.fullmatch(r"\S+", lines[0]):
+        return "yes", ""
+    if re.search(r"no oauth token found", out, re.I):
+        return "no", (f"{NO_LOGIN}: gh has none for github.com that it can read when nobody is logged in (a login "
+                      "kept only in a keyring, or only in a shell's GH_TOKEN, cannot be read then)")
+    if re.search(r'unknown command "token"', out):
+        return hosts_file_login(host)
+    words = [x for x in lines if not TOKEN_SHAPE.search(x)]
+    if rc == 127:  # Host.run: gh not found with this PATH, or it could not be run at all
+        return "unread", ("the GitHub CLI (gh) could not be found or run with this PATH, so it could not be asked "
+                          "for its login: " + (" / ".join(words[-1:]) or "no words"))
+    return "unread", ("gh could not be asked whether it has a login for github.com: "
+                      + (" / ".join(words[-2:]) or f"gh exit {rc}, no words"))
+
+
+def hosts_file_login(host: Host) -> tuple[str, str]:
+    """R160: for a gh with no `auth token`: is a token line under github.com in gh's own file? Only whether one is
+    there is read; its value is never kept."""
+    path = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
+    text = host.read(path)
+    if text is None:
+        return "unread", f"gh could not be asked whether it has a login for github.com, and {path} could not be read"
+    here = False
+    for line in text.splitlines():
+        if line and not line[0].isspace():
+            here = line.split(":", 1)[0].strip().strip("'\"") == "github.com"
+        elif here and re.match(r"\s+oauth_token:\s*\S", line):
+            return "yes", ""
+    return "no", f"{NO_LOGIN}: {path} holds no login for github.com"
+
+
+def login_where(host: Host) -> tuple[str, str]:
+    """R160: where gh keeps the person's login, from gh's own word in `gh auth status` run in the person's own
+    environment (run_own), and the scopes it names. Words only; nothing of it is acted on."""
+    rc, out = host.run_own(["gh", "auth", "status", "--hostname", "github.com"])
+    m = re.search(r"Token scopes:\s*(.+)", out)
+    scopes = ", ".join(re.findall(r"'([^']+)'", m.group(1)) or [x.strip() for x in m.group(1).split(",") if x.strip()]) \
+        if m else ""
+    env = re.search(r"\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)", out)
+    if "(keyring)" in out:
+        where = "gh keeps it in this computer's keyring, which only a logged-in session can open"
+    elif env:
+        where = f"gh reads it from your shell's {env.group(1)}, which the check every 5 minutes does not have"
+    else:
+        where = "where gh keeps it could not be read here"
+    return where, scopes
+
+
+def login_step(host: Host) -> str:
+    """R160: the one login step that keeps the login in gh's own file, as printed (with its backticks):
+    `--insecure-storage` where this gh has that flag, read from gh's own help now; a gh without it has no keyring
+    and keeps every login in that file already."""
+    rc, out = host.run(["gh", "auth", "login", "--hostname", "github.com", "--help"])
+    return "`gh auth login --insecure-storage`" if "--insecure-storage" in out else "`gh auth login`"
+
+
+def keyring_step_words(host: Host, repo: str | None, rep: Report) -> None:
+    """R160 (owner's ruling 11-24, option A): the stop, the one step, and the five things the person hears before
+    choosing it. Nothing was made when this is said."""
+    where, scopes = login_where(host)
+    hosts = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
+    again = f"`look {repo}`" if repo else "the same command"
+    rep.stop(f"{NO_LOGIN} the way this computer's check every 5 minutes will read it, when nobody is logged in: "
+             f"{where}. Nothing was made, on this computer or on GitHub. Your next step, in your own terminal, if you "
+             f"choose it after the lines below: {login_step(host)}, then {again} again")
+    rep.tell(f"What that step does: gh then keeps your GitHub login in {hosts}, as plain text, which your account and "
+             "this computer's admins can read.")
+    rep.tell("What that login can do: everything gh was allowed on your GitHub account"
+             + (f" (its scopes: {scopes})" if scopes else "") + ", on every repository of yours, not only this one.")
+    rep.tell("Where else it then is: in every copy or backup of your home folder, and on this computer's disk for "
+             "whoever gets the disk, if the disk is not encrypted.")
+    rep.tell("Why it is needed: the check every 5 minutes runs when nobody is logged in, and then only that file "
+             "can be read.")
+    rep.tell("If you would rather not, stop here: nothing was made, and this computer will not run jobs.")
+
+
+def check_gh_road(host: Host, rep: Report, repo: str | None = None) -> bool:
     """G1.17 (R144, rule 2): the tool's gh goes to github.com as the login gh saved, the same for setup (run from the
     person's shell) and the watch (run without it). Names the account it acts as; what of the shell it found and does
     not use, and why; where the saved login is read, kept for the watch. No saved login for github.com: need you."""
@@ -658,6 +780,14 @@ def check_gh_road(host: Host, rep: Report) -> bool:
     unused = (f" Found in your shell and not used by this tool: {', '.join(found)}. The watch runs without your "
               "shell, so this tool's every GitHub call, setup's and the watch's alike, goes to github.com as the login "
               "gh saved; your own use of gh is unchanged.") if found else ""
+    kept, why = login_kept(host)  # R160: first, read as the watch reads it; nothing is asked of GitHub before it
+    if kept == "no":
+        keyring_step_words(host, repo, rep)
+        return False
+    if kept == "unread":
+        rep.stop(f"{why}. Nothing was made, on this computer or on GitHub. Settle what it says, then run the same "
+                 "command again")
+        return False
     answer, name, why = login_read(host)
     if answer == "no":
         rep.need(f"log in to GitHub: run `gh auth login` and follow its steps ({why}). {GH_ONLY}{unused}")
@@ -2450,7 +2580,7 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     entry = check_fresh_look(host, repo, rep)
     if entry is None:
         return rep.code()
-    if not check_gh_road(host, rep):  # R144: setup's own line names the account it acts as
+    if not check_gh_road(host, rep, repo):  # R144: setup's own line names the account it acts as
         return rep.code()
     if host.system() != "Linux" or not host.which("systemctl"):
         rep.stop("this version sets up Linux with systemd only; macOS comes in the next version. Nothing was changed, "
@@ -3370,9 +3500,13 @@ def computer_side(host: Host, mine: dict) -> tuple[str, list[int], dt.datetime]:
     return active.strip() or "not read", runner_pids(host, mine["folder"], "Runner.Worker"), host.now()
 
 
-def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int], at: dt.datetime) -> tuple[str, str]:
-    """G5.1, G5.2: one line, both sides with the time each was read; "idle" only when both agree."""
-    if r is None:
+def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int], at: dt.datetime,
+                     read: bool = True) -> tuple[str, str]:
+    """G5.1, G5.2: one line, both sides with the time each was read; "idle" only when both agree. R160 (rule 6): a
+    list that was not read is never "does not list it"."""
+    if not read:
+        gh_side = f"GitHub not read (at {hms(gh_at)})"
+    elif r is None:
         gh_side = f"GitHub does not list it (read {hms(gh_at)})"
     else:
         gh_side = f"GitHub says {r.get('status', 'not read')}, {'busy' if r.get('busy') else 'not busy'} (read {hms(gh_at)})"
@@ -3498,12 +3632,13 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         gh_at = host.now()
         active, worker, at = computer_side(host, mine)
         if s_r != 200:
-            first.append(("warn", f"GitHub could not be read for {rp}'s runners now (HTTP {s_r}): what this says "
+            first.append(("warn", f"GitHub could not be read for {rp}'s runners now "
+                                  f"({getattr(gh, 'why', '') or 'HTTP 0' if not s_r else 'HTTP ' + str(s_r)}): what this says "
                                   "of GitHub's side is not read; `status` again later"))
         elif r is None:
             if mine.get("gone_on_github") or active in ("active", "activating"):
                 first.append(("warn", gone_words(rp, mine)))
-        word, sides = both_sides_words(r, gh_at, active, worker, at)
+        word, sides = both_sides_words(r, gh_at, active, worker, at, s_r == 200)
         held = r is not None and sorted(x.get("name") for x in r.get("labels", [])) == [HELD_LABEL]
         hold_words = ""
         if held:
@@ -3577,6 +3712,14 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         b = (w.get("blind") or {}).get(rp)
         if b:
             first.insert(0, ("stop", blind_words(rp, b, every)))
+    gate = gh.login_gate()  # R160: this run's own gh has no login it can read: said first, with the one step
+    if gate:
+        rp0 = repos[0] if repos else None
+        first.insert(0, ("stop", f"{gate}. So nothing GitHub would say is read in this `status`. Your way out: "
+                                 + (f"in your own terminal, {login_step(host)} (run `look {rp0 or 'REPO'}` first: "
+                                    "it says where your login is now, and what that step keeps where, before you "
+                                    "choose it)" if NO_LOGIN in gate else
+                                    "settle what it says, then `status` again")))
     if not ok_:
         first.insert(0, ("stop", "the watch is not running, so the job hook here refuses each job before its first step " + HOOK_CAVEAT
                                  + " until the watch reads the repository private again. Your way out: "
@@ -3876,6 +4019,10 @@ def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
     if blind:  # G5.15: counted, kept with its reason, and said: a blind pass ends `failed`, never in silence
         w["blind"] = {rp: {"why": why, "passes": (old.get(rp) or {}).get("passes", 0) + 1,
                            "since": (old.get(rp) or {}).get("since") or stamp(host.now())} for rp, why in blind.items()}
+        if any(NO_LOGIN in why or "auth login" in why or "401" in why for why in blind.values()):
+            step = login_step(host)  # R160: as this gh can take it
+            for b in w["blind"].values():
+                b["step"] = step
     cost_weekly(host, data)
     gone = skill_folder_line(host, data)  # G6.12: said in the watch's own log when it changes
     w["skill_folder"] = gone[1] if gone else ""
@@ -3902,9 +4049,16 @@ def write_seen(host: Host, mine: dict, value: str) -> str:
 
 def blind_words(repo: str, b: dict, every_s: int) -> str:
     held = b["passes"] >= SEEN_PASSES
+    step = (f"in your own terminal, {b.get('step') or '`gh auth login --insecure-storage`'} (run `look {repo}` first: "
+            "it says where your login is now, and what that step keeps where, before you choose it); the next pass "
+            "reads again by itself")
     way = ("nothing to do now: it comes back by itself at the time named; if it is spent again, something else logged "
            "in as this account uses it up" if "API limit" in b["why"] else
-           "log in again with `gh auth login`" if "auth login" in b["why"] or "401" in b["why"] else
+           step if NO_LOGIN in b["why"] or "auth login" in b["why"] or "401" in b["why"] else  # R160
+           "check the repository's name and this login's access to it on GitHub; the next pass reads again by itself"
+           if "HTTP 404" in b["why"] else
+           "the reason is GitHub's answer named here; the next pass reads again by itself"
+           if "GitHub answered HTTP" in b["why"] else
            "make `gh` reachable, then run `setup` again from a terminal where `gh` works (it finds gh's folder again)"
            if "could not be found" in b["why"] or "could not be run" in b["why"] else
            "check this computer's network; the next pass reads again by itself")
@@ -3940,7 +4094,9 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
     if s == 200 and d is not None and d.get("private") is True:
         why = write_seen(host, mine, str(int(host.now().timestamp())))
     else:
-        why = gh.why or f"GitHub answered HTTP {s} for the repository"
+        why = gh.why or (f"GitHub answers that {repo} is not there for this login (HTTP 404): it was renamed or "
+                         "deleted, or the login lost its access to it" if s == 404 else
+                         f"GitHub answered HTTP {s} for the repository")
     r = listed_runner(gh, repo, mine["name"])
     if r is not None and not r.get("busy"):
         name_cut_jobs(gh, host, repo, mine, data, None)  # named and kept now, while this computer has its record
@@ -5598,7 +5754,7 @@ def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = N
 
 
 def _look(repo: str, start: bool, host: Host, gh: GitHub, rep: Report, found: dict, show_names: bool = False) -> int:
-    if not check_github_cli(host, rep):
+    if not check_github_cli(host, rep, repo):
         return rep.code()
     if not check_admin(host, rep):
         return rep.code()

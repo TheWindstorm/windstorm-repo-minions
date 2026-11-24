@@ -86,6 +86,9 @@ class FakeHost(M.Host):
     def __init__(self, system="Linux", files=None, runs=None, which=None, uid=1000,
                  groups=("users",), dirs=None, links=None, page="", free=(100 * 1024 ** 3, 500 * 1024 ** 3)):
         self._system, self.files, self.runs = system, dict(files or {}), dict(runs or {})
+        # R160: gh has a login it can read with no session bus (a made-up value, one line, as `gh auth token` prints)
+        self.runs.setdefault(("gh", "auth", "token"), (0, "made-up-login-value\n"))
+        self.runs.setdefault(("gh", "auth", "login", "--hostname", "github.com", "--help"), (0, GH_LOGIN_HELP))
         if which is None:  # every program the tool and its hooks run (G8.9); no container engine
             which = ("gh", "sudo", "systemctl", *M.PROGRAMS, *M.HOOK_PROGRAMS)
         self._which, self._uid, self._groups = set(which), uid, list(groups)
@@ -138,6 +141,10 @@ class FakeHost(M.Host):
 
     def which(self, name):
         return f"/usr/bin/{name}" if name in self._which else None
+
+    def run_own(self, argv, timeout=20):  # R160: the person's own environment, read for where gh keeps a login
+        self.ran.append(("own", *argv))
+        return self._answer(["own", *argv])
 
     def run(self, argv, timeout=20):
         self.ran.append(tuple(argv))
@@ -235,6 +242,10 @@ TCP = ("  sl  local_address rem_address   st\n"
        "   0: 00000000:01BB 00000000:0000 0A\n"
        "   1: 0100007F:1538 00000000:0000 0A\n"
        "   2: 00000000:0016 0A0B0C0D:D431 01\n")
+
+
+# R160: the line of `gh auth login --help` (gh 2.45.0) that names the flag
+GH_LOGIN_HELP = "      --insecure-storage     Save authentication credentials in plain text instead of credential store\n"
 
 
 def linux_host(**kw):
@@ -4810,7 +4821,10 @@ class P1a(unittest.TestCase):
         host2, _ = g5_host()
         lines = run_cmd(M.watch, host=host2, gh=BlindGH(why="GitHub gave no answer: To get started with GitHub CLI, "
                                                             "please run:  gh auth login"))[1]
-        self.assertIn("Your way out: log in again with `gh auth login`", lines[-1])
+        # R160: its step keeps the login where the watch can read it (`gh auth login` alone can put it back in a
+        # keyring, and the watch goes blind again), with `look` first to say what that keeps where
+        self.assertIn("Your way out: in your own terminal, `gh auth login --insecure-storage` (run `look "
+                      f"{REPO}` first", lines[-1])
         # Reading it private again ends the count and refreshes the time.
         clock.sleep(300)
         self.assertEqual(run_cmd(M.watch, host=host, gh=StatusGH())[0], M.EXIT_OK)
@@ -5441,6 +5455,153 @@ class RuleTwo(unittest.TestCase):
                         lines)
         self.assertTrue(lines[2].startswith("warn Found in your shell and not used by this tool: GH_TOKEN"), lines)
 
+    def test_G1_19_a_login_the_watch_cannot_read_stops_before_the_first_write(self):
+        # R160 (owner's ruling 11-24, option A). Seen 2026-11-24 on a stock virtual machine with a keyring started by
+        # hand: a login gh kept only in the keyring was read by setup's shell and never by the watch (a system timer),
+        # so setup made everything, then stopped at the watch's first pass, which read the private repository as 404.
+        no_token = (1, "no oauth token found for github.com\n")
+        keyring = (0, "github.com\n  ✓ Logged in to github.com account example-person (keyring)\n"
+                      "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n")
+        # look: the stop, where gh keeps it, the one step, and five things to hear, before GitHub is asked anything
+        host = linux_host(runs={("gh", "auth", "token"): no_token, ("own", "gh", "auth", "status"): keyring})
+        gh = StandIn(load("look-recent-runs.jsonl"))
+        code, lines = look(gh, host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        stop = next(x for x in lines if x.startswith("stop "))
+        self.assertTrue(stop.startswith(f"stop {M.NO_LOGIN} the way this computer's check every 5 minutes will "
+                                        "read it, when nobody is logged in: gh keeps it in this computer's keyring"), stop)
+        self.assertIn("Nothing was made, on this computer or on GitHub", stop)
+        self.assertIn(f"`gh auth login --insecure-storage`, then `look {REPO}` again", stop)
+        tells = [x for x in lines if x.startswith("tell the person ")]
+        self.assertEqual(len(tells), 5, lines)
+        said = " ".join(tells)
+        hosts = os.path.join(host.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+        for must in (f"keeps your GitHub login in {hosts}, as plain text", "your account and this computer's admins",
+                     "(its scopes: gist, read:org, repo, workflow), on every repository of yours, not only this one",
+                     "every copy or backup of your home folder", "if the disk is not encrypted",
+                     "runs when nobody is logged in",
+                     "If you would rather not, stop here: nothing was made, and this computer will not run jobs"):
+            self.assertIn(must, said, must)
+        self.assertNotRegex(said, r"same is true of the keyring|keyring is (also|as)")  # not read by us: not said
+        self.assertEqual(gh.calls, [])
+        self.assertNotIn(("gh", "api", "-i", "user", "--hostname", "github.com"), host.ran)
+        self.assertEqual([a for a in host.ran if a[:1] == ("sudo",)], [])
+        # where: a shell's token, or not read; the scopes left out when not read
+        host = linux_host(runs={("gh", "auth", "token"): no_token, ("own", "gh", "auth", "status"): (
+            0, "github.com\n  ✓ Logged in to github.com account example-person (GH_TOKEN)\n")})
+        lines = look(StandIn([]), host)[1]
+        self.assertIn("gh reads it from your shell's GH_TOKEN, which the check every 5 minutes does not have",
+                      next(x for x in lines if x.startswith("stop ")))
+        self.assertIn("allowed on your GitHub account, on every repository", " ".join(lines))
+        lines = look(StandIn([]), linux_host(runs={("gh", "auth", "token"): no_token}))[1]
+        self.assertIn("where gh keeps it could not be read here", next(x for x in lines if x.startswith("stop ")))
+        # a gh whose own help names no `--insecure-storage` (no keyring there): the plain step, never a flag it lacks
+        lines = look(StandIn([]), linux_host(runs={("gh", "auth", "token"): no_token,
+                                                   ("gh", "auth", "login", "--hostname", "github.com", "--help"): (0, "  -w, --web  Open a browser\n")}))[1]
+        stop = next(x for x in lines if x.startswith("stop "))
+        self.assertIn("choose it after the lines below: `gh auth login`, then", stop)
+        self.assertNotIn("insecure-storage", stop)
+        # setup: the same stop, nothing made here or on GitHub, no record of a setup begun
+        host, sha = setup_host()
+        fresh_look(host)
+        host.runs[("gh", "auth", "token")] = no_token
+        host.runs[("own", "gh", "auth", "status")] = keyring
+        gh = setup_gh(sha)
+        code, lines = run_setup(gh, host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertTrue(any(x.startswith(f"stop {M.NO_LOGIN}") for x in lines), lines)
+        self.assertEqual(admin_steps(host), [])
+        self.assertEqual(gh.calls, [])
+        self.assertNotIn("setting_up", M.load_state(host))
+        # three answers (rule 6); gh's words never carry a token-shaped value; a gh with no `auth token` (before
+        # 2.17, which keeps a login only in its file or the shell) is read from its file
+        def kept(answer):
+            return M.login_kept(linux_host(runs={("gh", "auth", "token"): answer}))
+        self.assertEqual(kept((0, "made-up-login-value\n")), ("yes", ""))
+        self.assertEqual(kept(no_token)[0], "no")
+        for answer in ((1, "error connecting to the keyring\n"), (0, "two\nlines\n"), (0, ""),
+                       (127, "[Errno 2] No such file or directory: 'gh'")):
+            self.assertEqual(kept(answer)[0], "unread", answer)
+        self.assertIn("could not be found", kept((127, "[Errno 2] No such file or directory: 'gh'"))[1])
+        self.assertNotIn("ghp_made_up_value", kept((1, "ghp_made_up_value\nsomething else\n"))[1])
+        old = (1, 'unknown command "token" for "gh auth"\n\nUsage:  gh auth <command> [flags]\n')
+        h = linux_host(runs={("gh", "auth", "token"): old})
+        path = os.path.join(h.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+        h.files[path] = "github.com:\n    oauth_token: made-up-login-value\n    user: example-person\n"
+        self.assertEqual(M.login_kept(h), ("yes", ""))
+        h.files[path] = "github.com:\n    user: example-person\n    git_protocol: https\n"
+        self.assertEqual(M.login_kept(h)[0], "no")
+        del h.files[path]
+        self.assertEqual(M.login_kept(h)[0], "unread")
+        # could not be read: a stop that says so, nothing made, never a login step
+        host = linux_host(runs={("gh", "auth", "token"): (1, "error connecting to the keyring\n")})
+        lines = look(StandIn([]), host)[1]
+        stop = next(x for x in lines if x.startswith("stop "))
+        self.assertTrue(stop.startswith("stop gh could not be asked whether it has a login for github.com"), stop)
+        self.assertIn("Nothing was made", stop)
+        self.assertNotIn("insecure-storage", stop)
+
+    def test_G5_25_the_watch_and_status_say_each_reason_by_its_kind(self):
+        # R160 (owner's ruling 11-24): seen 2026-11-24, a watch with no login it could read said "GitHub answered
+        # HTTP 404" and "check this computer's network", and status said "GitHub does not list it" from a call sent
+        # without a login. Each kind its own words and way out; an answer to a call without a login is never read.
+        no_token = (1, "no oauth token found for github.com\n")
+
+        class Gated(StatusGH):  # the real class's gate, in front of the stand-in's answers
+            def api(self, method, path, body=None):
+                gate = self.login_gate()
+                if gate:
+                    self.why = gate
+                    return 0, {"message": gate}
+                return super().api(method, path, body)
+        host, clock = g5_host(runs={("gh", "auth", "token"): no_token})
+        gh = Gated()
+        gh.host = host
+        code, lines = run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(M.NO_LOGIN, lines[-1])
+        self.assertIn(f"Your way out: in your own terminal, `gh auth login --insecure-storage` (run `look {REPO}` "
+                      "first", lines[-1])
+        self.assertNotRegex(lines[-1], r"HTTP 404|network")
+        self.assertEqual(gh.calls, [])  # nothing was sent
+        gh = Gated()
+        gh.host = host
+        lines = run_cmd(M.status, REPO, host=host, gh=gh)[1]
+        self.assertTrue(lines[0].startswith(f"stop {M.NO_LOGIN}"), lines[0])
+        self.assertIn("`gh auth login --insecure-storage`", lines[0])
+        self.assertFalse(any("does not list it" in x for x in lines), lines)
+        self.assertEqual(gh.calls, [])
+        # the real class: no process is started for a call while the login cannot be read
+        with mock.patch.object(M.subprocess, "run", side_effect=AssertionError("a call was sent")):
+            s, d = M.GitHub(linux_host(runs={("gh", "auth", "token"): no_token})).api("GET", f"repos/{REPO}")
+        self.assertEqual(s, 0)
+        self.assertIn(M.NO_LOGIN, d["message"])
+        # HTTP 404 with a login: the repository is not there for this login, never the network
+        class Gone(StatusGH):
+            def api(self, method, path, body=None):
+                if (method, path) == ("GET", f"repos/{REPO}"):
+                    self.calls.append((method, path))
+                    return 404, {"message": "Not Found"}
+                return super().api(method, path, body)
+        host, clock = g5_host()
+        lines = run_cmd(M.watch, host=host, gh=Gone())[1]
+        self.assertIn(f"GitHub answers that {REPO} is not there for this login (HTTP 404)", lines[-1])
+        self.assertIn("Your way out: check the repository's name and this login's access to it on GitHub", lines[-1])
+        self.assertNotIn("network", lines[-1])
+        # no answer at all: the network
+        host, clock = g5_host()
+        lines = run_cmd(M.watch, host=host, gh=BlindGH(why="GitHub gave no answer: dial tcp: lookup api.github.com: "
+                                                           "no such host"))[1]
+        self.assertIn("Your way out: check this computer's network", lines[-1])
+        # status: a runner list that was not read is never "does not list it"
+        class Unread(StatusGH):
+            def api(self, method, path, body=None):
+                return (502, None) if "/actions/runners" in path else super().api(method, path, body)
+        host, clock = g5_host()
+        lines = run_cmd(M.status, REPO, host=host, gh=Unread())[1]
+        self.assertFalse(any("does not list it" in x for x in lines), lines)
+        self.assertTrue(any("GitHub not read (at " in x for x in lines), lines)
+
     def test_G1_18_the_login_read_has_three_answers(self):
         # R146 (family rule 6): logged in / no saved login / could not be read, each as Ubuntu's own gh 2.45.0 said it
         # on a stock virtual machine; the third never says to log in, log out or refresh.
@@ -5515,7 +5676,10 @@ class Helpers(unittest.TestCase):
         seen = {}
 
         def fake_run(argv, input=None, **kw):
-            seen["argv"], seen["input"] = argv, input
+            if argv[:3] == ["gh", "auth", "token"]:  # R160: the login read before the first call
+                seen["token_env"] = kw.get("env") or {}
+                return mock.Mock(stdout="made-up-login-value\n", stderr="", returncode=0)
+            seen["argv"], seen["input"], seen["env"] = argv, input, kw.get("env") or {}
             return mock.Mock(stdout="HTTP/2.0 201 Created\nX: y\n\n{\"sha\": \"1\"}", stderr="", returncode=0)
         with mock.patch.object(M.subprocess, "run", fake_run):
             status, data = M.GitHub(M.Host()).api("POST", "repos/o/r/git/blobs", {"content": "SECRET-ish body"})
@@ -5523,6 +5687,9 @@ class Helpers(unittest.TestCase):
         self.assertNotIn("SECRET-ish body", " ".join(seen["argv"]))
         self.assertIn("SECRET-ish body", seen["input"])
         self.assertEqual(seen["argv"][:2], ["gh", "api"])
+        # R160: both read with no session bus, as the watch runs when nobody is logged in
+        self.assertEqual(seen["env"].get("DBUS_SESSION_BUS_ADDRESS"), M.NO_BUS)
+        self.assertEqual(seen["token_env"].get("DBUS_SESSION_BUS_ADDRESS"), M.NO_BUS)
 
     def test_parse_include_reads_status_and_body(self):
         self.assertEqual(M.parse_include("HTTP/2.0 204 No Content\nA: b\n\n"), (204, None))
