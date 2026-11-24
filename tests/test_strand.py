@@ -101,11 +101,12 @@ def names_that_ran(tests_dir: str = TESTS) -> set:
         ran |= set(got["passed"])
         for test, why in got["skipped"]:  # an honest skip is "not run here", never a pass
             NOT_RUN_HERE.append(f"{name}: {test} ({why})")
+        LEFT_OPEN.extend(f"{name}: {x}" for x in got.get("left_open", []))  # R177
     return ran
 
 
 OUTCOME_RUNNER = """
-import contextlib, json, os, sys, unittest
+import contextlib, gc, json, os, sys, unittest, warnings
 tests_dir, name, out = sys.argv[1:4]
 sys.path.insert(0, tests_dir)
 suite = unittest.TestLoader().discover(tests_dir, pattern=name, top_level_dir=tests_dir)
@@ -117,15 +118,20 @@ class Passed(unittest.TestResult):
         super().addSuccess(test)
         self.passed.append(test._testMethodName)
 res = Passed()
-with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn):
+with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn), \
+        warnings.catch_warnings(record=True) as seen:  # R177: every file a test leaves open is named
+    warnings.simplefilter("always", ResourceWarning)
     suite.run(res)
+    gc.collect()
+left_open = [str(w.message) for w in seen if issubclass(w.category, ResourceWarning)]
 with open(out, "w") as f:
     json.dump({"passed": res.passed, "skipped": [[t._testMethodName, w] for t, w in res.skipped],
-               "run": res.testsRun}, f)
+               "run": res.testsRun, "left_open": left_open}, f)
 """
 
 
 NOT_RUN_HERE: list = []
+LEFT_OPEN: list = []  # R177: the ResourceWarnings each other test file's own run raised
 
 
 def defined_twice(path: str) -> list:
@@ -250,6 +256,29 @@ class Strand(unittest.TestCase):
         self.assertEqual(twice, ["test_probe_shadowed"])
         self.assertTrue(any("test_probe_skipped (a planted skip)" in x for x in NOT_RUN_HERE[before:]), NOT_RUN_HERE)
         del NOT_RUN_HERE[before:]
+
+    def test_G9_15_the_tests_close_every_file_they_open(self):
+        """R177: a full run printed 24 ResourceWarning lines (files the tests opened and left to the collector). Each
+        other test file's own run records them (warnings always shown, a collection at its end), and the gate fails
+        on any. A planted probe that leaves a file open is named; the same probe closing it is not."""
+        ran_here()
+        self.assertEqual(LEFT_OPEN, [], "files a test left open (R177)")
+        leaky = ("import os, unittest\n\n"
+                 "class T(unittest.TestCase):\n"
+                 "    def test_probe_leaves_it_open(self):\n"
+                 "        self.assertTrue(open(os.devnull).read() == '')\n")
+        closed = leaky.replace("open(os.devnull).read() == ''", "True")
+        for text, want in ((leaky, 1), (closed, 0)):
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
+                    f.write(text)
+                before = len(LEFT_OPEN)
+                self.assertEqual(tests_that_ran(d), {"test_probe_leaves_it_open"})
+                got = LEFT_OPEN[before:]
+                del LEFT_OPEN[before:]
+            self.assertEqual(len(got), want, got)
+            if want:
+                self.assertIn("test_probe.py: unclosed file", got[0])
 
     def test_G9_14_a_run_that_ends_early_or_prints_a_pass_is_never_green(self):
         """R169 (the gate recipe's eighth and ninth cases, 2026-11-24). Ninth: a test (or the tool under test,

@@ -39,6 +39,12 @@ FIX = os.path.join(ROOT, "tests", "fixtures")
 TMP = tempfile.mkdtemp(prefix="minions-test-")
 atexit.register(shutil.rmtree, TMP, True)
 REPO = "example-org/example-repo"
+
+
+def _read(*args, **kw):
+    """R177: a file's text, the file closed again (open(...).read() leaves it to the collector: a ResourceWarning)."""
+    with open(*args, **kw) as f:
+        return f.read()
 BRANCH = re.compile(r"minions-start-test-[0-9a-f]{8}")
 
 
@@ -1294,7 +1300,7 @@ class G2(unittest.TestCase):
         self.assertIn(f"run `uninstall example-org/other-repo` first, then `setup {REPO}` again", lines[-1])
         self.assertNotIn("next version", lines[-1])  # G7.12: a line the person must hear promises no later version
         self.assertEqual(admin_steps(host), [], "nothing is touched for a second repository")
-        skill = open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")).read()
+        skill = _read(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md"))
         self.assertIn("This version serves one repository per computer.", skill)
         self.assertNotIn("next version", skill)
 
@@ -1665,9 +1671,9 @@ class G2(unittest.TestCase):
         # R135 (rule 28): docs/root-steps.md lists every place the tool runs a command as root, each with its answers
         # (runs a job's file? a job's path? what it creates, with mode and owner). A root step not on the list, or a
         # row the tool no longer has, fails here.
-        src = open(os.path.join(ROOT, "scripts", "minions.py")).read()
+        src = _read(os.path.join(ROOT, "scripts", "minions.py"))
         code = root_sites(src)
-        doc = open(os.path.join(ROOT, "docs", "root-steps.md")).read()
+        doc = _read(os.path.join(ROOT, "docs", "root-steps.md"))
         rows = set()
         for line in doc.splitlines():
             cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
@@ -1684,7 +1690,7 @@ class G2(unittest.TestCase):
         # R134 (rule 28, NOTHING A SKILL MAKES IS WRITABLE BY ANOTHER ACCOUNT): a launcher may start the tool with
         # umask 000. main raises it to at least 022 before anything else; every root step that makes something names
         # its mode and owner; the files the tool makes itself are not writable by group or others.
-        main_ = next(n for n in ast.parse(open(os.path.join(ROOT, "scripts", "minions.py")).read()).body
+        main_ = next(n for n in ast.parse(_read(os.path.join(ROOT, "scripts", "minions.py"))).body
                      if isinstance(n, ast.FunctionDef) and n.name == "main")
         first_call = next(c for s in main_.body for c in ast.walk(s) if isinstance(c, ast.Call)
                           and isinstance(c.func, ast.Name) and c.func.id not in ("parser", "Host"))
@@ -2695,10 +2701,10 @@ class G4(unittest.TestCase):
                     pid = int(f.read())
                 os.kill(pid, 0)  # the locks are held while the job runs
                 for _ in range(50):
-                    if os.path.exists(log) and len(open(log).read().splitlines()) == 2:
+                    if os.path.exists(log) and len(_read(log).splitlines()) == 2:
                         break
                     M.time.sleep(0.1)
-                self.assertEqual(open(log).read().splitlines(),
+                self.assertEqual(_read(log).splitlines(),
                                  [" ".join(M.INHIBIT_IDLE[1:]), " ".join(M.INHIBIT_SLEEP_DELAY[1:])])
                 with open(f"/proc/{pid}/environ", "rb") as f:
                     self.assertNotIn(b"RUNNER_TRACKING_ID=", f.read())  # its own, ended by our hook
@@ -2709,7 +2715,7 @@ class G4(unittest.TestCase):
                 for _ in range(50):
                     try:
                         os.kill(pid, 0)
-                        if open(f"/proc/{pid}/stat").read().split()[2] == "Z":
+                        if _read(f"/proc/{pid}/stat").split()[2] == "Z":
                             break
                     except (ProcessLookupError, FileNotFoundError):
                         break
@@ -2728,7 +2734,7 @@ class G4(unittest.TestCase):
             for _ in range(50):
                 try:
                     os.kill(p, 0)
-                    if open(f"/proc/{p}/stat").read().split()[2] == "Z":
+                    if _read(f"/proc/{p}/stat").split()[2] == "Z":
                         return True
                 except (ProcessLookupError, FileNotFoundError):
                     return True
@@ -3149,7 +3155,7 @@ def printed_system_commands():
     """G8.16: every backticked system command in a string the tool can print (docstrings left out), its f-string
     fields read as {}."""
     import ast
-    tree = ast.parse(open(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8").read())
+    tree = ast.parse(_read(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8"))
     docs = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef)) and node.body and \
@@ -3261,17 +3267,17 @@ class G5(unittest.TestCase):
         # R133: a job can blank the start hook in the runner's own .env (seen on a stock VM, 2026-11-24), so no line,
         # shown or written, says the hook refuses a job without saying "unless a job that already ran here switched
         # that hook off"; the README says the watch is the gate and names the window.
-        src = open(os.path.join(ROOT, "scripts", "minions.py")).read().splitlines()
+        src = _read(os.path.join(ROOT, "scripts", "minions.py")).splitlines()
         for i, line in enumerate(src):
             if re.search(r"hook here refuses", line) and not line.lstrip().startswith("#"):
                 self.assertIn("HOOK_CAVEAT", " ".join(src[i:i + 3]), f"scripts/minions.py:{i + 1}")
         docs = [os.path.join(ROOT, "docs", "root-steps.md")]
-        readme = " ".join(open(os.path.join(ROOT, "README.md")).read().split())
+        readme = " ".join(_read(os.path.join(ROOT, "README.md")).split())
         if "nothing can be installed yet" not in readme:  # the release branch's README (main's has no install lines)
             docs.append(os.path.join(ROOT, "README.md"))
             self.assertIn("nothing a job can write is ever run, sourced or followed by root", readme)
         for p in docs:
-            text = " ".join(open(p).read().split())
+            text = " ".join(_read(p).split())
             for words in ("switched the hook off", "up to five minutes, longer while GitHub cannot be reached",
                           "nothing on this computer refuses a job, and a job already running finishes"):
                 self.assertIn(words, text, p)
@@ -6907,7 +6913,7 @@ class G8(unittest.TestCase):
         # operator. Now every command stops first, nothing run, and the file still reads in 3.8's grammar.
         import ast
         from unittest import mock
-        src = open(M.__file__).read()
+        src = _read(M.__file__)
         ast.parse(src, feature_version=(3, 8))
         host = FakeHost()
         out = Out()
@@ -8112,6 +8118,12 @@ class G8Words(unittest.TestCase):
         r, w = os.pipe()
         os.close(r)
         out = os.fdopen(w, "w")
+        def close_quietly():  # R177: closed at the end; its buffer may still hold words for the closed pipe
+            try:
+                out.close()
+            except OSError:
+                pass
+        self.addCleanup(close_quietly)
         rep = M.Report(out=out)
         rep.ok("one")
         rep.tell("two")

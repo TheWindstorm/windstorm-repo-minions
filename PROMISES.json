@@ -2466,7 +2466,7 @@
    "codon": "G9.15",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
-   "test": "",
+   "test": "test_G9_15_the_tests_close_every_file_they_open",
    "owner": "maintainer",
    "proven": "",
    "issue": 365,
