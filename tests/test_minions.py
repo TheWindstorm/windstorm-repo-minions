@@ -5366,7 +5366,8 @@ class MachineGuard(unittest.TestCase):
         # Part 5 of rule 17's guard: planted tests, one of each kind, in a test file of their own that imports the
         # guard. Guarded, each kind fails in its own result with the line that says why (the one that swallowed
         # the error too), the two that stay in their own home pass, and the run fails. The guard taken out
-        # (MINIONS_GUARD_OFF=1: no hook, no count; the home and stand-ins kept, so nothing real runs): all pass.
+        # (MINIONS_GUARD_OFF=1, honoured only in this planted run: no hook, no count; the home and stand-ins kept,
+        # so nothing real runs): all pass.
         tests = os.path.dirname(os.path.abspath(__file__))
         with tempfile.TemporaryDirectory(dir=TMP) as d:
             path = os.path.join(d, "test_planted.py")
@@ -5388,6 +5389,25 @@ class MachineGuard(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr[-3000:])
             self.assertIn("Ran 10 tests", r.stderr)
             self.assertNotIn("rule 17", r.stderr)
+
+    def test_G9_12_the_guard_has_no_switch(self):
+        # Rule 17, THE GUARD HAS NO SWITCH (the maintainer's ruling 2026-11-24): MINIONS_GUARD_OFF=1 set in the
+        # suite's own run fails it with a line that says so, and the guard stays on; the counting-only setting is
+        # gone, so setting it changes nothing.
+        own = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_skill.py")
+        run = lambda **env: subprocess.run([sys.executable, own], capture_output=True, text=True, timeout=120,
+                                           env=dict(os.environ, **env))
+        r = run(MINIONS_GUARD_OFF="1")
+        self.assertNotEqual(r.returncode, 0, r.stderr[-2000:])
+        self.assertIn("MINIONS_GUARD_OFF=1 was set in the suite's own run; the guard has no switch (rule 17)", r.stderr)
+        self.assertEqual(run().returncode, 0)
+        r = run(MINIONS_GUARD_MEASURE="1")
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        with open(machine_guard.__file__) as f:
+            self.assertNotIn("MEASURE", f.read())
+        self.assertFalse(machine_guard.OFF)
+        self.assertNotIn("MINIONS_GUARD_OFF", os.environ)
+
 
 def tearDownModule():
     machine_guard.check()  # rule 17 (R142): a test that reached this machine fails the run, even if it swallowed it

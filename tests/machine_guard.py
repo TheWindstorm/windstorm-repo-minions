@@ -26,9 +26,10 @@ and what a child does by itself; parts 1 and 2 are for that.
 Left off FORBIDDEN, with why: LEFT_OFF below, one reason per name; a test holds every program the tool and its
 hooks list to one of the two.
 
-MINIONS_GUARD_OFF=1 is the gate test's control: the guard taken out (no hook, no count), the home and stand-ins
-kept so nothing real runs. MINIONS_GUARD_MEASURE=1, for taking a count only and never in CI: no temporary home and no
-raise, everything recorded.
+The guard has no switch (rule 17). MINIONS_GUARD_OFF=1 is honoured only in the gate test's planted run: a test
+file run by itself from a temporary folder outside this checkout, the one the gate test writes. There it takes the
+hook and the count out (the home and stand-ins stay, so nothing real runs). In the suite's own run it is never
+honoured: it is taken out of the environment and fails the run with a line that says so.
 """
 import atexit
 import contextlib
@@ -66,8 +67,18 @@ LEFT_OFF = {
 }
 ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REAL_HOME = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
-MEASURE = os.environ.get("MINIONS_GUARD_MEASURE") == "1"
-OFF = os.environ.get("MINIONS_GUARD_OFF") == "1"
+_ASKED_OFF = os.environ.pop("MINIONS_GUARD_OFF", None) == "1"
+
+
+def _planted_run() -> bool:
+    """The gate test's planted file, run by itself: the main script lies in a temporary folder, outside the checkout."""
+    main = os.path.realpath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
+    tmp = os.path.realpath(tempfile.gettempdir())
+    return main.startswith(tmp + os.sep) and not main.startswith(ROOT + os.sep) and \
+        os.path.basename(main) == "test_planted.py"
+
+
+OFF = _ASKED_OFF and _planted_run()
 
 
 class MachineReached(RuntimeError):
@@ -90,19 +101,18 @@ for _name in FORBIDDEN:
 os.environ["PATH"] = BIN + os.pathsep + os.environ.get("PATH", os.defpath)
 
 HOME = os.path.join(_TMP, "home")
-if not MEASURE:
-    os.makedirs(HOME)
-    os.environ["HOME"] = HOME
-    for _k, _sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"),
-                     ("XDG_CACHE_HOME", ".cache"), ("XDG_STATE_HOME", ".local/state")):
-        os.environ[_k] = os.path.join(HOME, _sub)
-        os.makedirs(os.environ[_k])
-    os.environ["GIT_CONFIG_GLOBAL"] = os.path.join(HOME, ".gitconfig")
-    open(os.environ["GIT_CONFIG_GLOBAL"], "w").close()
-    os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
-    for _k in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GH_CONFIG_DIR", "XDG_RUNTIME_DIR",
-               "DBUS_SESSION_BUS_ADDRESS", "TMUX", "TMUX_PANE"):
-        os.environ.pop(_k, None)
+os.makedirs(HOME)
+os.environ["HOME"] = HOME
+for _k, _sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"),
+                 ("XDG_CACHE_HOME", ".cache"), ("XDG_STATE_HOME", ".local/state")):
+    os.environ[_k] = os.path.join(HOME, _sub)
+    os.makedirs(os.environ[_k])
+os.environ["GIT_CONFIG_GLOBAL"] = os.path.join(HOME, ".gitconfig")
+open(os.environ["GIT_CONFIG_GLOBAL"], "w").close()
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+for _k in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GH_CONFIG_DIR", "XDG_RUNTIME_DIR",
+           "DBUS_SESSION_BUS_ADDRESS", "TMUX", "TMUX_PANE"):
+    os.environ.pop(_k, None)
 
 
 def path(rest: str) -> str:
@@ -126,6 +136,9 @@ def _allowed_roots():
 
 ALLOWED = _allowed_roots()
 reached = []
+if _ASKED_OFF and not OFF:
+    reached.append("outside a test: MINIONS_GUARD_OFF=1 was set in the suite's own run; the guard has no switch (rule 17),"
+                   " so it stays on and this run fails")
 _sink = None  # expect() collects here instead
 _busy = False
 
@@ -229,8 +242,7 @@ def _hook(event, args):
     if what:
         seen = f"{_where()}: {what}"
         (reached if _sink is None else _sink).append(seen)
-        if not MEASURE:
-            raise MachineReached(seen)
+        raise MachineReached(seen)
 
 
 @contextlib.contextmanager
