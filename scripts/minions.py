@@ -283,8 +283,10 @@ class Host:
         except OSError:
             return None
 
-    def delete_record(self) -> None:
-        shutil.rmtree(self.record_dir(), ignore_errors=True)
+    def delete_record(self) -> list[str]:
+        """R129 (rule 23): only what this tool wrote, by its names; the folder only when empty. Returns the names
+        left there that are not this tool's."""
+        return delete_ours(self.record_dir(), RECORD_NAMES)
 
     def ask(self, prompt: str) -> str:
         """A word typed by the person at this terminal; "" when nothing could be read."""
@@ -504,9 +506,9 @@ PRINTED_COMMANDS = {
     "sudo chmod 750 /home/{}":
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner's home opened to 755 by hand): copied "
         "from doctor's line and run as printed; doctor then read it kept",
-    "sudo chmod 600 {}":
-        "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (one credential file made 644 by hand): doctor's "
-        "line with the three files, run as printed; doctor then read them kept",
+    "sudo -u {} chmod 600 {}":
+        "2026-11-24, a stock Ubuntu 24.04.5 virtual machine, steered (one credential file made 644 by hand, as the "
+        "runner user): doctor's line with the three files, run as printed; doctor then read every promise kept",
     "sudo gpasswd -d {} {}":
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner user put in a group by hand): "
         "doctor's line run as printed; doctor then read it kept",
@@ -1688,11 +1690,74 @@ def dropin_text(folder: str = "") -> str:
             + stop_post)
 
 
+RECORD_NAMES = r"README\.txt|journal\.log|jobs-[A-Za-z0-9_.-]+\.log"
+STATE_NAMES = r"minions\.json(\.tmp)?|journal\.log|actions-runner-linux-[a-z0-9]+-[0-9.]+\.tar\.gz"
+
+
+def delete_ours(folder: str, names: str) -> list[str]:
+    """R129 (family rule 23): in a folder of our own name, only what this tool wrote, file by file by its exact name
+    format; the folder itself only when then empty. A thing there that is not ours is left, and named back."""
+    try:
+        entries = os.listdir(folder)
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return [folder]
+    left = []
+    for n in sorted(entries):
+        p = os.path.join(folder, n)
+        if re.fullmatch(names, n) and os.path.isfile(p) and not os.path.islink(p):
+            try:
+                os.remove(p)
+            except OSError:
+                left.append(n)
+        else:
+            left.append(n)
+    if not left:
+        try:
+            os.rmdir(folder)
+        except OSError:
+            return [folder]
+    return left
+
+
+UNIT_RE = r"actions\.runner\.[A-Za-z0-9_.@-]+\.service"
+
+
+def unit_name(folder: str, runner_name: str) -> str:
+    """Rule 28 (R127): the tool names and writes the runner's unit itself, by the runner's own convention, from parts
+    it chose (the folder's name and the runner's name); root never runs the runner's svc.sh."""
+    base = os.path.basename(folder.rstrip("/"))
+    return re.sub(r"[^A-Za-z0-9_.@-]", "-", f"actions.runner.{base}.{runner_name}.service")
+
+
+def unit_text(folder: str, unit: str) -> str:
+    """GitHub's own unit template (actions.runner.service.template), filled in here: the runner runs as the runner
+    user from its own folder; root owns this file and no job can change it. One change from GitHub's template
+    (R131): KillMode=mixed, not process: at a stop the runner alone gets SIGTERM, and whatever a job left running in
+    the service (nohup, setsid, a double fork) is ended once the runner has gone, never left behind."""
+    what = unit[len("actions.runner."):-len(".service")]
+    return ("# Windstorm Repo Minions (R127): GitHub's runner unit, written by this tool, owned by root.\n"
+            f"[Unit]\nDescription=GitHub Actions Runner ({what})\nAfter=network-online.target\n\n"
+            f"[Service]\nExecStart={folder}/runsvc.sh\nUser={RUNNER_USER}\nWorkingDirectory={folder}\n"
+            "KillMode=mixed\nKillSignal=SIGTERM\nTimeoutStopSec=5min\n\n[Install]\nWantedBy=multi-user.target\n")
+
+
 def slice_text(limits: dict) -> str:
     return ("# Windstorm Repo Minions: every runner of ours on this computer, together (G2.9, G4.2, G12.1).\n"
             "[Unit]\nDescription=Windstorm Repo Minions runners\nBefore=slices.target\n\n"
             f"[Slice]\nCPUQuota={limits['CPUQuota']}\nMemoryHigh={limits['MemoryHigh']}\nMemoryMax={limits['MemoryMax']}\n"
             f"MemorySwapMax={limits.get('MemorySwapMax', 'infinity')}\n")
+
+
+def root_file(host: Host, path: str, text: str, mode: str = "0644") -> tuple[int, str]:
+    """R134: a file root writes for this tool, then given its owner and mode by name (root:root, 0644 unless said),
+    never left to whatever umask the write ran under. The first answer that is not 0 is returned."""
+    for argv, inp in ((["tee", path], text), (["chown", "root:root", path], None), (["chmod", mode, path], None)):
+        rc, out = sudo(host, argv, input=inp)
+        if rc != 0:
+            return rc, out
+    return 0, ""
 
 
 def sudo(host: Host, argv: list[str], input: str | None = None, timeout: int = 600) -> tuple[int, str]:
@@ -1785,6 +1850,36 @@ def ask_admin_once(host: Host, rep: Report, interactive: bool, cmd: str = "setup
     return False
 
 
+def runner_user_state(host: Host) -> tuple[str, str]:
+    """R129 (rule 28, three answers): ("absent", ""), ("there", uid) or ("unread", what was said)."""
+    rc, out = host.run(["id", "-u", RUNNER_USER])
+    if rc == 0 and out.strip().isdigit():
+        return "there", out.strip()
+    if rc == 1 and "no such user" in out.lower():
+        return "absent", ""
+    return "unread", tail(out) or f"exit {rc}"
+
+
+NOT_OURS_USER = (f"a user named {RUNNER_USER} is already on this computer, and this tool did not make it (its record "
+                 "here says so): nothing is touched. This tool never takes over, or removes, a user it did not make. If "
+                 f"you know it is left from an earlier copy of this tool, remove it yourself (sudo userdel -r "
+                 f"{RUNNER_USER}), then run the same command again; if not, open an issue")
+
+
+def runner_user_is_ours_or_absent(host: Host, rep: Report) -> bool:
+    """R129 (rule 28): setup uses only a runner user it made, as its record here says; one it did not make, or a
+    read that gave no answer, stops setup before any admin step."""
+    kind, said = runner_user_state(host)
+    if kind == "unread":
+        rep.stop(f"could not read whether the user {RUNNER_USER} is on this computer ({said}): nothing is touched. "
+                 "Settle what it says, then run the same command again")
+        return False
+    if kind == "there" and not load_state(host).get("runner_user_made"):
+        rep.stop(NOT_OURS_USER)
+        return False
+    return True
+
+
 def ensure_runner_user(host: Host, rep: Report) -> bool:
     """G2.2: the runner's own user, in no group but its own, its home closed to others."""
     rc, _ = host.run(["id", "-u", RUNNER_USER])
@@ -1794,9 +1889,15 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
         if rc != 0:
             rep.stop(f"could not make the user {RUNNER_USER}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
+        known = load_state(host)  # R129 (rule 28): a user this tool made is recorded; only a recorded one is removed
+        known["runner_user_made"] = True
+        save_state(host, known)
         rep.ok(f"made the user {RUNNER_USER}")
+    elif not load_state(host).get("runner_user_made"):
+        rep.stop(NOT_OURS_USER)
+        return False
     else:
-        rep.ok(f"the user {RUNNER_USER} is there already")
+        rep.ok(f"the user {RUNNER_USER} is there already (made by this tool, as its record here says)")
     rc, out = host.run(["id", "-nG", RUNNER_USER])
     groups = set(out.split()) if rc == 0 else set()
     extra = groups - {RUNNER_USER}
@@ -1869,8 +1970,11 @@ def sha256_file(path: str) -> str:
 
 
 def unpack_runner(host: Host, rel: dict, folder: str, rep: Report) -> bool:
-    """G2.3, G2.4: downloaded, checked, then unpacked fresh into the runner's own folder, never copied."""
-    rc, out = sudo(host, ["test", "-e", folder])
+    """G2.3, G2.4: downloaded, checked, then unpacked fresh into the runner's own folder, never copied.
+    R127/R128 (rule 28): the copy that is checked is the copy that is used. Root copies the download into a folder of
+    root's own, checks its checksum there, takes the dependency script out there and runs it from there; the runner
+    user unpacks from that same read-only copy. Every step in the runner user's home is done as the runner user."""
+    rc, out = as_runner(host, ["test", "-e", folder])
     if rc == 0:
         rep.stop(f"{folder} exists already: a runner for this repository is set up here, or a removal was not "
                  "finished; nothing was changed. `uninstall <owner/repo>` finishes a removal that was not finished; then "
@@ -1890,35 +1994,66 @@ def unpack_runner(host: Host, rel: dict, folder: str, rep: Report) -> bool:
         rep.stop(f"the downloaded runner's checksum is not the one GitHub publishes: deleted, nothing installed. Run the same command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
         return False
     rep.ok(f"downloaded {rel['filename']}, checksum checked")
+    try:
+        return unpack_from_roots_copy(host, rel, tmp, folder, rep)
+    finally:
+        os.remove(tmp)
+
+
+ROOTS_COPY_RE = r"/tmp/minions-download\.[A-Za-z0-9]{8}"
+
+
+def unpack_from_roots_copy(host: Host, rel: dict, tmp: str, folder: str, rep: Report) -> bool:
+    rc, d = sudo(host, ["mktemp", "-d", "/tmp/minions-download.XXXXXXXX"])
+    d = d.strip()
+    if rc != 0 or not re.fullmatch(ROOTS_COPY_RE, d):
+        rep.stop(f"could not make a folder of root's own for the download ({tail(d)}): nothing unpacked. Settle what "
+                 "it says, then run the same command again")
+        return False
+    tgz = f"{d}/runner.tgz"
     journal(host, "unpack", folder)
-    steps = [
-        (["install", "-d", "-o", RUNNER_USER, "-g", RUNNER_USER, "-m", "0700", f"/home/{RUNNER_USER}/runners"], "runners folder"),
-        (["install", "-d", "-o", RUNNER_USER, "-g", RUNNER_USER, "-m", "0700", folder], "the runner's folder"),
-        (["install", "-o", RUNNER_USER, "-g", RUNNER_USER, "-m", "0600", tmp, f"{folder}/runner.tgz"], "the download"),
-    ]
-    for argv, what in steps:
-        rc, out = sudo(host, argv)
-        if rc != 0:
-            rep.stop(f"could not make {what}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
+    try:
+        rc, out = sudo(host, ["install", "-o", "root", "-g", "root", "-m", "0644", tmp, tgz])
+        if rc == 0:
+            rc, out = sudo(host, ["sha256sum", tgz])
+        if rc != 0 or not out.startswith(rel["sha256"]):
+            rep.stop("root's copy of the download does not have the checked checksum: nothing unpacked. Run the same "
+                     "command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
             return False
-    os.remove(tmp)
-    rc, out = as_runner(host, ["sha256sum", f"{folder}/runner.tgz"])
-    if rc != 0 or not out.startswith(rel["sha256"]):
-        rep.stop("the copy in the runner's folder does not have the checked checksum: nothing unpacked. Run the same command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
-        return False
-    rc, out = as_runner(host, ["tar", "xzf", f"{folder}/runner.tgz", "-C", folder])
-    if rc != 0:
-        rep.stop(f"could not unpack the runner: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
-        return False
-    as_runner(host, ["rm", "-f", f"{folder}/runner.tgz"])
-    rep.ok(f"unpacked fresh into {folder}, with its own work folder")
-    journal(host, "dependencies", f"{folder}/bin/installdependencies.sh")
-    rc, out = sudo(host, [f"{folder}/bin/installdependencies.sh"], timeout=900)
+        # The folder stays root's; 0711 lets the runner user read the one file it is told the name of, never write.
+        steps = [(sudo, ["chmod", "0711", d], "root's folder for the download"),
+                 (as_runner, ["install", "-d", "-m", "0700", RUNNERS_HOME.rstrip("/")], "runners folder"),
+                 (as_runner, ["install", "-d", "-m", "0700", folder], "the runner's folder")]
+        for how, argv, what in steps:
+            rc, out = how(host, argv)
+            if rc != 0:
+                rep.stop(f"could not make {what}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
+                return False
+        rc, out = as_runner(host, ["tar", "xzf", tgz, "-C", folder])
+        if rc != 0:
+            rep.stop(f"could not unpack the runner: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
+            return False
+        rep.ok(f"unpacked fresh into {folder}, with its own work folder")
+        run_dependencies(host, tgz, f"{d}/root", rep)
+        return True
+    finally:
+        sudo(host, ["rm", "-rf", "--one-file-system", d])
+
+
+def run_dependencies(host: Host, tgz: str, d: str, rep: Report) -> None:
+    """R127 (rule 28): the runner's dependency script runs as root from root's own checked copy of the download,
+    taken out into a folder only root can enter; never the copy in the runner's folder, which a job could rewrite."""
+    script = f"{d}/bin/installdependencies.sh"
+    journal(host, "dependencies", f"{script} (from root's checked copy)")
+    rc, out = sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0700", d])
+    if rc == 0:
+        rc, out = sudo(host, ["tar", "xzf", tgz, "-C", d, "--wildcards", "*bin/installdependencies.sh"])
+    if rc == 0:
+        rc, out = sudo(host, ["bash", script], timeout=900)
     if rc != 0:
         rep.warn(f"the runner's own dependency script did not finish: {tail(out)}")
     else:
-        rep.ok("the runner's own dependency script ran")
-    return True
+        rep.ok("the runner's own dependency script ran (from root's checked copy of the download)")
 
 
 def register(gh: GitHub, host: Host, repo: str, folder: str, name: str, labels: list[str], rep: Report) -> bool:
@@ -1946,8 +2081,8 @@ def lock_credentials(host: Host, folder: str, rep: Report) -> bool:
     """G2.8: the runner writes .credentials and .runner as 664; they become 600, read back."""
     files = [f"{folder}/.credentials", f"{folder}/.runner", f"{folder}/.credentials_rsaparams"]
     journal(host, "chmod", "0600 credential files")
-    sudo(host, ["chmod", "0600"] + files)
-    rc, out = sudo(host, ["stat", "-c", "%a %U %n"] + files)
+    as_runner(host, ["chmod", "0600"] + files)  # R128: the runner's own files, as the runner user (rule 28)
+    rc, out = as_runner(host, ["stat", "-c", "%a %U %n"] + files)
     rows = [x.split(None, 2) for x in out.splitlines() if x.strip()]
     if rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
         rep.stop(f"the runner's credential files are not its own only: {tail(out, 3)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
@@ -1987,7 +2122,7 @@ def change_limits(host: Host, repo: str, known: dict, lim: dict, rep: Report) ->
     a running job is held to the new limits from now on."""
     path = f"/etc/systemd/system/{SLICE}"
     journal(host, "write", f"{path} (new limits)")
-    rc, out = sudo(host, ["tee", path], input=slice_text(lim))
+    rc, out = root_file(host, path, slice_text(lim))
     if rc != 0:
         rep.stop(f"could not write {path}: {tail(out)}. The limits are as they were. Settle what it says, then run "
                  "the same command again")
@@ -2015,24 +2150,37 @@ def change_limits(host: Host, repo: str, known: dict, lim: dict, rep: Report) ->
     return rep.code()
 
 
-def install_service(host: Host, folder: str, survey_: dict, rep: Report, limits: dict | None = None) -> str | None:
-    """G2.9: the runner's own unit, then our drop-in and slice, read back."""
-    journal(host, "svc.sh install", folder)
-    rc, out = sudo(host, ["bash", "-c", 'cd "$1" && ./svc.sh install "$2"', "minions-svc", folder, RUNNER_USER])
-    if rc != 0:
-        rep.stop(f"the runner's service install failed: {tail(out)}")
+def install_service(host: Host, folder: str, unit: str, survey_: dict, rep: Report,
+                    limits: dict | None = None) -> str | None:
+    """G2.9, R127 (rule 28: root runs only what root owns): the runner's unit is written by this tool as root's own
+    file, never by the runner's svc.sh run as root; what goes in the runner's folder is done as the runner user;
+    then our drop-in and slice, read back."""
+    if not re.fullmatch(UNIT_RE, unit):
+        rep.stop(f"the runner's unit name {unit!r} is not one this tool writes: nothing is touched. Check the "
+                 "runner's name and folder name (letters, digits, dot, dash, underscore), then run the same command again")
         return None
-    rc, unit = sudo(host, ["cat", f"{folder}/.service"])
-    unit = unit.strip()
-    if rc != 0 or not re.fullmatch(r"actions\.runner\.[A-Za-z0-9_.@-]+\.service", unit):
-        rep.stop("could not read the name of the runner's unit. Settle what it says, then run the same command again: what was done is read back, never done twice")
+    if exists_as_root(host, unit_path(unit)):
+        rep.stop(f"a unit named {unit} is already on this computer, and this setup did not write it: nothing is "
+                 "touched. Settle what it is, then run the same command again")
+        return None
+    journal(host, "write unit", unit)
+    for argv, what in ((["cp", f"{folder}/bin/runsvc.sh", f"{folder}/runsvc.sh"], "the runner's service script"),
+                       (["chmod", "0755", f"{folder}/runsvc.sh"], "the runner's service script"),
+                       (["tee", f"{folder}/.service"], "the runner's own note of its unit")):
+        rc, out = as_runner(host, argv, input=unit + "\n" if argv[0] == "tee" else None)
+        if rc != 0:
+            rep.stop(f"could not write {what} as the runner user: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
+            return None
+    rc, out = root_file(host, unit_path(unit), unit_text(folder, unit))
+    if rc != 0:
+        rep.stop(f"could not write {unit_path(unit)}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return None
     limits = limits or slice_limits(survey_)
     journal(host, "write", f"/etc/systemd/system/{SLICE} and {unit}.d/{DROPIN}")
     for path, text in ((f"/etc/systemd/system/{SLICE}", slice_text(limits)),
                        (f"/etc/systemd/system/{unit}.d/{DROPIN}", dropin_text(folder))):
-        sudo(host, ["install", "-d", "-m", "0755", os.path.dirname(path)])
-        rc, out = sudo(host, ["tee", path], input=text)
+        sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", os.path.dirname(path)])
+        rc, out = root_file(host, path, text)
         if rc != 0:
             rep.stop(f"could not write {path}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return None
@@ -2142,6 +2290,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
         return rep.code()
     if not check_persons_home(host, rep):
         return rep.code()
+    if not runner_user_is_ours_or_absent(host, rep):  # R129: before the person's lines and before any admin step
+        return rep.code()
     if interactive is None:
         interactive = host.isatty()
     flags = (f" --limits {limits[0]},{limits[1]}" if limits else "") + (" --beside-live-too" if beside_live else "")
@@ -2193,7 +2343,7 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if not install_hooks(host, repo, folder, rep):
         return rep.code()
     version = runner_version(host, folder, rep) or rel["version"]
-    unit = install_service(host, folder, survey_, rep, lim)
+    unit = install_service(host, folder, unit_name(folder, runner_name), survey_, rep, lim)
     if unit is None:
         return rep.code()
     swap_kept = say_swap_cap(host, rep)  # R94: read from the running slice; only "kept" is recorded as kept
@@ -2247,6 +2397,9 @@ PROGRAMS = {
     "chmod": "modes", "stat": "reading modes back", "id": "your group", "rm": "removing files", "test": "a path exists",
     "bash": "the runner's own scripts", "systemd-inhibit": "the two locks during a job",
     "journalctl": "the runner's own log lines", "sha256sum": "the runner's checksum", "tar": "unpacking the runner",
+    "mktemp": "a root-only folder for the download", "find": "emptying the runner's records, as the runner",
+    "rmdir": "an emptied folder", "crontab": "the runner user's crontab off", "atq": "its at jobs, read",
+    "atrm": "its at jobs off", "loginctl": "its linger off", "cp": "the runner's service script, as the runner",
 }
 DARWIN_ONLY = {"launchctl", "pmset", "diskutil", "sw_vers", "sysctl", "netstat"}  # macOS; resolved there, later
 # The programs the two job hooks run (as the runner user, which cannot enter your home folder).
@@ -2288,16 +2441,25 @@ def records_dir_of(folder: str) -> str:
     return f"{RECORDS_ROOT}/{os.path.basename(folder.rstrip('/'))}"
 
 
-def keep_jobs_record(host: Host, records: str, rep: Report) -> bool:
-    """G6.10: before a runner's jobs' records are deleted, they are added to the person's record. False when they
-    could not be read or written: then they stay where they are (rule 6), and the removal goes on without them."""
+def keep_jobs_record(host: Host, records: str, rep: Report) -> str | bool:
+    """G6.10: before a runner's jobs' records are deleted, they are added to the person's record. "kept" when they
+    were; "nothing" when there was no file of the hooks' to keep (no job ran, or a job put a link there); False when
+    they could not be read or written: then they stay where they are (rule 6), and the removal goes on without them."""
     path = records.rstrip("/") + "/jobs.log"
-    text = host.read(path)
-    if text is None:
-        there = root_test(host, path)
-        if there is False:
-            return True  # no job ever ran: nothing to keep
-        rc, out = sudo(host, ["cat", path]) if there else (1, "")
+    # R128 (rule 28): the runner user writes this folder, so a job can put a link where jobs.log was. It is read as
+    # the runner user only (never as root, never as you), and only when it is a plain file: a link is not what the
+    # hooks wrote, so it is named, never followed, and deleted with the folder (rule 23).
+    rc, kind = as_runner(host, ["stat", "-c", "%F", path])
+    kind = kind.strip()
+    if rc != 0 and "no such file" in kind.lower():
+        return "nothing"  # no job ever ran: nothing to keep
+    if rc == 0 and kind not in ("regular file", "regular empty file"):
+        rep.warn(f"{path} is a {kind}, not the file this tool's job hooks write: it is not followed or copied to "
+                 "your record, and is deleted with its folder")
+        return "nothing"
+    text = None
+    if rc == 0:
+        rc, out = as_runner(host, ["cat", path])
         text = out if rc == 0 else None
     if text is None:
         rep.warn(f"the jobs' records in {records} could not be read, so they are kept where they are, not deleted; "
@@ -2313,7 +2475,7 @@ def keep_jobs_record(host: Host, records: str, rep: Report) -> bool:
                  f"{e.strerror or e}), so they are kept where they are, not deleted; free the space or the folder, "
                  "then run the same command again")
         return False
-    return True
+    return "kept"
 
 
 def keep_journal_record(host: Host, rep: Report) -> bool:
@@ -2353,9 +2515,12 @@ def delete_record_if_typed(host: Host, rep: Report) -> None:
     if word.strip() != "delete":
         rep.ok(f"your record ({d}) is kept, as you chose")
         return
-    host.delete_record()
+    left = host.delete_record() or []
     if host.record_count() == (0, 0):
         rep.ok(f"your record ({d}) is deleted, as you typed")
+    elif left:
+        rep.ok(f"your record's files are deleted, as you typed; left in {d}, not written by this tool: "
+               f"{', '.join(left)}")
     else:
         rep.warn(f"your record ({d}) could not be deleted whole; it is yours to delete by hand")
 
@@ -2527,13 +2692,11 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
     every_s = int((load_state(host).get("watch") or {}).get("every_s") or WATCH_EVERY_S)
     for name, text in (("job-started.sh", job_started_script(folder, path=hook_path, every_s=every_s)),
                        ("job-completed.sh", job_completed_script(folder, path=hook_path))):
-        rc, out = sudo(host, ["tee", f"{d}/{name}"], input=text)
+        rc, out = root_file(host, f"{d}/{name}", text, "0755")
         if rc != 0:
             rep.stop(f"could not write {d}/{name}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
-        sudo(host, ["chown", "root:root", f"{d}/{name}"])
-        sudo(host, ["chmod", "0755", f"{d}/{name}"])
-    rc, env = sudo(host, ["cat", f"{folder}/.env"])
+    rc, env = as_runner(host, ["cat", f"{folder}/.env"])  # R128: read as the runner user, never followed by root
     keep = [x for x in (env.splitlines() if rc == 0 else []) if not x.startswith("ACTIONS_RUNNER_HOOK_JOB_")]
     keep += [f"ACTIONS_RUNNER_HOOK_JOB_STARTED={d}/job-started.sh", f"ACTIONS_RUNNER_HOOK_JOB_COMPLETED={d}/job-completed.sh"]
     rc, out = as_runner(host, ["tee", f"{folder}/.env"], input="\n".join(keep) + "\n")
@@ -2606,8 +2769,8 @@ def stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool) 
                  "`drain <owner/repo>` first")
         return False
     if not unit:  # R96: a setup cut before it recorded the unit; the runner's own file names it
-        rc, named = sudo(host, ["cat", f"{folder}/.service"])
-        unit = named.strip() if rc == 0 and re.fullmatch(r"actions\.runner\.[A-Za-z0-9_.@-]+\.service", named.strip()) else ""
+        rc, named = as_runner(host, ["cat", f"{folder}/.service"])  # R128: as the runner user
+        unit = named.strip() if rc == 0 and re.fullmatch(UNIT_RE, named.strip()) else ""
     if not unit:
         left = runner_pids(host, folder)
         if left:
@@ -2626,7 +2789,7 @@ def stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool) 
         left = runner_pids(host, folder)
     for pid in left:  # still there: SIGTERM by exact PID, then read back again
         journal(host, "SIGTERM", str(pid))
-        sudo(host, ["kill", "-TERM", str(pid)])
+        as_runner(host, ["kill", "-TERM", str(pid)])  # R128: as the runner user, who can end only its own
     if left:
         host.sleep(2)
         left = runner_pids(host, folder)
@@ -3117,8 +3280,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         if b:
             first.insert(0, ("stop", blind_words(rp, b, every)))
     if not ok_:
-        first.insert(0, ("stop", "the watch is not running, so this computer takes no job now: each job is refused before its first step until "
-                                 "the watch reads the repository private again. Your way out: "
+        first.insert(0, ("stop", "the watch is not running, so the job hook here refuses each job before its first step " + HOOK_CAVEAT
+                                 + " until the watch reads the repository private again. Your way out: "
                                  f"`sudo systemctl start {WATCH_UNIT}.timer`, or `setup` again"))
     cc = data.get("cost_change")
     if cc and not cc.get("told"):  # G5.10: told once, at the next status, first
@@ -3449,10 +3612,10 @@ def blind_words(repo: str, b: dict, every_s: int) -> str:
            "check this computer's network; the next pass reads again by itself")
     return (f"the watch could not read whether {repo} is still private, {b['passes']} pass(es) in a row since "
             f"{b['since']}: {b['why']}. "
-            + (f"So this computer takes no job of it now: each job is refused before its first step, until the watch "
+            + (f"So the job hook here refuses each job of it before its first step {HOOK_CAVEAT}, until the watch "
                "reads the repository private again. " if held else
-               f"After {SEEN_PASSES} such passes ({SEEN_PASSES * every_s // 60} minutes) this computer refuses its "
-               "jobs until the watch reads it private again. ")
+               f"After {SEEN_PASSES} such passes ({SEEN_PASSES * every_s // 60} minutes) the job hook here refuses its "
+               f"jobs {HOOK_CAVEAT} until the watch reads it private again. ")
             + f"Your way out: {way}")
 
 
@@ -3472,7 +3635,7 @@ def watch_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> tup
                 + ("; our runner is off it on GitHub" if ps.get("removed") else "")), ""
     s, d = gh.api("GET", f"repos/{repo}")
     if s == 200 and d is not None and (d.get("private") is False or d.get("visibility") == "public"):
-        write_seen(host, mine, "public")  # G5.15: the hook refuses at once, whatever the steps below manage
+        write_seen(host, mine, "public")  # G5.15: the hook refuses at once (unless a job switched it off, R133)
         public_guard(gh, host, repo, data, rep)
         return f"{repo}: no longer private: every job of it refused here", ""
     why = ""
@@ -3621,7 +3784,9 @@ def disk_pass(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> str
 
 
 def public_guard(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None:
-    """G5.4 (INV1): a repository no longer private. The hook already refuses every job of it (the record says
+    """G5.4 (INV1): a repository no longer private. The hook refuses every job of it unless a job that ran here
+    switched the hook off (R133: a gate a job can switch off is not a wall; the hold no job can touch is GitHub's
+    side, here: labels off, then the runner deleted once idle) (the record says
     `public`, G5.15); here our labels come off when GitHub can be reached. The watch stops no service and kills no
     job: it runs as the person, with no admin rights (plan 2.0; a system timer has no sudo ticket)."""
     mine = data["runners"][repo]
@@ -3640,7 +3805,7 @@ def remove_public_runner(gh: GitHub, host: Host, repo: str, mine: dict) -> None:
     ps = mine["public_stop"]
     s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
     if s != 200:
-        return  # GitHub not reached: the hook holds meanwhile; the next pass tries again
+        return  # GitHub not reached: only the hook, if no job switched it off, refuses meanwhile; next pass tries again
     r = next((x for x in (d or {}).get("runners", []) if x.get("name") == mine["name"]), None)
     if r is not None and r.get("busy"):
         return  # a job that began before the turn finishes (INV4); the next pass tries again
@@ -3670,9 +3835,14 @@ def public_now(gh: GitHub, host: Host, repo: str, mine: dict) -> dict:
     return ps
 
 
+# R133 (rule 28, A GATE IS NOT KEPT BY THE ONE IT GATES): the start hook is named in the runner's .env, which the
+# runner user (so any job) can rewrite; every line that leans on the hook says so.
+HOOK_CAVEAT = "(unless a job that already ran here switched that hook off)"
+
+
 def public_words(repo: str, ps: dict) -> str:
-    return (f"{repo} is no longer private (read {ps['time']}): this computer refuses every job of it before its "
-            "first step"
+    return (f"{repo} is no longer private (read {ps['time']}): the job hook here refuses each job of it before its "
+            f"first step {HOOK_CAVEAT}"
             + ("; our runner is off the repository on GitHub's side, so GitHub hands this computer no job of it"
                if ps.get("removed") else
                "; our runner is still on the repository on GitHub's side, with no job on it: the watch could not "
@@ -3761,7 +3931,7 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
     svc, tmr = watch_units(host.user(), every_s, path_for(found))
     for path, text in ((f"/etc/systemd/system/{WATCH_UNIT}.service", svc),
                        (f"/etc/systemd/system/{WATCH_UNIT}.timer", tmr)):
-        rc, out = sudo(host, ["tee", path], input=text)
+        rc, out = root_file(host, path, text)
         if rc != 0:
             rep.stop(f"could not write {path}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
@@ -4278,10 +4448,20 @@ RUNNERS_HOME = f"/home/{RUNNER_USER}/runners/"
 def root_test(host: Host, path: str) -> bool | None:
     """Read as root: the runner user's home is closed to the person (G2.2), so the person's own checks cannot see in.
     None when it could not be read (no admin rights open in this terminal): a third answer, never a no (R71)."""
-    rc, out = sudo(host, ["test", "-e", path])
+    # R128 (rule 28): a path in the runner user's home is read as the runner user, so a link a job planted there
+    # leads nowhere root can see; root's own folders are read as root.
+    how = as_runner if path.startswith(f"/home/{RUNNER_USER}/") else sudo
+    rc, out = how(host, ["test", "-e", path])
     if rc == 0:
         return True
     return None if "a password is required" in out else False
+
+
+def empty_then_rmdir(host: Host, path: str) -> None:
+    """R128 (rule 28): a folder of root's that the runner user writes into (a repository's jobs' records): its
+    contents deleted as the runner user, then the empty folder removed by root with rmdir, which follows nothing."""
+    as_runner(host, ["find", path, "-mindepth", "1", "-delete"])
+    sudo(host, ["rmdir", path])
 
 
 def exists_as_root(host: Host, path: str) -> bool:
@@ -4350,13 +4530,20 @@ def remove_github_side(gh: GitHub, host: Host, repo: str, mine: dict, rep: Repor
 
 
 def remove_service(host: Host, mine: dict, rep: Report) -> bool:
-    """The runner's own unit, through its own svc.sh run as root; our drop-in; read back gone. Safe to run again."""
+    """R127 (rule 28): the runner's unit and our drop-in, taken out by this tool as root's own files (never through
+    the runner's svc.sh); the runner's own note of its unit removed as the runner user; read back gone. Safe to run
+    again. The runner's `config.sh remove` refuses while that note is there, so this comes before it."""
     unit, folder = mine.get("unit") or "", mine.get("folder") or ""
+    if not unit and folder:
+        rc, named = as_runner(host, ["cat", f"{folder}/.service"])
+        unit = named.strip() if rc == 0 else ""
+    if unit and not re.fullmatch(UNIT_RE, unit):
+        rep.stop(f"the runner's unit name {unit!r} is not one this tool writes: nothing is removed. Check the "
+                 "runner's .service file (a job can change it), then run the same command again")
+        return False
     if folder and exists_as_root(host, f"{folder}/.service"):
-        journal(host, "svc.sh uninstall", folder)
-        rc, out = sudo(host, ["bash", "-c", 'cd "$1" && ./svc.sh uninstall', "minions-svc", folder])
-        if rc != 0:
-            rep.warn(f"the runner's own service uninstall did not finish ({tail(out)}); its unit is removed directly")
+        journal(host, "remove", f"{folder}/.service")
+        as_runner(host, ["rm", "-f", f"{folder}/.service"])
     if unit:
         if exists_as_root(host, unit_path(unit)):
             journal(host, "remove unit", unit)
@@ -4366,6 +4553,7 @@ def remove_service(host: Host, mine: dict, rep: Report) -> bool:
             journal(host, "remove drop-in", f"{unit_path(unit)}.d")
             sudo(host, ["rm", "-rf", unit_path(unit) + ".d"])
         sudo(host, systemctl("daemon-reload"))
+        sudo(host, systemctl("reset-failed", unit))  # R132: a failed unit stays loaded until its failure is forgotten
         if not unit_gone(host, unit):
             rep.stop(f"the runner's service {unit} is still there after its removal. Run the same command again: it finishes a removal that was not finished")
             return False
@@ -4377,20 +4565,28 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
     """The runner's own folders (only under the runner user's runners folder), its hooks and its jobs' records."""
     folder = mine.get("folder") or ""
     records = records_dir_of(folder) if folder else ""
-    if records and exists_as_root(host, records) and not keep_jobs_record(host, records, rep):
+    kept = keep_jobs_record(host, records, rep) if records and exists_as_root(host, records) else "nothing"
+    if kept is False:
         records = ""  # G6.10: not kept in the person's record, so not deleted (rule 6)
     paths = [x for x in (folder if folder.startswith(RUNNERS_HOME) and "/.." not in folder else "",
                          hook_dir(repo), records) if x]
     for path in paths:
         if exists_as_root(host, path):
             journal(host, "delete", path)
-            sudo(host, ["rm", "-rf", "--one-file-system", path])
+            # R128 (rule 28): what the runner user can write is deleted as the runner user, who can take only what it
+            # could already; root then removes an emptied records folder with rmdir, which follows nothing.
+            if path == folder:
+                as_runner(host, ["rm", "-rf", "--one-file-system", path])
+            elif path == records:
+                empty_then_rmdir(host, path)
+            else:
+                sudo(host, ["rm", "-rf", "--one-file-system", path])
     left = [x for x in paths if exists_as_root(host, x)]
     if left:
         rep.stop(f"could not delete {', '.join(left)}. Run the same command again: it finishes a removal that was not finished")
         return False
     rep.ok("the runner's folders and its hooks are deleted, read back"
-           + (f"; its jobs' records are in your record ({host.record_dir()})" if records else ""))
+           + (f"; its jobs' records are in your record ({host.record_dir()})" if kept == "kept" else ""))
     return True
 
 
@@ -4440,16 +4636,13 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
     if runner_pids(host, folder) or host.run(systemctl("is-active", mine.get("unit") or "none"))[1].strip() == "active":
         if not stop_runner(host, mine.get("unit") or "", folder, rep, drained=True):
             return False
-    # The runner's own `config.sh remove` refuses while its service is installed, so svc.sh uninstall comes first;
-    # the GitHub side still goes before anything is deleted (G6.6).
-    if folder and exists_as_root(host, f"{folder}/.service"):
-        journal(host, "svc.sh uninstall", folder)
-        rc, out = sudo(host, ["bash", "-c", 'cd "$1" && ./svc.sh uninstall', "minions-svc", folder])
-        if rc != 0:
-            rep.warn(f"the runner's own service uninstall did not finish ({tail(out)}); its unit is removed directly")
+    # The runner's own `config.sh remove` refuses while its service is installed, so the unit goes first, taken out
+    # by this tool (R127); the GitHub side still goes before anything of its folders is deleted (G6.6).
+    if not remove_service(host, mine, rep):
+        return False
     if not remove_github_side(gh, host, repo, mine, rep):
         return False
-    if not remove_service(host, mine, rep) or not remove_folders(host, repo, mine, rep):
+    if not remove_folders(host, repo, mine, rep):
         return False
     journal(host, "removed", f"{repo} {mine.get('name')}")
     data["runners"].pop(repo, None)
@@ -4554,13 +4747,13 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
             bad("folder", f"the runner's folder {folder} is gone: {again}")
     # G2.8: the credential files are the runner's own, 600.
     files = [f"{folder}/.credentials", f"{folder}/.runner", f"{folder}/.credentials_rsaparams"]
-    rc, out = sudo(host, ["stat", "-c", "%a %U %n"] + files)
+    rc, out = as_runner(host, ["stat", "-c", "%a %U %n"] + files)  # R128: read as the runner user
     rows = [x.split(None, 2) for x in out.splitlines() if x.strip()]
     if "a password is required" in out:
         rep.warn(f"{repo}: the credential files: not read")
     elif rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
         bad("credential files", f"the runner's credential files are not 600 and its own ({tail(out, 3)}): "
-                                f"`sudo chmod 600 {' '.join(files)}`, or {again}")
+                                f"`sudo -u {RUNNER_USER} chmod 600 {' '.join(files)}`, or {again}")
     else:
         rep.ok(f"{repo}: the credential files are 600, owned by {RUNNER_USER}")
     # G2.9, G4.2: the boot service as written, in our slice, and the slice's limits.
@@ -4727,6 +4920,9 @@ def remove_shared(host: Host, rep: Report) -> bool:
             sudo(host, systemctl("disable", "--now", unit))
             sudo(host, ["rm", "-f", unit_path(unit)])
     sudo(host, systemctl("daemon-reload"))
+    # R132 (seen 2026-11-24): a watch whose last pass stopped (exit 2, a repository read public) stays loaded as
+    # "failed" after its file is gone, until systemd is told to forget that failure.
+    sudo(host, systemctl("reset-failed", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"))
     for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):
         if not unit_gone(host, unit):
             rep.stop(f"{unit} is still there after its removal. Run the same command again: it finishes a removal that was not finished")
@@ -4746,7 +4942,15 @@ def remove_shared(host: Host, rep: Report) -> bool:
     for path in [HOOKS_ROOT] + ([SEEN_ROOT] if kept_here else [RECORDS_ROOT]):
         if exists_as_root(host, path):
             journal(host, "delete", path)
-            sudo(host, ["rm", "-rf", "--one-file-system", path])
+            if path == RECORDS_ROOT:  # R128: each repository's records folder is the runner user's to empty
+                for n in names or []:
+                    if n != os.path.basename(SEEN_ROOT):
+                        empty_then_rmdir(host, f"{RECORDS_ROOT}/{n}")
+                for sub in [SEEN_ROOT]:
+                    sudo(host, ["rm", "-rf", "--one-file-system", sub])
+                sudo(host, ["rmdir", path])
+            else:
+                sudo(host, ["rm", "-rf", "--one-file-system", path])
     if any(exists_as_root(host, x) for x in [HOOKS_ROOT] + ([SEEN_ROOT] if kept_here else [RECORDS_ROOT])):
         rep.stop(f"could not delete {HOOKS_ROOT} or {RECORDS_ROOT}. Run the same command again: it finishes a removal that was not finished")
         ok = False
@@ -4754,31 +4958,115 @@ def remove_shared(host: Host, rep: Report) -> bool:
         rep.ok(f"the tool's copy and the job hooks are deleted ({HOOKS_ROOT}); the jobs' records are "
                + (f"kept where they are, not deleted: {', '.join(kept_here)}" if kept_here else
                   f"in your record ({host.record_dir()}), and {RECORDS_ROOT} is deleted"))
-    if host.run(["id", RUNNER_USER])[0] == 0:
-        left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
-        ours = our_leftover_holds(host, left)
-        if ours:  # R91: a job's sleep hold left behind (a service stopped mid-job): ours, so ended here, by exact PID
-            journal(host, "end", f"leftover sleep holds of ours: {', '.join(ours)}")
-            sudo(host, ["kill", "-TERM", *ours])
-            for _ in range(25):
-                left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
-                if not set(ours) & set(left):
-                    break
-                host.sleep(0.2)
-            rep.ok(f"a job's sleep hold left behind by a stopped service ({', '.join(ours)}) is ended")
-        if left:
-            what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
-            rep.stop(f"processes of {RUNNER_USER} still run, not made by this tool's sleep holds: {what}. The user is "
-                     f"not deleted. End them (`sudo kill {' '.join(map(str, left))}`), then run the same command again: "
-                     "it finishes from here")
+    return remove_runner_user(host, rep) and ok
+
+
+PUBLIC_TMP = ("/tmp", "/var/tmp", "/dev/shm")  # the places any user can write outside its home
+
+
+def remove_runner_user(host: Host, rep: Report) -> bool:
+    """R130 (rule 28, the last uninstall): nothing of the runner user outlives it, and a later user of the same name
+    inherits nothing. In order: the service is stopped (before this); no process of that user alive (a job's sleep
+    hold named as such; the rest ended by that user's id, as that user); its crontab and at jobs off; linger off; what
+    it owns in the places anyone can write deleted AS that user, never by root; then userdel -r. Each read back; what
+    could not be removed is named, never said gone (rule 6)."""
+    kind, uid = runner_user_state(host)
+    if kind == "unread":
+        rep.stop(f"could not read whether the user {RUNNER_USER} is on this computer ({uid}). Run the same command "
+                 "again: it finishes from here")
+        return False
+    if kind == "there":
+        if not load_state(host).get("runner_user_made"):  # R129 (rule 28): never a user this tool did not make
+            rep.warn(f"the user {RUNNER_USER} is left as it is: this tool's record here does not say it made it")
+            return True
+        if not end_runner_users_processes(host, rep):
             return False
+        left = []
+        if host.which("crontab"):
+            journal(host, "crontab off", RUNNER_USER)
+            sudo(host, ["crontab", "-r", "-u", RUNNER_USER])
+            rc, out = sudo(host, ["crontab", "-l", "-u", RUNNER_USER])
+            if rc == 0 or "no crontab" not in out.lower():
+                left.append(f"its crontab ({tail(out) or 'still listed'})")
+        if host.which("atq"):
+            rc, out = sudo(host, ["atq"])
+            jobs = [x.split()[0] for x in out.splitlines() if x.split() and x.split()[-1] == RUNNER_USER]
+            if jobs:
+                journal(host, "at jobs off", f"{RUNNER_USER}: {', '.join(jobs)}")
+                sudo(host, ["atrm", *jobs])
+                rc, out = sudo(host, ["atq"])
+                still = [x.split()[0] for x in out.splitlines() if x.split() and x.split()[-1] == RUNNER_USER]
+                if still:
+                    left.append(f"its at jobs {', '.join(still)}")
+        linger = f"/var/lib/systemd/linger/{RUNNER_USER}"
+        if exists_as_root(host, linger):
+            journal(host, "linger off", RUNNER_USER)
+            sudo(host, ["loginctl", "disable-linger", RUNNER_USER])
+            if exists_as_root(host, linger):
+                left.append("its linger")
+        journal(host, "delete", f"what {RUNNER_USER} owns in {', '.join(PUBLIC_TMP)} (as {RUNNER_USER})")
+        as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-delete"])
+        rc, out = as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-print"])
+        files = [x for x in out.splitlines() if x.startswith(PUBLIC_TMP)]
+        if files:
+            left.append(f"its files {', '.join(files[:5])}" + (f" and {len(files) - 5} more" if len(files) > 5 else ""))
+        if left:
+            rep.stop(f"the user {RUNNER_USER} is not deleted: {'; '.join(left)} could not be removed. Settle what it "
+                     "says, then run the same command again: it finishes from here")
+            return False
+        rep.ok(f"nothing of {RUNNER_USER} is left running or scheduled: no process, no crontab, no at job, no linger, "
+               f"no file of it in {', '.join(PUBLIC_TMP)}, read back")
+        # R128 (rule 28): the home is the runner user's to empty (as that user, following no link); userdel -r then
+        # removes an empty folder, so root deletes nothing a job could have placed or re-pointed.
+        journal(host, "delete", f"/home/{RUNNER_USER}'s contents (as {RUNNER_USER})")
+        as_runner(host, ["find", f"/home/{RUNNER_USER}", "-mindepth", "1", "-delete"])
         journal(host, "userdel", RUNNER_USER)
         sudo(host, ["userdel", "-r", RUNNER_USER])
-    if host.run(["id", RUNNER_USER])[0] == 0 or exists_as_root(host, f"/home/{RUNNER_USER}"):
+    if runner_user_state(host)[0] != "absent" or exists_as_root(host, f"/home/{RUNNER_USER}"):
         rep.stop(f"the user {RUNNER_USER} or its home is still there. Run the same command again: it finishes a removal that was not finished")
         return False
+    known = load_state(host)
+    if known.pop("runner_user_made", None):  # R129: a later user of this name is not ours unless this tool makes it
+        save_state(host, known)
     rep.ok(f"the user {RUNNER_USER} and its home are deleted, read back")
-    return ok
+    return True
+
+
+def end_runner_users_processes(host: Host, rep: Report) -> bool:
+    """R130: every process of the runner user ended, read back. A job's sleep hold is named as one (R91); the rest is
+    a job's too (the user is this tool's own), and is ended by that user's id: `kill -KILL -1` run AS that user, which
+    reaches every process of it and nothing of anyone else's."""
+    left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+    ours = our_leftover_holds(host, left)
+    if ours:  # R91: a job's sleep hold left behind (a service stopped mid-job): ours, so ended here, by exact PID
+        journal(host, "end", f"leftover sleep holds of ours: {', '.join(ours)}")
+        as_runner(host, ["kill", "-TERM", *ours])  # R128: as the runner user
+        for _ in range(25):
+            left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+            if not set(ours) & set(left):
+                break
+            host.sleep(0.2)
+        rep.ok(f"a job's sleep hold left behind by a stopped service ({', '.join(ours)}) is ended")
+    if left:
+        what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
+        journal(host, "end", f"processes of {RUNNER_USER} left by its jobs: {what}")
+        for _ in range(3):
+            as_runner(host, ["kill", "-KILL", "-1"])
+            for _ in range(10):
+                left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+                if not left:
+                    break
+                host.sleep(0.2)
+            if not left:
+                break
+        if left:
+            what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
+            rep.stop(f"processes of {RUNNER_USER} still run after being ended with SIGKILL: {what}. The user is not "
+                     "deleted. A process that outlives SIGKILL is waiting on a disk or the network: wait a minute, then "
+                     "run the same command again: it finishes from here")
+            return False
+        rep.ok(f"processes of {RUNNER_USER} left by its jobs ({what}) are ended, read back")
+    return True
 
 
 def remove_slice(host: Host, rep: Report) -> bool:
@@ -4860,7 +5148,7 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
                                 else "kept until `uninstall --all`, which takes them"), mark)
     rc, _ = host.run(["id", RUNNER_USER])
     line("the runner user", [RUNNER_USER] if rc == 0 else [],
-         "" if everything else "kept; `uninstall --all` takes it")
+         "" if everything or not ours_left else "kept for this tool's other runners here; `uninstall --all` takes it")
     mark = len(unread)
     folders = [x for x in (HOOKS_ROOT, RECORDS_ROOT, f"/home/{RUNNER_USER}") if there(x)]
     line("folders", folders, "" if everything else "kept; `uninstall --all` takes them", mark)
@@ -4933,6 +5221,11 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
     for rp in repos:
         if not remove_one(gh, host, rp, data, rep, wait_s, poll_s, next_cmd):
             return rep.code()
+    if not everything and not (load_state(host).get("runners") or {}):
+        # R130 (rule 28): the last runner is gone, so its user goes too: nothing a job of this repository left behind
+        # (a crontab, an at job, a process, a file in /tmp) is there for the next repository set up here.
+        if not remove_runner_user(host, rep):
+            return rep.code()
     if everything:
         if not remove_shared(host, rep):
             return rep.code()
@@ -4940,7 +5233,10 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
             put_back(gh, host, rp, data, rep)
         journal(host, "delete", f"{host.state_dir()} (the last step)")
         if keep_journal_record(host, rep):  # G6.10: the journal is the person's record; not kept, not deleted
-            shutil.rmtree(host.state_dir(), ignore_errors=True)
+            left = delete_ours(host.state_dir(), STATE_NAMES)  # R129 (rule 23): only ours, by name
+            if left:
+                rep.ok(f"this tool's files in {host.state_dir()} are deleted; left there, not written by this tool: "
+                       f"{', '.join(left)}")
         if delete_record:
             delete_record_if_typed(host, rep)
         # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
@@ -5083,6 +5379,10 @@ def uninstall_lines(host: Host, repo: str | None, everything: bool, data: dict) 
     if everything:
         lines = ["This takes off this computer every runner of this tool, the watch, the slice, the user "
                  f"{RUNNER_USER} and this tool's copy, holding new jobs first so that none starts here while it works."]
+    elif set(data.get("runners") or {}) <= {repo}:  # R130: the last runner here; its user goes with it
+        lines = [f"This takes the runner for {repo} off this computer, holding new jobs first so that none starts here "
+                 f"while it works, then the user {RUNNER_USER} with everything its jobs left running or scheduled; "
+                 "the watch and the slice stay until `uninstall --all`."]
     else:
         lines = [f"This takes the runner for {repo} off this computer, holding new jobs first so that none starts here "
                  "while it works, and leaves the watch, the slice and the user until `uninstall --all`."]
@@ -5192,11 +5492,21 @@ def python_floor_line(v: tuple) -> str:
             "(Ubuntu 22.04 or newer, Debian 12 or newer): use such a computer for its jobs")
 
 
+def umask_floor() -> int:
+    """R134 (rule 28, NOTHING A SKILL MAKES IS WRITABLE BY ANOTHER ACCOUNT): whatever umask the tool was started with
+    (a launcher can start it with 000), 022 is added before anything is made, so no file or folder of this tool, and
+    nothing root makes for it (sudo starts from this umask too), is writable by another account. Returns the umask now."""
+    given = os.umask(0o022)
+    os.umask(given | 0o022)
+    return given | 0o022
+
+
 def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: GitHub | None = None) -> int:
     """G8.3's table: the command's own code (0, 2, 3, 4); 64 typed wrong; 1 the tool failed; 130 interrupted."""
     a = parser().parse_args(argv)
     host = host or Host()
     out = out or sys.stdout
+    umask_floor()
     if sys.version_info < PYTHON_FLOOR:  # R95: before any step, so nothing is made that this Python cannot finish
         print(python_floor_line(sys.version_info), file=out)
         return EXIT_STOP

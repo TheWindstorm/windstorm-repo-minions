@@ -15,6 +15,19 @@ Since those cold starts one default changed: a job that needs more memory than i
 reaches the cap, by name, instead of running slowly; `setup <owner/repo> --limits <processors>,<memory %>` raises
 the cap (row R94).
 
+- Root runs only what root owns (family rule 28). A job is code from anyone who can push, and nothing a job can
+  write is ever run, sourced or followed by root: the service unit is the tool's own writing (GitHub's `svc.sh` no
+  longer runs as root); the runner's dependency script runs from root's own checked copy of the download; every
+  act in the runner user's home runs as that user; only a runner user this tool made is used or removed. Every root
+  step is listed, with the mode and owner of what it creates, in `docs/root-steps.md`, and a test holds the list
+  to the code (rows R127, R128, R129, R135).
+- Nothing the tool makes is writable by another account, even when it is started with umask 000 (row R134).
+- When the last runner goes, its user goes with everything its jobs left running or scheduled: processes, crontab,
+  at jobs, linger, files in `/tmp`, `/var/tmp` and `/dev/shm`; what could not be removed is named (row R130). A
+  stop ends what a job left running in the service (`KillMode=mixed`, row R131). A failed unit is not left loaded
+  after uninstall (row R132).
+- No line says the job hook refuses a job without saying a job that already ran here can switch that hook off; the
+  watch, which runs as you, is the gate (row R133).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for
