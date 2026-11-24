@@ -201,6 +201,29 @@ def gh_environ(env, config_dir: str) -> dict:
     return out
 
 
+class Out(str):
+    """R168 (family rule 30's last paragraph, "a warning is not part of the answer"): what a program wrote on standard
+    output, the answer every parse reads, with what it wrote on standard error kept beside it (`err`). A warning on
+    standard error (seen: "sudo: unable to resolve host NAME: ...", the command run and its exit passed on) never
+    reaches a parse. Both streams are read only through `said()`: the words shown at a refusal, and the few answers a
+    program writes on standard error, each named where it is read."""
+    err: str
+
+    def __new__(cls, out: str = "", err: str = ""):
+        o = super().__new__(cls, out)
+        o.err = err
+        return o
+
+
+def said(out: str) -> str:
+    """R168: both streams of a run (standard output, then standard error): for words shown to the person, and for an
+    answer a program gives on standard error (named at each use). A plain string is itself."""
+    err = getattr(out, "err", "")
+    if not err:
+        return str(out)
+    return str(out) + ("" if not out or out.endswith("\n") else "\n") + err
+
+
 class Host:
     """The computer, read through these few calls so tests can stand in for it."""
 
@@ -219,31 +242,32 @@ class Host:
         return gh_environ(env, kept or gh_config_dir(env, self.home()))
 
     def run(self, argv: list[str], timeout: int = 20) -> tuple[int, str]:
+        """R168: the answer is what the program wrote on standard output; standard error is kept beside it (Out)."""
         env = self.gh_env() if argv[:1] == ["gh"] else None  # R144
         try:
             p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
                                env=env)
-            return p.returncode, (p.stdout or "") + (p.stderr or "")
+            return p.returncode, Out(p.stdout or "", p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
-            return 127, str(e)
+            return 127, Out("", str(e))
 
     def run_own(self, argv: list[str], timeout: int = 20) -> tuple[int, str]:
         """R160: one read only, with this run's own environment unchanged (the person's shell, its session bus too):
         where gh keeps a login the tool's own gh cannot read. Never a call whose answer the tool acts on."""
         try:
             p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
-            return p.returncode, (p.stdout or "") + (p.stderr or "")
+            return p.returncode, Out(p.stdout or "", p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
-            return 127, str(e)
+            return 127, Out("", str(e))
 
     def run_in(self, argv: list[str], input: str, timeout: int = 600) -> tuple[int, str]:
         """Like run(), with `input` on standard input: the only way a secret reaches another program (INV2)."""
         env = self.gh_env() if argv[:1] == ["gh"] else None  # R144
         try:
             p = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout, env=env)
-            return p.returncode, (p.stdout or "") + (p.stderr or "")
+            return p.returncode, Out(p.stdout or "", p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
-            return 127, str(e)
+            return 127, Out("", str(e))
 
     def read(self, path: str) -> str | None:
         try:
@@ -666,7 +690,7 @@ def login_read(host: Host) -> tuple[str, str | None, str]:
     if not status and rc == 4:
         return "no", None, "gh has no saved login for github.com"
     # gh's own lines about logging in, out or refreshing are not passed on: this answer is "could not ask", not "no"
-    words = [x.strip() for x in out.splitlines()
+    words = [x.strip() for x in said(out).splitlines()  # R168: words shown, gh's standard error too
              if x.strip() and not re.search(r"gh auth|log ?in|log ?out|refresh", x, re.I)]
     return "unread", None, (f"HTTP {status}: " if status else "") + (" / ".join(words[-2:]) or f"gh exit {rc}, no words")
 
@@ -685,10 +709,10 @@ def login_kept(host: Host) -> tuple[str, str]:
     lines = [x.strip() for x in out.splitlines() if x.strip()]
     if rc == 0 and len(lines) == 1 and re.fullmatch(r"\S+", lines[0]):
         return "yes", ""
-    if re.search(r"no oauth token found", out, re.I):
+    if re.search(r"no oauth token found", said(out), re.I):  # R168: gh's refusal words are on its standard error
         return "no", (f"{NO_LOGIN}: gh has none for github.com that it can read when nobody is logged in (a login "
                       "kept only in a keyring, or only in a shell's GH_TOKEN, cannot be read then)")
-    if re.search(r'unknown command "token"', out):
+    if re.search(r'unknown command "token"', said(out)):
         return hosts_file_login(host)
     words = [x for x in lines if not TOKEN_SHAPE.search(x)]
     if rc == 127:  # Host.run: gh not found with this PATH, or it could not be run at all
@@ -718,6 +742,7 @@ def login_where(host: Host) -> tuple[str, str]:
     """R160: where gh keeps the person's login, from gh's own word in `gh auth status` run in the person's own
     environment (run_own), and the scopes it names. Words only; nothing of it is acted on."""
     rc, out = host.run_own(["gh", "auth", "status", "--hostname", "github.com"])
+    out = said(out)  # R168, on purpose: gh 2.4.0 and 2.23.0 print `auth status` on standard error, newer gh on output
     m = re.search(r"Token scopes:\s*(.+)", out)
     scopes = ", ".join(re.findall(r"'([^']+)'", m.group(1)) or [x.strip() for x in m.group(1).split(",") if x.strip()]) \
         if m else ""
@@ -736,6 +761,7 @@ def login_step(host: Host) -> str:
     `--insecure-storage` where this gh has that flag, read from gh's own help now; a gh without it has no keyring
     and keeps every login in that file already."""
     rc, out = host.run(["gh", "auth", "login", "--hostname", "github.com", "--help"])
+    out = said(out)  # R168, on purpose: the flag's name is looked for in gh's help, whichever stream it is on
     return "`gh auth login --insecure-storage`" if "--insecure-storage" in out else "`gh auth login`"
 
 
@@ -884,6 +910,7 @@ def token_scopes(host: Host) -> set[str] | None:
     rc, out = host.run(["gh", "auth", "status", "--hostname", "github.com"])
     if rc != 0:
         return None
+    out = said(out)  # R168, on purpose: gh 2.4.0 and 2.23.0 print `auth status` on standard error, newer gh on output
     m = re.search(r"Token scopes:\s*(.+)", out)
     if not m:
         # R97: an older gh (2.4.0 on Ubuntu 22.04) prints no scopes; GitHub itself sends them with every answer to a
@@ -2021,10 +2048,10 @@ def sudo(host: Host, argv: list[str], input: str | None = None, timeout: int = 6
     """An admin step: always `sudo -n` (the password was asked once, before the first step)."""
     full = ["sudo", "-n"] + argv
     rc, out = host.run_in(full, input, timeout) if input is not None else host.run(full, timeout)
-    if rc != 0 and "a password is required" in out:  # G2.12: the permission ran out, or this is another terminal
-        out = out.rstrip("\n") + ("\nsudo's permission ran out or belongs to another terminal: run the same command "
-                                  "again from the terminal where you typed the password (what was done is read back, "
-                                  "never done twice)")
+    if rc != 0 and "a password is required" in said(out):  # G2.12: sudo's refusal, on its standard error (R168)
+        out = Out(str(out), getattr(out, "err", "").rstrip("\n") + (
+            "\nsudo's permission ran out or belongs to another terminal: run the same command again from the terminal "
+            "where you typed the password (what was done is read back, never done twice)"))
     return rc, out
 
 
@@ -2033,11 +2060,16 @@ def as_runner(host: Host, argv: list[str], input: str | None = None, timeout: in
 
 
 def mask(text: str, secret: str | None) -> str:
-    return text.replace(secret, "***") if secret else text
+    if not secret:
+        return text
+    if isinstance(text, Out):  # R168: both streams masked, each kept on its own
+        return Out(str(text).replace(secret, "***"), text.err.replace(secret, "***"))
+    return text.replace(secret, "***")
 
 
 def tail(text: str, n: int = 3) -> str:
-    lines = [x.strip() for x in text.splitlines() if x.strip()]
+    """The last lines a run wrote, for words shown to the person: both streams (R168, said)."""
+    lines = [x.strip() for x in said(text).splitlines() if x.strip()]
     return " / ".join(lines[-n:])
 
 
@@ -2120,7 +2152,7 @@ def runner_user_state(host: Host) -> tuple[str, str]:
     rc, out = host.run(["id", "-u", RUNNER_USER])
     if rc == 0 and out.strip().isdigit():
         return "there", out.strip()
-    if rc == 1 and "no such user" in out.lower():
+    if rc == 1 and "no such user" in said(out).lower():  # R168: id says so on its standard error
         return "absent", ""
     return "unread", tail(out) or f"exit {rc}"
 
@@ -2273,10 +2305,10 @@ ROOTS_COPY_RE = r"/tmp/minions-download\.[A-Za-z0-9]{8}"
 
 
 def unpack_from_roots_copy(host: Host, rel: dict, tmp: str, folder: str, rep: Report) -> bool:
-    rc, d = sudo(host, ["mktemp", "-d", "/tmp/minions-download.XXXXXXXX"])
-    d = d.strip()
+    rc, made = sudo(host, ["mktemp", "-d", "/tmp/minions-download.XXXXXXXX"])
+    d = made.strip()
     if rc != 0 or not re.fullmatch(ROOTS_COPY_RE, d):
-        rep.stop(f"could not make a folder of root's own for the download ({tail(d)}): nothing unpacked. Settle what "
+        rep.stop(f"could not make a folder of root's own for the download ({tail(made)}): nothing unpacked. Settle what "
                  "it says, then run the same command again")
         return False
     tgz = f"{d}/runner.tgz"
@@ -2852,8 +2884,9 @@ def keep_jobs_record(host: Host, records: str, rep: Report) -> str | bool:
     # the runner user only (never as root, never as you), and only when it is a plain file: a link is not what the
     # hooks wrote, so it is named, never followed, and deleted with the folder (rule 23).
     rc, kind = as_runner(host, ["stat", "-c", "%F", path])
+    gone = "no such file" in said(kind).lower()  # R168: stat says so on its standard error
     kind = kind.strip()
-    if rc != 0 and "no such file" in kind.lower():
+    if rc != 0 and gone:
         return "nothing"  # no job ever ran: nothing to keep
     if rc == 0 and kind not in ("regular file", "regular empty file"):
         rep.warn(f"{path} is a {kind}, not the file this tool's job hooks write: it is not followed or copied to "
@@ -3170,7 +3203,7 @@ def pgrep_read(host: Host, argv: list[str]) -> list[str]:
     # user removed by hand), no process of it runs: none. A user read as there, or not read, stays could not be read.
     if argv[1:3] == ["-u", RUNNER_USER] and runner_user_state(host)[0] == "absent":
         return []
-    first = next((x.strip() for x in out.splitlines() if x.strip()), "")
+    first = last_line(out)
     raise PidsUnread(f"pgrep answered code {rc}: " + (first[:160] or "nothing"))
 
 
@@ -5122,7 +5155,7 @@ def unit_read(host: Host, unit: str) -> tuple[str, str]:
                                  "-p", "DropInPaths"))
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     if rc != 0 or not got.get("ActiveState") or not got.get("LoadState"):
-        first = next((x.strip() for x in out.splitlines() if x.strip()), "")
+        first = last_line(out)
         return "unread", f"systemctl answered code {rc}: " + (first[:160] or "nothing")
     act = got["ActiveState"]
     if act in RUNNING_STATES:
@@ -5438,7 +5471,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     files = [f"{folder}/.credentials", f"{folder}/.runner", f"{folder}/.credentials_rsaparams"]
     rc, out = as_runner(host, ["stat", "-c", "%a %U %n"] + files)  # R128: read as the runner user
     rows = [x.split(None, 2) for x in out.splitlines() if x.strip()]
-    if "a password is required" in out:
+    if "a password is required" in said(out):  # R168: sudo's refusal is on its standard error
         rep.warn(f"{repo}: the credential files: not read")
     elif rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
         bad("credential files", f"the runner's credential files are not 600 and its own ({tail(out, 3)}): "
@@ -5487,7 +5520,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     # G4.3, G4.4: the two job hooks, root's and read-only to the runner.
     d = hook_dir(repo)
     rc, out = sudo(host, ["stat", "-c", "%a %U", f"{d}/job-started.sh", f"{d}/job-completed.sh"])
-    if "a password is required" in out:
+    if "a password is required" in said(out):  # R168: sudo's refusal is on its standard error
         rep.warn(f"{repo}: the job hooks: not read")
     elif rc != 0 or [x.strip() for x in out.splitlines() if x.strip()] != ["755 root", "755 root"]:
         bad("job hooks", f"the job hooks are not root's and read-only to the runner ({tail(out)}): {again}")
@@ -5724,7 +5757,7 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
             journal(host, "crontab off", RUNNER_USER)
             sudo(host, ["crontab", "-r", "-u", RUNNER_USER])
             rc, out = sudo(host, ["crontab", "-l", "-u", RUNNER_USER])
-            if rc == 0 or "no crontab" not in out.lower():
+            if rc == 0 or "no crontab" not in said(out).lower():  # R168: crontab says so on its standard error
                 left.append(f"its crontab ({tail(out) or 'still listed'})")
         if host.which("atq"):
             rc, out = sudo(host, ["atq"])
@@ -5838,9 +5871,14 @@ def end_runner_users_processes(host: Host, rep: Report) -> bool:
     return True
 
 
+def last_line(out: str) -> str:
+    """R168: the line shown for a refusal: the program's own last line, both streams read (a warning written before
+    the command ran, as sudo's, comes first and is not the one shown)."""
+    return next((x.strip() for x in reversed(said(out).splitlines()) if x.strip()), "")
+
+
 def first_words(rc: int, out: str) -> str:
-    first = next((x.strip() for x in out.splitlines() if x.strip()), "")
-    return f"systemctl answered code {rc}: " + (first[:160] or "nothing")
+    return f"systemctl answered code {rc}: " + (last_line(out)[:160] or "nothing")
 
 
 def slice_running_units(host: Host) -> tuple[list[str] | None, str]:

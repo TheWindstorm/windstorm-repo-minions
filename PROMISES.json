@@ -2206,6 +2206,20 @@
    "issue": 355,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R168",
+   "seen": "2026-11-24, on a test machine (Ubuntu 24.04, sudo 1.9.15p5) and in a stand-in run: on a computer whose own name does not resolve, sudo writes 'sudo: unable to resolve host NAME: ...' on standard error, runs the command and passes its exit on. The tool joined standard output and standard error for every command it ran, so that warning reached every parse: in the stand-in, setup stopped at 'the runner's home is not closed to others (mode sudo: unable to resolve host ... 750)'.",
+   "promise": "A read that is parsed takes the stream its program writes its answer on (standard output), never the two joined; standard error is kept for the words shown at a refusal and for the few answers a program gives there, each named in the code (id, stat, crontab -l, sudo's refusal, gh auth status). Whether a path exists is read from the test's own printed mark, never from sudo's exit or words.",
+   "codon": "G6.28",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_28_a_warning_on_standard_error_is_never_part_of_an_answer",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 356,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

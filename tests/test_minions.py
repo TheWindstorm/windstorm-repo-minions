@@ -82,6 +82,9 @@ class StandIn(M.GitHub):
         return 404, {"message": "Not Found"}
 
 
+STREAM_WARNING = "warning: a line on standard error that is not part of any answer (R168)\n"
+
+
 class FakeHost(M.Host):
     def __init__(self, system="Linux", files=None, runs=None, which=None, uid=1000,
                  groups=("users",), dirs=None, links=None, page="", free=(100 * 1024 ** 3, 500 * 1024 ** 3)):
@@ -144,7 +147,7 @@ class FakeHost(M.Host):
 
     def run_own(self, argv, timeout=20):  # R160: the person's own environment, read for where gh keeps a login
         self.ran.append(("own", *argv))
-        return self._answer(["own", *argv])
+        return self.warned(argv, *self._answer(["own", *argv]))
 
     def marked(self, argv):
         """R167: root_test's marked `test -e` (sh -c SCRIPT sh PATH) is answered by the stand-ins for `test -e PATH`
@@ -169,9 +172,22 @@ class FakeHost(M.Host):
 
     def warned(self, argv, rc, out):
         """R167: sudo's own warning, written before the command's words, on every sudo call (as a computer whose name
-        does not resolve gets it: the command runs and its exit is passed on)."""
+        does not resolve gets it: the command runs and its exit is passed on).
+        R168 (MINIONS_TEST_STREAMS=1, the whole suite run again by test_G6_28): each answer on the stream its program
+        writes it on: standard output at exit 0, standard error otherwise, but for the words systemctl's is-active and
+        is-enabled print whatever their exit; and a warning line on standard error at EVERY command."""
         w = getattr(self, "sudo_warning", "")
-        return (rc, w + out) if w and argv[:1] in (["sudo"], ("sudo",)) else (rc, out)
+        if w and argv[:1] in (["sudo"], ("sudo",)):
+            out = w + out
+        if os.environ.get("MINIONS_TEST_STREAMS") != "1" or isinstance(out, getattr(M, "Out", ())):
+            return rc, out
+        a = list(argv)
+        words_on_out = rc == 0 or any(a[i:i + 2] in (["systemctl", "is-active"], ["systemctl", "is-enabled"],
+                                                     ["gh", "api"]) for i in range(len(a)))  # gh api: the answer too
+        stdout, stderr = (out, STREAM_WARNING) if words_on_out else ("", STREAM_WARNING + out)
+        if not hasattr(M, "Out"):  # the code before R168 (a red run): its Host joined the two streams, as here
+            return rc, stdout + stderr
+        return rc, M.Out(stdout, stderr)
 
     def run(self, argv, timeout=20):
         self.ran.append(tuple(argv))
@@ -3094,7 +3110,8 @@ class G5(unittest.TestCase):
         host3.runs[enable] = (1, "Failed to enable unit: Access denied\n")
         code, lines = run_cmd(M.resume, REPO, host=host3, gh=gh, private_again=True)
         self.assertEqual(code, M.EXIT_STOP, lines)
-        self.assertIn("could not be enabled again: Failed to enable unit: Access denied", lines[-1])
+        self.assertIn("could not be enabled again: ", lines[-1])
+        self.assertIn("Failed to enable unit: Access denied", lines[-1])  # R168: a warning before it is shown too
         self.assertFalse(any(x[:4] == ("sudo", "-n", "systemctl", "start") for x in host3.ran))
         del host3.runs[enable]
         code, lines = run_cmd(M.resume, REPO, host=host3, gh=gh, private_again=True)
@@ -4384,6 +4401,59 @@ class G6(unittest.TestCase):
             self.assertTrue(any(x.endswith("the very last removal") for x in lines), lines)
         finally:
             M.tool_path = real
+
+    def test_G6_28_a_warning_on_standard_error_is_never_part_of_an_answer(self):
+        # R168 (owner 4:01 PM ET 11-24; family rule 30's last paragraph, "a warning is not part of the answer"): every
+        # run through Host joined standard output and standard error, so a warning (seen: sudo's "unable to resolve
+        # host", the command run and its exit passed on) reached every parse: setup stopped at "mode sudo: unable
+        # to resolve host ... 750". A parse reads standard output; standard error is kept for the words shown. Each
+        # world is run with every answer on its own stream and a warning line on standard error at EVERY command
+        # (sudo and plain): the same lines and the same end as without it. The whole suite is run so too, below.
+        def worlds():
+            host, sha = setup_host()
+            fresh_look(host)
+            yield "setup", host, run_setup(setup_gh(sha), host)
+            host, sha = doctor_world()
+            yield "doctor", host, run_doctor(host, sha)
+            yield "status", host, run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))
+            yield "watch", host, run_cmd(M.watch, host=host, gh=setup_gh(sha))
+            gh, world, host = remove_setup()
+            yield "uninstall", host, run_uninstall(gh, host)
+            gh, world, host = remove_setup()
+            yield "uninstall --all", host, run_uninstall(gh, host, repo=None, everything=True)
+        def seen(streams):
+            was = os.environ.get("MINIONS_TEST_STREAMS")
+            os.environ["MINIONS_TEST_STREAMS"] = streams
+            try:
+                return {name: (code, [x.replace(host.state_dir(), "STATE") for x in lines])
+                        for name, host, (code, lines) in worlds()}
+            finally:
+                if was is None:
+                    os.environ.pop("MINIONS_TEST_STREAMS")
+                else:
+                    os.environ["MINIONS_TEST_STREAMS"] = was
+        plain, warned = seen("0"), seen("1")
+        for name in plain:
+            self.assertEqual(warned[name], plain[name], name)
+        self.assertEqual(plain["setup"][0], M.EXIT_OK, plain["setup"][1])
+        # Standard output is the answer; both streams only through said(), for words.
+        o = M.Out("750\n", "sudo: unable to resolve host box-1: Name or service not known\n")
+        self.assertEqual(o.strip(), "750")
+        self.assertIn("unable to resolve host", M.said(o))
+        self.assertEqual(M.last_line(M.Out("", "sudo: unable to resolve host x\nFailed to enable unit: Access denied\n")),
+                         "Failed to enable unit: Access denied")
+        self.assertEqual(M.mask(M.Out("a s3cr3t", "b s3cr3t"), "s3cr3t").err, "b ***")
+
+    @unittest.skipIf(os.environ.get("MINIONS_TEST_STREAMS") == "1", "this is the run it starts")
+    def test_G6_28_the_whole_suite_with_a_warning_at_every_command(self):
+        # R168: every test of this file run again with every answer on its own stream and a warning line on standard
+        # error at every command: each world the suite has, the same end.
+        env = dict(os.environ, MINIONS_TEST_STREAMS="1")
+        p = subprocess.run([sys.executable, "-m", "unittest", "test_minions"], cwd=os.path.dirname(
+            os.path.abspath(__file__)), env=env, capture_output=True, text=True, timeout=900)
+        last = [x for x in p.stderr.splitlines() if x.strip()][-3:]
+        self.assertEqual(p.returncode, 0, "\n".join(p.stderr.splitlines()[-40:]))
+        self.assertTrue(last and last[-1].startswith("OK"), last)
 
     def test_G6_27_stopped_is_said_only_from_a_word_seen_after_a_real_stop(self):
         # R167 (rule 30): after the stop and no process left, the service's is-active word decides: "inactive" (every
