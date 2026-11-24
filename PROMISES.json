@@ -2192,6 +2192,48 @@
    "issue": 348,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R156",
+   "seen": "2026-11-24, with R155: two answers that can refuse setup are read after its first write although they can be asked before it: the runner downloads list for this system (a read that also needs admin on the repository) and the registration token (admin on the repository can be lost between `look` and `setup`).",
+   "promise": "Both are asked before `useradd`, so a \"no\" from either stops setup having made nothing; with R155 a setup cut there already says what it left and the step that finishes it.",
+   "codon": "G2.24",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 315,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R157",
+   "seen": "2026-11-24: an offline runner registered to the proof repository by an earlier test round (whose machine was gone) was shown by every `uninstall` census for days as \"runners on GitHub for REPO: NAME\", a warning with no step. No command of the tool removes another computer's runner, rightly.",
+   "promise": "The census names a runner that is not this computer's as such, says whether GitHub lists it online or offline, and gives the one step: remove it in the repository's Settings, Actions, Runners, if it is not yours to keep.",
+   "codon": "G6.25",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 316,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R158",
+   "seen": "2026-11-24, a 12-hour soak on a stock virtual machine: the runner's listener grew from about 93 MB to about 142 MB, still rising by about 0.45 MB an hour in the last two hours; a slope, not a plateau.",
+   "promise": "A soak of 72 hours or more on a real machine, with the listener's memory read, says whether it levels off before anyone is told to leave it running for weeks; until then the README says what was seen (12 hours, memory still rising slowly).",
+   "codon": "G4.12",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 317,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
