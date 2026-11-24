@@ -1741,7 +1741,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
-   "issue": "",
+   "issue": 318,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1755,7 +1755,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
-   "issue": "",
+   "issue": 319,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1769,7 +1769,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_13_root_runs_only_what_root_wrote_and_checked",
    "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-24: a job of the repository rewrote `svc.sh` and `installdependencies.sh` in the runner's folder to leave a mark when run as root; setup and uninstall ran, and no mark appeared.",
-   "issue": "",
+   "issue": 320,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1783,7 +1783,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_17_root_follows_nothing_in_the_runner_users_home",
    "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-24: a job planted links in the runner's folder to root's own files (a 0600 secret, a 0644 file, a folder); doctor and uninstall ran, and root's files kept their content and modes.",
-   "issue": "",
+   "issue": 321,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1797,7 +1797,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_14_setup_takes_only_a_runner_user_it_made",
    "proven": "",
-   "issue": "",
+   "issue": 322,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1811,7 +1811,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_17_the_last_uninstall_leaves_nothing_of_the_runner_user_alive_or_scheduled",
    "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-24: after the last uninstall, read back, no process, crontab, at job or file of the runner user was left; a second setup's job then read none of them.",
-   "issue": "",
+   "issue": 323,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1825,7 +1825,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_18_a_stop_ends_what_a_job_left_running",
    "proven": "Seen twice, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-24: three background processes a job started ended at the service's stop, and no process of the runner user was left.",
-   "issue": "",
+   "issue": 324,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1839,7 +1839,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_18_a_unit_that_failed_is_not_left_loaded_after_uninstall",
    "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-24: with the watch's service failed, uninstall --all finished and its census said none.",
-   "issue": "",
+   "issue": 325,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1853,7 +1853,7 @@
    "ship_in": "0.1.0",
    "test": "test_G5_20_no_line_says_the_hook_holds_without_its_caveat",
    "proven": "",
-   "issue": "",
+   "issue": 326,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1867,7 +1867,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_16_setup_under_umask_000_makes_nothing_another_account_can_write",
    "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-24, with look, setup and uninstall --all run by the person under umask 000: every path setup made outside the runner user's home was listed with its mode and owner. Root's files were 0644 root:root, root's folders 0755 root:root, the person's notes 0700 and 0600. Outside its home the runner user could write only its repository's records folder (2750) and the debugger pipes its own runner made in /tmp, which the last uninstall removed.",
-   "issue": "",
+   "issue": 327,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1881,7 +1881,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_15_every_root_step_is_on_the_list",
    "proven": "",
-   "issue": "",
+   "issue": 328,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1895,7 +1895,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_19_a_foreign_file_does_not_stop_a_leave",
    "proven": "",
-   "issue": "",
+   "issue": 329,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1909,7 +1909,7 @@
    "ship_in": "0.2.0",
    "test": "",
    "proven": "",
-   "issue": "",
+   "issue": 330,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1923,7 +1923,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
-   "issue": "",
+   "issue": 331,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1937,7 +1937,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_20_setup_records_the_system_packages_the_dependency_script_added",
    "proven": "",
-   "issue": "",
+   "issue": 332,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1951,7 +1951,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
-   "issue": "",
+   "issue": 333,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1965,7 +1965,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
-   "issue": "",
+   "issue": 334,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1979,7 +1979,7 @@
    "ship_in": "0.1.0",
    "test": "test_G9_12_each_control_is_seen_to_fail",
    "proven": "",
-   "issue": "",
+   "issue": 335,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -1993,7 +1993,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "proven": "",
-   "issue": "",
+   "issue": 336,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2007,7 +2007,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "proven": "",
-   "issue": "",
+   "issue": 337,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2021,7 +2021,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "proven": "",
-   "issue": "",
+   "issue": 338,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2035,7 +2035,7 @@
    "test": "test_G1_18_the_login_read_has_three_answers",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 339,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2049,7 +2049,7 @@
    "test": "test_G5_21_the_watch_starts_python_isolated",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 340,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2063,7 +2063,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 341,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2077,7 +2077,7 @@
    "test": "test_G6_22_the_way_back_in_is_walked",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 342,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2091,7 +2091,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 343,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2105,7 +2105,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 344,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2119,7 +2119,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 345,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2133,7 +2133,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": "",
+   "issue": 346,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2175,7 +2175,7 @@
    "test": "test_G1_19_a_login_the_watch_cannot_read_stops_before_the_first_write",
    "owner": "maintainer",
    "proven": "",
-   "issue": null,
+   "issue": 347,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2189,7 +2189,7 @@
    "test": "test_G6_26_nothing_setup_writes_names_a_plugin_cache_version_folder",
    "owner": "maintainer",
    "proven": "",
-   "issue": null,
+   "issue": 348,
    "moved_why": "",
    "moved_by_person": ""
   }
