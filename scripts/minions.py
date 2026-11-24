@@ -3584,9 +3584,9 @@ def kept_skill_from(data: dict) -> dict:
 
 
 def plugin_listed(host: Host, path: str, name: str) -> bool | None:
-    """R161 (rule 29 (e), rule 6): whether Claude Code's own list names the plugin. None when the list is not there or
-    could not be read as Claude Code writes it: never "names it nowhere" (a record carried to another computer names
-    a list that computer never had)."""
+    """R161 (rule 29 (e), rule 6): whether Claude Code's own list names the plugin. False only when the list was read
+    and has no key for it. None when the list is not there (a record carried to another computer names a list that
+    computer never had) or not as Claude Code was seen to write it: a key with no row, or a row with no installPath."""
     text = host.read(path)
     if text is None:
         return None
@@ -3595,7 +3595,16 @@ def plugin_listed(host: Host, path: str, name: str) -> bool | None:
     except ValueError:
         return None
     plugins = d.get("plugins") if isinstance(d, dict) else None
-    return name in plugins if isinstance(plugins, dict) else None
+    if not isinstance(plugins, dict):
+        return None
+    if name not in plugins:
+        return False  # seen (rule 29 (e), Claude Code 2.1.331): `plugin uninstall` alone takes the key off
+    rows = plugins[name]
+    # seen: one row per install, with its installPath; a key with no row, or a row with no installPath, was not seen
+    if isinstance(rows, list) and rows and all(isinstance(r, dict) and isinstance(r.get("installPath"), str)
+                                               and r["installPath"] for r in rows):
+        return True
+    return None
 
 
 def skill_folder_line(host: Host, data: dict) -> tuple[str, str] | None:
@@ -5716,7 +5725,8 @@ def skill_folder_census(host: Host, src: dict | None, rep: Report) -> None:
                      f"list, {src['list']}, could not be read)")
         elif named:
             rep.ok(f"census: the skill {src['plugin']}: still installed in Claude Code (its own list names it); "
-                   "Claude Code's own `plugin uninstall` takes it, and this tool does not touch it")
+                   "Claude Code's own `plugin uninstall` takes it off that list and leaves its folder in Claude Code's cache; "
+                   "this tool touches neither")
         else:
             rep.ok(f"census: the skill {src['plugin']}: Claude Code's own list names it nowhere, so it is not "
                    "installed there now")

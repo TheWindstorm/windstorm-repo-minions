@@ -68,7 +68,9 @@ the cap (row R94).
 - Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
   path of Claude Code's own list of plugins and the plugin's name, never its version folder, and the tool says the
   skill was removed from Claude Code only when that list was read and names it nowhere: an update of the plugin says
-  nothing, and a list that is not there is said as not read. A test reads everything setup writes for such a path
+  nothing, and a list that is not there, or that holds the plugin with no row as Claude Code writes one, is said as
+  not read. Claude Code's own `plugin uninstall` takes the plugin off that list and leaves its folder; the census
+  says so, and the tool touches neither. A test reads everything setup writes for such a path
   (row R161).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
@@ -99,7 +101,7 @@ the cap (row R94).
   tool lists them. Off Debian and Ubuntu, the GitHub CLI's install line names no command, only where to read. Lines
   name this computer's values instead of placeholders (G8.16, row R108).
 - CI: a newer push to a pull request cancels its older runs.
-- After Claude Code's own `plugin uninstall`, `status` says the skill's folder is gone (or marked removed), that the
+- After Claude Code's own `plugin uninstall`, `status` says Claude Code's own list no longer names the skill, that the
   runner and its watch go on taking your jobs, and the one command that takes them off; the watch writes it into
   its journal once (G6.12, row R107).
 - `look` counts your own containers and other runner services and names them only on `look <owner/repo>

@@ -941,6 +941,11 @@ class G2(unittest.TestCase):
                         lines_now())
         host.files[lst] = "{not json"
         self.assertIn("could not be read", lines_now()[0])
+        # rule 29 (e): a key with no row, or a row with no installPath, was not seen: could not be read, never "removed"
+        for odd in ([], [{"scope": "user", "version": "0.1.0"}], [{"installPath": ""}], {"installPath": old}):
+            host.files[lst] = json.dumps({"version": 2, "plugins": {"repo-minions@the-catalog": odd}})
+            self.assertTrue(lines_now() and "could not be read" in lines_now()[0] and "nowhere" not in lines_now()[0],
+                            (odd, lines_now()))
         listed("0.1.0", old)
         host.dirs[old] = []
         self.assertEqual(lines_now(), [])  # installed: nothing to say
@@ -4127,13 +4132,19 @@ class G6(unittest.TestCase):
         clone = "/home/person/windstorm-repo-minions"
         lst = "/home/you/.claude/plugins/installed_plugins.json"
         plugin = {"plugin": "repo-minions@the-catalog", "list": lst}
-        row = json.dumps({"version": 2, "plugins": {"repo-minions@the-catalog": [{"version": "0.1.1"}]}})
+        row = json.dumps({"version": 2, "plugins": {"repo-minions@the-catalog": [
+            {"installPath": "/home/you/.claude/plugins/cache/the-catalog/repo-minions/0.1.1", "version": "0.1.1"}]}})
+        no_row = json.dumps({"version": 2, "plugins": {"repo-minions@the-catalog": []}})
         for src, files, there, said in (
                 ({"clone": clone}, {}, True, f"ok census: the folder this skill was downloaded into: {clone}, still "
                                              "there; it is yours to keep or delete, and this tool does not touch it"),
                 ({"clone": clone}, {}, False, f"ok census: the folder this skill was downloaded into ({clone}): gone"),
                 (plugin, {lst: row}, None, "ok census: the skill repo-minions@the-catalog: still installed in Claude "
-                                           "Code (its own list names it); Claude Code's own `plugin uninstall` takes it"),
+                                           "Code (its own list names it); Claude Code's own `plugin uninstall` takes "
+                                           "it off that list and leaves its folder in Claude Code's cache; this tool "
+                                           "touches neither"),
+                (plugin, {lst: no_row}, None, "warn census: whether the skill repo-minions@the-catalog is still "
+                                              f"installed in Claude Code: not read (its own list, {lst}, could not be read)"),
                 (plugin, {lst: json.dumps({"version": 2, "plugins": {}})}, None,
                  "ok census: the skill repo-minions@the-catalog: Claude Code's own list names it nowhere"),
                 (plugin, {}, None, "warn census: whether the skill repo-minions@the-catalog is still installed in "
