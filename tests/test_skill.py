@@ -6,9 +6,11 @@ import io
 import json
 import os
 import re
-import shutil
-import subprocess
+import sys
 import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import machine_guard  # noqa: E402  rule 17 (R142): first, so no test here reaches this machine
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")
@@ -59,12 +61,8 @@ class Skill(unittest.TestCase):
         self.assertIn("your own computers do your repo's chores", fm["description"])
         self.assertIn("Use when", fm["description"])
         self.assertLess(len(t.splitlines()), 500)
-        # The Agent Skills validator, where this computer's GitHub CLI has it and is logged in (CI runs it too).
-        if shutil.which("gh") and subprocess.run(["gh", "skill", "--help"], capture_output=True).returncode == 0 \
-                and subprocess.run(["gh", "auth", "status"], capture_output=True).returncode == 0:
-            r = subprocess.run(["gh", "skill", "publish", "--dry-run"], cwd=ROOT, capture_output=True, text=True,
-                               timeout=120)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        # The Agent Skills validator (`gh skill publish --dry-run`) runs in CI's skill-spec job with CI's own token,
+        # never here: a test that ran it leaned on this computer's GitHub CLI and its login (rule 17, R142).
 
     def test_G8_2_the_skill_names_the_order_and_the_persons_steps(self):
         t = text()
@@ -238,6 +236,10 @@ class Skill(unittest.TestCase):
             self.assertNotRegex(t.lower(), r"\b" + re.escape(word) + r"\b", word)
         for name in ("veron", "windy", "eth-", "tailscale", "user1", "/home/"):
             self.assertNotIn(name, t.lower(), name)
+
+
+def tearDownModule():
+    machine_guard.check()  # rule 17 (R142): a test that reached this machine fails the run
 
 
 if __name__ == "__main__":

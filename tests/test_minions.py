@@ -21,6 +21,9 @@ import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+import machine_guard  # noqa: E402  rule 17 (R142): first, so no test here reaches this machine
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import minions as M  # noqa: E402
@@ -3326,7 +3329,7 @@ class G5(unittest.TestCase):
             recs = os.path.join(d, "records")
             os.makedirs(recs)
             env = dict(no_event(), GITHUB_RUN_ID="555", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="check",
-                       GITHUB_WORKSPACE=os.path.join(d, "nowhere"), PATH="/usr/bin:/bin")
+                       GITHUB_WORKSPACE=os.path.join(d, "nowhere"), PATH=machine_guard.path("/usr/bin:/bin"))
             with mock.patch.object(M, "MEMORY_EVENTS", events):
                 seen = fresh_seen(d)
                 for name, fn in (("s.sh", lambda f, r: M.job_started_script(f, r, seen=seen)),
@@ -4203,7 +4206,7 @@ def hook_run(folder, seen_value, wait_s=0, event=None):
     path = os.path.join(folder, "start.sh")
     with open(path, "w") as f:
         f.write(text)
-    env = dict(no_event(), PATH="/usr/bin:/bin", GITHUB_RUN_ID="77", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="j")
+    env = dict(no_event(), PATH=machine_guard.path("/usr/bin:/bin"), GITHUB_RUN_ID="77", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="j")
     if event is not None:
         env["GITHUB_EVENT_PATH"] = os.path.join(folder, "event.json")
         with open(env["GITHUB_EVENT_PATH"], "w") as f:
@@ -4656,7 +4659,7 @@ class P1a(unittest.TestCase):
             text = M.job_started_script(folder, seen=seen, hold_wait_s=20).replace("command -v systemd-inhibit", "false")
             with open(os.path.join(folder, "s.sh"), "w") as f:
                 f.write(text)
-            p = subprocess.Popen(["bash", os.path.join(folder, "s.sh")], env=dict(no_event(), PATH="/usr/bin:/bin"),
+            p = subprocess.Popen(["bash", os.path.join(folder, "s.sh")], env=dict(no_event(), PATH=machine_guard.path("/usr/bin:/bin")),
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             time.sleep(2)
             fresh_seen(folder)
@@ -5244,6 +5247,150 @@ class Helpers(unittest.TestCase):
         self.assertIn("permissions: {}", M.START_WORKFLOW)
         self.assertIn("timeout-minutes: 1", M.START_WORKFLOW)
         self.assertNotIn("self-hosted", M.START_WORKFLOW)
+
+
+GUARD_PLANTED = """import os, shutil, subprocess, sys, tempfile, unittest
+sys.path.insert(0, {tests!r})
+import machine_guard
+REAL = machine_guard.REAL_HOME
+
+
+class Planted(unittest.TestCase):
+    def test_opens_the_real_home(self):
+        try:
+            open(os.path.join(REAL, ".gitconfig")).close()
+        except OSError:
+            pass
+
+    def test_child_with_the_real_home(self):
+        subprocess.run(["true"], env=dict(os.environ, HOME=REAL))
+
+    def test_child_with_no_home(self):
+        subprocess.run([sys.executable, "-I", "-c", "pass"], env={{"PATH": os.environ["PATH"]}})
+
+    def test_runs_this_machines_own_program(self):
+        real = shutil.which("systemctl", path="/usr/bin:/bin") or shutil.which("launchctl", path="/usr/bin:/bin")
+        if real:  # a harmless read, so the guard taken out can run it
+            subprocess.run([real, "--version" if real.endswith("systemctl") else "help"], capture_output=True)
+        else:
+            subprocess.run(["sudo", "-n", "true"], capture_output=True)
+
+    def test_bash_child_starts_sudo(self):
+        subprocess.run(["bash", "-c", "sudo -n true"], capture_output=True)
+
+    def test_swallows_the_error(self):
+        try:
+            subprocess.run(["crontab", "-l"], capture_output=True)
+        except Exception:
+            pass
+
+    def test_child_path_without_the_stand_ins(self):
+        subprocess.run(["true"], env=dict(os.environ, PATH="/usr/bin:/bin"))
+
+    def test_the_validator_test_as_it_was(self):  # test_G8_1's six lines at 66e3625
+        if shutil.which("gh") and subprocess.run(["gh", "skill", "--help"], capture_output=True).returncode == 0 \\
+                and subprocess.run(["gh", "auth", "status"], capture_output=True).returncode == 0:
+            r = subprocess.run(["gh", "skill", "publish", "--dry-run"], capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_brings_its_own_stand_in(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "crontab"), "w") as f:
+                f.write("#!/bin/sh\\necho mine\\n")
+            os.chmod(os.path.join(d, "crontab"), 0o755)
+            r = subprocess.run([os.path.join(d, "crontab"), "-l"], capture_output=True, text=True)
+            self.assertEqual(r.stdout, "mine\\n")
+
+    def test_stays_in_its_own_home(self):
+        self.assertNotEqual(os.path.realpath(os.path.expanduser("~")), REAL)
+        with open(os.path.join(os.path.expanduser("~"), "x"), "w") as f:
+            f.write("x")
+
+
+def tearDownModule():
+    machine_guard.check()
+
+
+unittest.main()
+"""
+GUARD_CAUGHT = {"test_opens_the_real_home": "in this account's real home",
+                "test_child_with_the_real_home": "with this account's real home as HOME",
+                "test_child_with_no_home": "with no HOME",
+                "test_runs_this_machines_own_program": ": ran ",
+                "test_bash_child_starts_sudo": "ran sudo -n true (a child)",
+                "test_swallows_the_error": "ran crontab",
+                "test_child_path_without_the_stand_ins": "a PATH that leaves out the stand-ins",
+                "test_the_validator_test_as_it_was": "ran gh"}
+
+
+class MachineGuard(unittest.TestCase):
+    def test_G9_12_a_test_that_reaches_this_machine_is_stopped_and_counted(self):
+        # Rule 17 (R142): every test file imports the guard first. This process and every child have a temporary
+        # home, and loud stand-ins first on PATH; a test that runs this machine's admin, service, package,
+        # scheduling, user or login commands, or touches its real home, is stopped at that call and counted, and
+        # tearDownModule fails the run on any count.
+        self.assertNotEqual(os.path.realpath(os.environ["HOME"]), machine_guard.REAL_HOME)
+        self.assertTrue(os.environ["HOME"].startswith(tempfile.gettempdir()))
+        for k in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "GIT_CONFIG_GLOBAL"):
+            self.assertTrue(os.environ[k].startswith(os.environ["HOME"] + os.sep), k)
+        self.assertEqual(os.environ["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(os.environ["PATH"].split(os.pathsep)[0], machine_guard.BIN)
+        for name in ("sudo", "systemctl", "dpkg-query", "crontab", "useradd", "gh", "launchctl", "docker", "podman",
+                     "systemd-run", "systemd-inhibit", "tmux", "claude"):
+            self.assertIn(name, machine_guard.FORBIDDEN)
+            self.assertEqual(shutil.which(name), os.path.join(machine_guard.BIN, name))
+        # every program the tool and its hooks list is on the list, or left off with its reason
+        for name in (*M.PROGRAMS, *M.HOOK_PROGRAMS, *M.DARWIN_ONLY):
+            self.assertTrue(name in machine_guard.FORBIDDEN or name in machine_guard.LEFT_OFF, name)
+        self.assertFalse(set(machine_guard.FORBIDDEN) & set(machine_guard.LEFT_OFF))
+        # the tool's own Host, with no stand-in, is stopped and counted at each call
+        real = M.Host()
+        for argv in (["sudo", "-n", "true"], ["systemctl", "is-active", "x"], ["dpkg-query", "-W"], ["gh", "--version"]):
+            with machine_guard.expect() as seen:
+                with self.assertRaises(machine_guard.MachineReached):
+                    real.run(argv)
+            self.assertEqual(len(seen), 1, argv)
+            self.assertIn(f"test_G9_12_a_test_that_reaches_this_machine_is_stopped_and_counted: ran {argv[0]}", seen[0])
+        for touch in (lambda: open(os.path.join(machine_guard.REAL_HOME, ".minions", "journal.log")),
+                      lambda: os.listdir(machine_guard.REAL_HOME)):
+            with machine_guard.expect() as seen:
+                with self.assertRaises(machine_guard.MachineReached):
+                    touch()
+            self.assertIn("in this account's real home", seen[0])
+        self.assertEqual(real.state_dir(), os.path.join(os.environ["HOME"], ".minions"))  # "~" is the temporary home
+        self.assertEqual(machine_guard.seen(), [])  # what expect() collected is not counted against the run
+        FakeHost().run(["sudo", "-n", "true"])  # the stand-in for the machine reaches nothing
+        self.assertEqual(machine_guard.seen(), [])
+
+    def test_G9_12_each_control_is_seen_to_fail(self):
+        # Part 5 of rule 17's guard: planted tests, one of each kind, in a test file of their own that imports the
+        # guard. Guarded, each kind fails in its own result with the line that says why (the one that swallowed
+        # the error too), the two that stay in their own home pass, and the run fails. The guard taken out
+        # (MINIONS_GUARD_OFF=1: no hook, no count; the home and stand-ins kept, so nothing real runs): all pass.
+        tests = os.path.dirname(os.path.abspath(__file__))
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            path = os.path.join(d, "test_planted.py")
+            with open(path, "w") as f:
+                f.write(GUARD_PLANTED.format(tests=tests))
+            run = lambda **env: subprocess.run([sys.executable, path, "-v"], capture_output=True, text=True,
+                                               timeout=120, env=dict(os.environ, **env))
+            r = run()
+            self.assertNotEqual(r.returncode, 0, r.stderr)
+            heads = [x for x in r.stderr.splitlines() if x.startswith(("FAIL: ", "ERROR: "))]
+            for name, said in GUARD_CAUGHT.items():
+                self.assertTrue([h for h in heads if h.split()[1] == name], (name, r.stderr[-3000:]))
+                block = r.stderr.split(f": {name} ", 1)[1]
+                self.assertIn(said, block, name)
+            for name in ("test_brings_its_own_stand_in", "test_stays_in_its_own_home"):
+                self.assertFalse([h for h in heads if h.split()[1] == name], (name, r.stderr[-3000:]))
+            self.assertIn("ERROR: tearDownModule", r.stderr)
+            r = run(MINIONS_GUARD_OFF="1")
+            self.assertEqual(r.returncode, 0, r.stderr[-3000:])
+            self.assertIn("Ran 10 tests", r.stderr)
+            self.assertNotIn("rule 17", r.stderr)
+
+def tearDownModule():
+    machine_guard.check()  # rule 17 (R142): a test that reached this machine fails the run, even if it swallowed it
 
 
 if __name__ == "__main__":

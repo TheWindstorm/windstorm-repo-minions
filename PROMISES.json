@@ -1968,6 +1968,20 @@
    "issue": "",
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R142",
+   "seen": "2026-11-24, family rule 17 (A TEST THAT PASSES HERE AND FAILS ON A STOCK RUNNER LEANS ON THIS MACHINE): on 66e3625, with the guard counting only (no temporary home, no stop), 9 of 167 tests reached this machine, none skipped: the skill validator test ran its gh with its login, and 8 started children (hook scripts in bash and sh, the tool's own copy, git) that carried this account's real home; none started an admin, service, package or user command, and no test touched the real home directly. With the guard: 0, none skipped. The suite had no guard.",
+   "promise": "No test reaches the machine it runs on: every test file imports one guard first, before the tool, which gives the run and its children a temporary home without this account's session and GitHub lines, puts loud stand-ins first on PATH for the admin, service, package, scheduling, user and login commands, counts any start of one of them outside a temporary folder, any child with the real home, no HOME or no stand-ins, and any touch of the real home outside the checkout, the temporary folder and Python's libraries, and fails the test that did it, also when it swallowed the error. A gate test sees each kind caught, and all pass with the guard taken out. It does not see a read that only stats a path, or what a child does by itself. The skill validator runs in CI's own job, not in a test.",
+   "codon": "G9.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G9_12_each_control_is_seen_to_fail",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

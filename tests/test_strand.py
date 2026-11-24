@@ -22,6 +22,9 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import machine_guard  # noqa: E402  rule 17 (R142): first, so no test here reaches this machine
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLAN = os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md")
 PLUGIN = os.path.join(ROOT, ".claude-plugin", "plugin.json")
@@ -291,7 +294,8 @@ class Hygiene(unittest.TestCase):
             ("`python3 -I x/minions.py setup O/N`\n", ["v0.1.0"], False),  # an install line with no pinned clone
             (f"`git clone --branch v0.1.0 {url}`\n", None, False),  # rule 6: could not be read is refused, said
         ]
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
+                                                                                         "GIT_CONFIG_NOSYSTEM")}
         env.update(BRANCH="main", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
                    GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
         for readme, tags, ok in cases:
@@ -317,6 +321,10 @@ class Hygiene(unittest.TestCase):
 def _say_what_did_not_run():
     for line in NOT_RUN_HERE:
         print(f"not run here: {line}", file=sys.stderr)
+
+
+def tearDownModule():
+    machine_guard.check()  # rule 17 (R142): a test that reached this machine fails the run
 
 
 if __name__ == "__main__":

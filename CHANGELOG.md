@@ -33,6 +33,9 @@ the cap (row R94).
 - Setup says which system packages were added while the runner's own dependency script ran (read from the
   system's package list before and after it), and `uninstall --all` names them as kept: they are installed for the
   whole system, and another program may use them by then (row R139).
+- No test reaches the computer it runs on: one guard, imported first by every test file, gives the tests and their
+  children a temporary home and loud stand-ins for the admin, service, package, scheduling, user and login
+  commands, and fails the run on any test that reaches the real ones (row R142).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for
