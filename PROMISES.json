@@ -1866,7 +1866,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_16_setup_under_umask_000_makes_nothing_another_account_can_write",
-   "proven": "",
+   "proven": "Seen once, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, 2026-11-24, with look, setup and uninstall --all run by the person under umask 000: every path setup made outside the runner user's home was listed with its mode and owner. Root's files were 0644 root:root, root's folders 0755 root:root, the person's notes 0700 and 0600. Outside its home the runner user could write only its repository's records folder (2750) and the debugger pipes its own runner made in /tmp, which the last uninstall removed.",
    "issue": "",
    "moved_why": "",
    "moved_by_person": ""
