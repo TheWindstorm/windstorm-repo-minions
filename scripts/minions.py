@@ -3060,6 +3060,11 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
     for rp in repos:
         if hold_runner(gh, host, rp, data, rep, "a restart" if restart else "drain") is None:
             return rep.code()
+        if not restart:  # R154: held by name now, so a restart must not lift it, and the hold is said as a drain
+            end_restart_hold(host, rp, data, "held by `drain` by name")
+            if runners[rp].get("held_for") == "a restart":
+                runners[rp]["held_for"] = "drain"
+            save_state(host, data)
     for rp in repos:
         mine = runners[rp]
         nxt = "drain --restart" if restart else f"drain {rp}"
@@ -3158,8 +3163,21 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
     if not lift_hold(gh, host, repo, data, rep):
         return rep.code()
     mine.pop("public_stop", None)
+    end_restart_hold(host, repo, data, "resumed by your word before a restart")
     save_state(host, data)
     return rep.code()
+
+
+def end_restart_hold(host: Host, repo: str, data: dict, why: str) -> None:
+    """R154: a restart hold kept for a repository ends when the person resumes it or holds it again by name, so a
+    later restart never lifts a hold the person set (or keeps saying a hold that `resume` already lifted)."""
+    rh = data.get("restart_hold")
+    if not rh or repo not in (rh.get("repos") or []):
+        return
+    rh["repos"] = [r for r in rh["repos"] if r != repo]
+    if not rh["repos"]:
+        data.pop("restart_hold", None)
+    journal(host, "restart hold ended", f"{repo}: {why}")
 
 
 def lift_hold(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, tries: int = 9) -> bool:

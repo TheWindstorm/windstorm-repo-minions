@@ -2985,6 +2985,36 @@ class G5(unittest.TestCase):
         self.assertFalse(any("safe to restart" in x for x in lines))
         self.assertIn("Next: `drain --restart` again", lines[-1])
 
+    def test_G5_24_a_restart_hold_ends_when_the_person_resumes_or_drains_by_name(self):
+        # R154 (found 2026-11-24 reading rule 24's lines): `drain --restart`, then `resume` without restarting, left the
+        # restart hold kept; `status` still said "held for a restart ... lifts by itself", and a later `drain REPO`
+        # was lifted by the watch after any reboot, so jobs landed on a runner the person had held.
+        host, clock = g5_host()
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-one\n"
+        gh = StatusGH()
+        self.assertEqual(run_cmd(M.drain, None, host=host, gh=gh, restart=True)[0], M.EXIT_OK)
+        self.assertEqual(run_cmd(M.resume, REPO, host=host, gh=gh)[0], M.EXIT_OK)
+        self.assertNotIn("restart_hold", M.load_state(host))
+        self.assertFalse([x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1] if "held for a restart" in x])
+        self.assertEqual(run_cmd(M.drain, REPO, host=host, gh=gh)[0], M.EXIT_OK)
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-two\n"  # a restart, any time later
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(gh.puts[-1], (REPO, ["minions-held"]))  # the person's hold stays
+        self.assertEqual(M.load_state(host)["runners"][REPO]["held_for"], "drain")
+        # `drain REPO` straight after `drain --restart`: the hold is the person's now, said as a drain, kept by a restart
+        host, clock = g5_host()
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-one\n"
+        gh = StatusGH()
+        run_cmd(M.drain, None, host=host, gh=gh, restart=True)
+        run_cmd(M.drain, REPO, host=host, gh=gh)
+        self.assertNotIn("restart_hold", M.load_state(host))
+        host.files["/proc/sys/kernel/random/boot_id"] = "boot-two\n"
+        run_cmd(M.watch, host=host, gh=gh)
+        self.assertEqual(gh.puts[-1], (REPO, ["minions-held"]))
+        self.assertTrue([x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1] if "held for drain since" in x])
+        with open(os.path.join(host.state_dir(), "journal.log")) as f:
+            self.assertIn("restart hold ended", f.read())
+
     def test_G4_3_below_the_floor_the_watch_holds_and_lifts_by_itself(self):
         # P4 (seen 2026-11-23: 4 GB free and the watch said only "online, not busy"): held before the disk fills.
         host, clock = g5_host()

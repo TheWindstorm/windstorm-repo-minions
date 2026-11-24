@@ -49,6 +49,8 @@ the cap (row R94).
   tool with `python3 -I`, so nothing in your own Python site-packages runs in it (row R147).
 - `setup` again after either form of `uninstall` is walked by a test: it decides by what is there now, ends on its own
   check of both sides, and the commands after it work (row R149).
+- `resume` after `drain --restart` ends the restart hold, and `drain REPO` makes the hold yours: a later restart no
+  longer lifts a hold you set (row R154).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for
