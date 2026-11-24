@@ -5285,7 +5285,7 @@ class RuleTwo(unittest.TestCase):
 
     def test_G5_21_the_watch_starts_python_isolated(self):
         # R147: the watch's unit starts the tool with -I, as every start of Python by the tool does, so a person's
-        # user site-packages (a sitecustomize.py or a .pth file) never runs in a watch pass or stops it.
+        # user site-packages (a usercustomize.py or a .pth file) never runs in a watch pass or stops it.
         svc, _ = M.watch_units("person", M.WATCH_EVERY_S)
         self.assertIn(f"ExecStart=/usr/bin/python3 -I {M.TOOL_COPY} watch\n", svc)
         with open(M.__file__, encoding="utf-8") as f:

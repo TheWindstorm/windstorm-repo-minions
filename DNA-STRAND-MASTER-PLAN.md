@@ -449,6 +449,11 @@ nothing billable. Then (18:10Z) with a push workflow of the "person's" on the de
 commit pushed to a temporary branch started only its own workflow, one job, queued; cancelled, the run deleted,
 the branch deleted, nothing billable and nothing left. That is G1.4's start test, written in `docs/CONTRACTS.md`.
 
+A note for whoever writes a check that a person's Python files do not run (2026-11-24, Ubuntu 24.04, Python
+3.12.3): a marking `sitecustomize.py` in the user site-packages never runs, with or without `-I`, because Ubuntu's
+own `sitecustomize.py` sits in the standard library folder and is found first. Plant `usercustomize.py`, and first
+see it run for a plain `python3 -c pass` in that account; a 0 from a marker that cannot fire proves nothing.
+
 ---
 
 ## Part 8. Milestones and acceptance
