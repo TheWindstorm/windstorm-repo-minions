@@ -281,7 +281,7 @@ class Hygiene(unittest.TestCase):
             body.append(x[indent:])
         script = "set -e\n" + "\n".join(body) + "\n"
         url = "https://github.com/TheWindstorm/windstorm-repo-minions"
-        cases = [  # (README text, tags made here, passes)
+        cases = [  # (README text, tags on GitHub's copy, passes; None: GitHub's copy could not be read)
             ("No install lines here.\n", [], True),
             (f"`git clone --branch v0.1.0 {url}`\n", [], False),  # the tag does not exist yet
             (f"`git clone --branch v0.1.0 {url}`\n`python3 -I x/minions.py look O/N`\n", ["v0.1.0"], True),
@@ -289,6 +289,7 @@ class Hygiene(unittest.TestCase):
             (f"`git clone --branch release-0.1.0 {url}`\n", ["v0.1.0"], False),  # a branch moves; main names a tag
             (f"`git clone --branch v0.1.0 {url}`\n`git clone {url}`\n", ["v0.1.0"], False),  # one unpinned
             ("`python3 -I x/minions.py setup O/N`\n", ["v0.1.0"], False),  # an install line with no pinned clone
+            (f"`git clone --branch v0.1.0 {url}`\n", None, False),  # rule 6: could not be read is refused, said
         ]
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         env.update(BRANCH="main", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
@@ -299,10 +300,18 @@ class Hygiene(unittest.TestCase):
                     f.write(readme)
                 run = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)
                 run("git", "init", "-q"); run("git", "add", "."); run("git", "commit", "-qm", "r")
-                for tag in tags:
-                    run("git", "tag", tag)
+                run("git", "tag", "v0.1.0")  # here in every case: a tag only in the checkout must not count
+                origin = os.path.join(d, "origin.git")
+                run("git", "init", "-q", "--bare", origin)
+                for tag in tags or []:
+                    run("git", "push", "-q", origin, f"refs/tags/{tag}")
+                run("git", "remote", "add", "origin", origin if tags is not None else os.path.join(d, "gone.git"))
                 r = run("bash", "-c", script)
                 self.assertEqual(r.returncode == 0, ok, f"{readme!r} tags {tags}: {r.stdout}{r.stderr}")
+                if tags is None:
+                    self.assertIn("could not be read", r.stdout)
+                elif "--branch v0.1.0" in readme and not tags:
+                    self.assertIn("not a tag of this repository yet", r.stdout)
 
 @atexit.register
 def _say_what_did_not_run():
