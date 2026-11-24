@@ -1886,6 +1886,20 @@
    "moved_by_person": ""
   },
   {
+   "id": "R136",
+   "seen": "2026-11-24, family rule 8 (A FOREIGN FILE DOES NOT STOP A LEAVE): uninstall stopped on a file of the person's in a folder of this tool, or on a minions-runner it did not make, and so never finished leaving.",
+   "promise": "At uninstall, a thing this tool did not make stays with the folders above it, each named in the census as the person's with why each folder stayed and no command; uninstall goes to its end and exits with success; its last line says the tool is off this computer and that what stayed is named above. Setup is where a foreign thing stops.",
+   "codon": "G6.19",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_19_a_foreign_file_does_not_stop_a_leave",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
    "id": "R137",
    "seen": "2026-11-24, family rule 28: every repository's jobs on a computer run as the same user, so a job of one repository could read or change another's runner, records or work.",
    "promise": "With more than one repository on a computer, each repository's runner runs as its own user. Version 0.1.0 serves one repository per computer, so there one user is one repository.",

@@ -3515,6 +3515,48 @@ class G6(unittest.TestCase):
             self.assertTrue(reset, units)
             self.assertTrue(any(a[1] == "daemon-reload" for a in ran[:reset[0]]), units)
 
+    def test_G6_19_a_foreign_file_does_not_stop_a_leave(self):
+        # R136 (rule 8, A FOREIGN FILE DOES NOT STOP A LEAVE): at uninstall, what this tool did not make (a file of
+        # the person's in its state folder or record folder, a minions-runner it did not make) stays with the folders
+        # above it, named in the census as the person's with why, and no command; the leave goes to its end and exits
+        # with success; the last line says the tool is off this computer and what stayed is named above.
+        gh, world, host = remove_setup(moved=False)
+        with open(os.path.join(host.state_dir(), "my-notes.txt"), "w") as f:
+            f.write("the person's own")
+        d = M.load_state(host)
+        d.pop("runner_user_made")
+        M.save_state(host, d)
+        code, lines = run_uninstall(gh, host, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertFalse([x for x in lines if x.startswith(("stop ", "warn the user"))], lines)
+        self.assertTrue(world.user)
+        self.assertNotIn("userdel", world.order)
+        self.assertIsNone(gh.runner)  # the leave went to its end: GitHub's side, the service, the watch, the slice
+        census = [x for x in lines if x.startswith(("ok census:", "warn census:"))]
+        self.assertIn("ok census: the runner user: minions-runner (kept: its record here does not say this tool made "
+                      "it, so it is yours)", census)
+        self.assertIn("ok census: the folder /home/minions-runner: kept: it is the home of the user minions-runner, "
+                      "which this tool did not make; it is yours", census)
+        self.assertIn(f"ok census: this tool's state folder: {host.state_dir()} (kept: it holds my-notes.txt, which "
+                      "this tool did not write; that and the folder are yours)", census)
+        self.assertIn("ok census: the slice and the watch (scheduled checks): none", census)
+        self.assertTrue(os.path.exists(os.path.join(host.state_dir(), "my-notes.txt")))
+        self.assertEqual(sorted(os.listdir(host.state_dir())), ["my-notes.txt"])  # ours went, by name
+        for x in census:
+            if "kept:" in x and "your record of what this tool did" not in x:
+                self.assertNotIn("`", x, "no command for what is the person's")
+        self.assertEqual(lines[-1], "ok this tool is off this computer; what stayed is yours, named above with why "
+                                    "each stayed")
+        # nothing foreign: the census stays last, as before (G6.10)
+        gh, world, host = remove_setup(moved=False)
+        code, lines = run_uninstall(gh, host, everything=True)
+        self.assertEqual(code, M.EXIT_OK)
+        self.assertTrue(lines[-1].startswith("ok census: your record of what this tool did"), lines[-1])
+        # setup is where a foreign thing stops (G2.14)
+        host, sha = setup_host(runs={("id", "-u", "minions-runner"): (0, "1001\n")})
+        fresh_look(host)
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_STOP)
+
     def test_G6_10_uninstall_keeps_the_persons_record_in_one_folder_they_own(self):
         # Rule 8 and INV6 (plan 3.0, row R99): the record of what the tool did is the person's. It is moved into one
         # plain-text folder they own, named last by the census, and deleted only on a flag typed at a terminal.

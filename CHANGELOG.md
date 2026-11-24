@@ -28,6 +28,8 @@ the cap (row R94).
   after uninstall (row R132).
 - No line says the job hook refuses a job without saying a job that already ran here can switch that hook off; the
   watch, which runs as you, is the gate (row R133).
+- A file of yours in the tool's folders, or a `minions-runner` the tool did not make, no longer stops `uninstall`:
+  it stays, named in the census as yours with why, and uninstall finishes (row R136).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for

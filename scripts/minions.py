@@ -84,6 +84,7 @@ class Report:
         self.out_closed = False
         self._tells: list[str] = []
         self.here = False  # G7.15: the block is read by the person on their own screen, not relayed by an agent
+        self.stayed: dict = {}  # R136 (rule 8): what a leave left because this tool did not make it, for the census
 
     def _put(self, kind: str, text: str) -> None:
         self._flush_tells()
@@ -2519,6 +2520,7 @@ def delete_record_if_typed(host: Host, rep: Report) -> None:
     if host.record_count() == (0, 0):
         rep.ok(f"your record ({d}) is deleted, as you typed")
     elif left:
+        rep.stayed["record"] = left  # R136 (rule 8): the person's, named in the census with why
         rep.ok(f"your record's files are deleted, as you typed; left in {d}, not written by this tool: "
                f"{', '.join(left)}")
     else:
@@ -4977,7 +4979,9 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         return False
     if kind == "there":
         if not load_state(host).get("runner_user_made"):  # R129 (rule 28): never a user this tool did not make
-            rep.warn(f"the user {RUNNER_USER} is left as it is: this tool's record here does not say it made it")
+            rep.ok(f"the user {RUNNER_USER} is left as it is: this tool's record here does not say it made it, so it "
+                   "is yours (named in the census)")
+            rep.stayed["user"] = True  # R136 (rule 8): a foreign thing does not stop a leave
             return True
         if not end_runner_users_processes(host, rep):
             return False
@@ -5147,20 +5151,31 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
          "" if everything else ("kept for this tool's other runners here; `uninstall --all` takes them" if ours_left
                                 else "kept until `uninstall --all`, which takes them"), mark)
     rc, _ = host.run(["id", RUNNER_USER])
+    theirs = rc == 0 and rep.stayed.get("user")  # R136 (rule 8): a user this tool did not make stays, as the person's
     line("the runner user", [RUNNER_USER] if rc == 0 else [],
+         "kept: its record here does not say this tool made it, so it is yours" if theirs else
          "" if everything or not ours_left else "kept for this tool's other runners here; `uninstall --all` takes it")
     mark = len(unread)
     folders = [x for x in (HOOKS_ROOT, RECORDS_ROOT, f"/home/{RUNNER_USER}") if there(x)]
+    if theirs and f"/home/{RUNNER_USER}" in folders:
+        folders.remove(f"/home/{RUNNER_USER}")
+        rep.ok(f"census: the folder /home/{RUNNER_USER}: kept: it is the home of the user {RUNNER_USER}, which this "
+               "tool did not make; it is yours")
     line("folders", folders, "" if everything else "kept; `uninstall --all` takes them", mark)
     if state_left is not None:
+        foreign = rep.stayed.get("state")
         line("this tool's state folder", [host.state_dir()] if state_left else [],
-             "kept: its journal could not be moved to your record (said above)" if state_left else "")
+             (f"kept: it holds {', '.join(foreign)}, which this tool did not write; that and the folder are yours"
+              if foreign else "kept: its journal could not be moved to your record (said above)") if state_left else "")
     if everything:  # G6.13 (R117, rule 8): the folder the skill was downloaded into is named, so nobody guesses at it
         skill_folder_census(host, skill_folder, rep)
     # G6.10, INV6: last, the person's record, kept: theirs.
     n = host.record_count()
     if n is None:
         rep.warn(f"census: your record of what this tool did ({host.record_dir()}): not read")
+    elif rep.stayed.get("record") and n != (0, 0):  # R136 (rule 8): the record's own files went; the person's stay
+        rep.ok(f"census: your record folder: {host.record_dir()}, kept: it holds {', '.join(rep.stayed['record'])}, "
+               "which this tool did not write; that and the folder are yours")
     elif n != (0, 0):
         rep.ok(f"census: your record of what this tool did: {host.record_dir()}, {plural(n[1], 'line')} in "
                f"{plural(n[0], 'file')}, kept: it is yours. Delete it whenever you like, or run `uninstall --all "
@@ -5237,11 +5252,14 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
             if left:
                 rep.ok(f"this tool's files in {host.state_dir()} are deleted; left there, not written by this tool: "
                        f"{', '.join(left)}")
+                rep.stayed["state"] = left  # R136 (rule 8): the person's, named in the census with why
         if delete_record:
             delete_record_if_typed(host, rep)
         # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
         census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()),
                skill_folder=data.get("skill_folder"))
+        if rep.stayed and not rep.stopped:  # R136 (rule 8): the leave went to its end; what stayed is the person's
+            rep.ok("this tool is off this computer; what stayed is yours, named above with why each stayed")
         return rep.code()
     if delete_record:
         delete_record_if_typed(host, rep)
