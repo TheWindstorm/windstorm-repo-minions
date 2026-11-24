@@ -47,6 +47,8 @@ the cap (row R94).
   no saved login, or GitHub refuses it; could not be read, which says to run the same command again), from GitHub's
   own answer rather than `gh auth status`'s exit, which differs between gh versions (row R146). The watch starts the
   tool with `python3 -I`, so nothing in your own Python site-packages runs in it (row R147).
+- `setup` again after either form of `uninstall` is walked by a test: it decides by what is there now, ends on its own
+  check of both sides, and the commands after it work (row R149).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for

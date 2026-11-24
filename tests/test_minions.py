@@ -3643,6 +3643,37 @@ class G6(unittest.TestCase):
         fresh_look(host)
         self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_STOP)
 
+    def test_G6_22_the_way_back_in_is_walked(self):
+        # R149 (rule 8, THE WAY BACK IN IS WALKED TOO): for each form of leaving, setup again meets what that leave
+        # kept, decides by what is there now, ends on its own check of both sides with exit 0, and a watch pass after
+        # it works. `uninstall REPO` keeps the state folder (no runner in it), the watch, the slice and the tool's
+        # copy; `uninstall --all` keeps only the person's record, outside the state folder.
+        gh, world, host = remove_setup(moved=False)
+        self.assertEqual(run_uninstall(gh, host)[0], M.EXIT_OK)
+        kept = M.load_state(host)
+        self.assertEqual(kept.get("runners"), {})
+        self.assertNotIn("runner_user_made", kept)  # the user it made went with the last runner (R130)
+        with open(os.path.join(host.state_dir(), "journal.log"), encoding="utf-8") as f:
+            journal_kept = f.read()
+        gh, world, host = remove_setup(moved=False)
+        self.assertEqual(run_uninstall(gh, host, everything=True)[0], M.EXIT_OK)
+        self.assertFalse(os.path.isdir(host.state_dir()))
+        for form, state in (("uninstall REPO", kept), ("uninstall --all", None)):
+            h, sha = setup_host()
+            fresh_look(h)
+            if state is not None:
+                d = M.load_state(h)
+                d.update(state)
+                M.save_state(h, d)
+                with open(os.path.join(h.state_dir(), "journal.log"), "a", encoding="utf-8") as f:
+                    f.write(journal_kept)
+            code, lines = run_setup(setup_gh(sha), h)
+            self.assertEqual(code, M.EXIT_OK, (form, lines))
+            self.assertTrue(lines[-1].startswith("ok both sides: GitHub lists "), (form, lines[-1]))
+            self.assertFalse([x for x in lines if x.startswith(("stop ", "need you: log in"))], (form, lines))
+            self.assertIn(REPO, M.load_state(h)["runners"])
+            self.assertEqual(M.watch(host=h, gh=StatusGH(), out=io.StringIO()), M.EXIT_OK, form)
+
     def test_G6_10_uninstall_keeps_the_persons_record_in_one_folder_they_own(self):
         # Rule 8 and INV6 (plan 3.0, row R99): the record of what the tool did is the person's. It is moved into one
         # plain-text folder they own, named last by the census, and deleted only on a flag typed at a terminal.
