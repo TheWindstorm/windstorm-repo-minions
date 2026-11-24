@@ -2054,8 +2054,10 @@ def package_list(host: Host) -> set[str] | None:
 
 
 def record_packages(host: Host, before: set[str] | None, after: set[str] | None) -> list[str] | None:
-    """R139: what the runner's dependency script added to the system, kept in this tool's notes (and so, through the
-    journal, in your record) for the census when the tool leaves; never removed by this tool. None: not read."""
+    """R139: what was added to the system while the runner's dependency script ran (a list before and a list after
+    tell what was added in that time, not who added it), kept in this tool's notes (and so, through the journal, in
+    your record) for the census when the tool leaves; never removed by this tool. None: not read. A list not read at
+    one setup stays said even when a later setup reads one: an error is never an absence."""
     known = load_state(host)
     if before is None or after is None:
         known["dependency_packages_unread"] = True
@@ -2065,7 +2067,8 @@ def record_packages(host: Host, before: set[str] | None, after: set[str] | None)
     added = sorted(after - before)
     known["dependency_packages"] = sorted(set(known.get("dependency_packages") or []) | set(added))
     save_state(host, known)
-    journal(host, "packages", "added by the runner's dependency script: " + (", ".join(added) or "none"))
+    journal(host, "packages", "added to the system while the runner's dependency script ran: "
+            + (", ".join(added) or "none"))
     return added
 
 
@@ -2078,18 +2081,20 @@ def run_dependencies(host: Host, tgz: str, d: str, rep: Report) -> None:
     rc, out = sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0700", d])
     if rc == 0:
         rc, out = sudo(host, ["tar", "xzf", tgz, "-C", d, "--wildcards", "*bin/installdependencies.sh"])
-    before = package_list(host) if rc == 0 else None
-    if rc == 0:
-        rc, out = sudo(host, ["bash", script], timeout=900)
+    if rc != 0:  # the script never started: it added nothing, and there is nothing to read or record
+        rep.warn(f"the runner's own dependency script did not start: {tail(out)}; it added nothing to the system")
+        return
+    before = package_list(host)
+    rc, out = sudo(host, ["bash", script], timeout=900)
     added = record_packages(host, before, package_list(host)) if before is not None else record_packages(host, None, None)
     if added is None:
-        what = ("it may install system packages, which stay on this computer when this tool leaves; which ones could "
-                "not be read here")
+        what = ("it may add system packages, which stay on this computer when this tool leaves; which were added "
+                "while it ran could not be read here")
     elif added:
-        what = (f"it installed these system packages: {', '.join(added)}; they stay on this computer when this tool "
-                "leaves, because another program may come to use them")
+        what = (f"these system packages were added while it ran: {', '.join(added)}; they stay on this computer when "
+                "this tool leaves, because another program may come to use them")
     else:
-        what = "it installed no system packages"
+        what = "no system packages were added while it ran"
     if rc != 0:
         rep.warn(f"the runner's own dependency script did not finish: {tail(out)}; {what}")
     else:
@@ -5207,17 +5212,19 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         line("this tool's state folder", [host.state_dir()] if state_left else [],
              (f"kept: it holds {', '.join(foreign)}, which this tool did not write; that and the folder are yours"
               if foreign else "kept: its journal could not be moved to your record (said above)") if state_left else "")
-    if everything and packages is not None:  # R139 (rule 8): what the runner's dependency script installed stays
+    if everything and packages is not None:  # R139 (rule 8): what was added while the dependency script ran stays
         names, unread = packages.get("dependency_packages") or [], packages.get("dependency_packages_unread")
-        if names:
-            rep.ok(f"census: system packages the runner's dependency script installed: {', '.join(names)} (kept: "
-                   "installed for the whole system, and another program may use them now)")
+        head = "census: system packages added while the runner's dependency script ran: "
+        why = "installed for the whole system, and another program may use them now"
+        if names and unread:  # an error is never an absence: both are said
+            rep.ok(f"{head}{', '.join(names)}; at one setup the list could not be read, so there may be more (kept, "
+                   f"whatever they are: {why})")
+        elif names:
+            rep.ok(f"{head}{', '.join(names)} (kept: {why})")
         elif unread or packages.get("dependency_packages") is None:  # not read, or a setup that did not record it
-            rep.ok("census: system packages the runner's dependency script installed: not "
-                   f"{'read' if unread else 'recorded'} at setup (kept, whatever they are: installed for the whole "
-                   "system, and another program may use them now)")
+            rep.ok(f"{head}not {'read' if unread else 'recorded'} at setup (kept, whatever they are: {why})")
         else:
-            rep.ok("census: system packages the runner's dependency script installed: none")
+            rep.ok(f"{head}none")
     if everything:  # G6.13 (R117, rule 8): the folder the skill was downloaded into is named, so nobody guesses at it
         skill_folder_census(host, skill_folder, rep)
     # G6.10, INV6: last, the person's record, kept: theirs.

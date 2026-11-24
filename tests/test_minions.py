@@ -1278,32 +1278,51 @@ class G2(unittest.TestCase):
         self.assertEqual(len(reads), 2)
         self.assertLess(reads[0], deps)
         self.assertLess(deps, reads[1])
-        self.assertIn("ok the runner's own dependency script ran (from root's checked copy of the download); it "
-                      "installed these system packages: liblttng-ust-common1t64, liblttng-ust1t64; they stay on this "
-                      "computer when this tool leaves, because another program may come to use them", lines)
+        # What was read is said, not who did it: a list before and after tell what was added while it ran.
+        self.assertIn("ok the runner's own dependency script ran (from root's checked copy of the download); these "
+                      "system packages were added while it ran: liblttng-ust-common1t64, liblttng-ust1t64; they stay "
+                      "on this computer when this tool leaves, because another program may come to use them", lines)
+        self.assertFalse([x for x in lines if "it installed" in x], lines)
         self.assertEqual(M.load_state(host)["dependency_packages"], new)
         with open(os.path.join(host.state_dir(), "journal.log")) as f:
-            self.assertIn("added by the runner's dependency script: liblttng-ust-common1t64, liblttng-ust1t64", f.read())
+            self.assertIn("added to the system while the runner's dependency script ran: liblttng-ust-common1t64, "
+                          "liblttng-ust1t64", f.read())
         # none added; and a list that could not be read is said as such, never as none
-        for runs, said in (({("dpkg-query",): lists([])}, "it installed no system packages"),
-                           ({("dpkg-query",): (1, "dpkg-query: error")}, "it may install system packages, which stay "
-                            "on this computer when this tool leaves; which ones could not be read here")):
+        for runs, said in (({("dpkg-query",): lists([])}, "no system packages were added while it ran"),
+                           ({("dpkg-query",): (1, "dpkg-query: error")}, "it may add system packages, which stay "
+                            "on this computer when this tool leaves; which were added while it ran could not be read "
+                            "here")):
             host, sha = setup_host(runs=runs)
             fresh_look(host)
             code, lines = run_setup(setup_gh(sha), host)
             self.assertTrue(any(x.startswith("ok the runner's own dependency script ran") and x.endswith(said)
                                 for x in lines), lines)
         self.assertTrue(M.load_state(host)["dependency_packages_unread"])
+        # a script that never started added nothing: said so, nothing read, nothing marked unread
+        host, sha = setup_host(runs={("dpkg-query",): lists(new), ("sudo", "-n", "tar"): (2, "tar: error")})
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertTrue(any(x.startswith("warn the runner's own dependency script did not start: ")
+                            and x.endswith("; it added nothing to the system") for x in lines), lines)
+        self.assertFalse([a for a in host.ran if a[:1] == ("dpkg-query",)])
+        self.assertNotIn("dependency_packages_unread", M.load_state(host))
         # uninstall --all names them, kept, with why; nothing removes a package
-        for data, said in ((["liblttng-ust1t64"], "ok census: system packages the runner's dependency script "
-                            "installed: liblttng-ust1t64 (kept: installed for the whole system, and another program "
-                            "may use them now)"),
-                           (None, "ok census: system packages the runner's dependency script installed: not recorded "
-                            "at setup (kept, whatever they are: installed for the whole system, and another program "
-                            "may use them now)")):
+        # A list not read at one setup is never lost when a later setup reads one: both are said (an error is
+        # never an absence).
+        for data, unread, said in (
+                (["liblttng-ust1t64"], None, "ok census: system packages added while the runner's dependency script "
+                 "ran: liblttng-ust1t64 (kept: installed for the whole system, and another program may use them now)"),
+                (None, None, "ok census: system packages added while the runner's dependency script ran: not recorded "
+                 "at setup (kept, whatever they are: installed for the whole system, and another program may use "
+                 "them now)"),
+                (["liblttng-ust1t64"], True, "ok census: system packages added while the runner's dependency script "
+                 "ran: liblttng-ust1t64; at one setup the list could not be read, so there may be more (kept, "
+                 "whatever they are: installed for the whole system, and another program may use them now)")):
             gh, world, host = remove_setup()
             d = M.load_state(host)
             d["dependency_packages"] = data
+            if unread:
+                d["dependency_packages_unread"] = True
             M.save_state(host, d)
             code, lines = run_uninstall(gh, host, everything=True)
             self.assertIn(said, lines)
@@ -3892,7 +3911,7 @@ class G6(unittest.TestCase):
         code, lines = run_uninstall(gh, host, everything=True)
         census = [x for x in lines if "census:" in x]
         self.assertEqual(len(census), 9, census)  # G6.13: the skill's own folder is named too (here: not known);
-        # R139: and the system packages the runner's dependency script installed (here: none)
+        # R139: and the system packages added while the runner's dependency script ran (here: none)
         self.assertTrue(all(x.startswith("ok census:") and x.endswith(": none") for x in census[:-2]), census)
         self.assertTrue(census[-2].startswith("warn census: the folder this skill was downloaded into"), census)
         # Rule 8: the census is the last thing printed; it names this tool's state folder, and last the person's

@@ -30,9 +30,9 @@ the cap (row R94).
   watch, which runs as you, is the gate (row R133).
 - A file of yours in the tool's folders, or a `minions-runner` the tool did not make, no longer stops `uninstall`:
   it stays, named in the census as yours with why, and uninstall finishes (row R136).
-- Setup says which system packages the runner's own dependency script installed (read from the system's package
-  list before and after it), and `uninstall --all` names them as kept: they are installed for the whole system, and
-  another program may use them by then (row R139).
+- Setup says which system packages were added while the runner's own dependency script ran (read from the
+  system's package list before and after it), and `uninstall --all` names them as kept: they are installed for the
+  whole system, and another program may use them by then (row R139).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for

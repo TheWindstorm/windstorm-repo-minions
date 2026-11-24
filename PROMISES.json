@@ -1930,7 +1930,7 @@
   {
    "id": "R139",
    "seen": "2026-11-24, a stock Ubuntu 24.04.5 virtual machine (run51, a whole-filesystem listing before and after setup): the runner's own dependency script installed liblttng-ust1t64, liblttng-ust-common1t64 and liblttng-ust-ctl5t64; uninstall --all left them, and nothing named them. The owner's ruling the same night: record and name them in 0.1.0, by what the script added, not by three fixed names; removal is 0.1.1's row.",
-   "promise": "Setup reads the system's package list, as the person, before and after the runner's dependency script and keeps what it added in its notes and journal; its line says the script may add system packages and that they stay when the tool leaves; uninstall --all's census names them as kept, with why, and no command. A list not read is said as such.",
+   "promise": "Setup reads the system's package list, as the person, before and after the runner's dependency script and keeps what was added while it ran in its notes and journal, said as added while it ran, never as what it installed; its line says they stay when the tool leaves; uninstall --all's census names them as kept, with why, and no command. A list not read is said as such and is not lost when a later setup reads one.",
    "codon": "G2.20",
    "owner": "maintainer",
    "first_ship_in": "0.1.0",
