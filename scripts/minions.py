@@ -214,7 +214,7 @@ class Host:
     def gh_env(self) -> dict:
         """R144: every gh call of the tool reads the saved login from the same place: the one setup or look kept in
         the tool's state, else where this environment says gh keeps it."""
-        kept = (load_state(self).get("gh") or {}).get("config_dir")
+        kept = getattr(self, "gh_place", None) or (load_state(self).get("gh") or {}).get("config_dir")
         env = self.environ()
         return gh_environ(env, kept or gh_config_dir(env, self.home()))
 
@@ -741,12 +741,12 @@ def login_step(host: Host) -> str:
 
 def keyring_step_words(host: Host, repo: str | None, rep: Report) -> None:
     """R160 (owner's ruling 11-24, option A): the stop, the one step, and the five things the person hears before
-    choosing it. Nothing was made when this is said."""
+    choosing it. This tool made nothing when this is said."""
     where, scopes = login_where(host)
     hosts = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
     again = f"`look {repo}`" if repo else "the same command"
     rep.stop(f"{NO_LOGIN} the way this computer's check every 5 minutes will read it, when nobody is logged in: "
-             f"{where}. Nothing was made, on this computer or on GitHub. Your next step, in your own terminal, if you "
+             f"{where}. This tool made nothing, on this computer or on GitHub. Your next step, in your own terminal, if you "
              f"choose it after the lines below: {login_step(host)}, then {again} again")
     rep.tell(f"What that step does: gh then keeps your GitHub login in {hosts}, as plain text, which your account and "
              "this computer's admins can read.")
@@ -756,7 +756,7 @@ def keyring_step_words(host: Host, repo: str | None, rep: Report) -> None:
              "whoever gets the disk, if the disk is not encrypted.")
     rep.tell("Why it is needed: the check every 5 minutes runs when nobody is logged in, and then only that file "
              "can be read.")
-    rep.tell("If you would rather not, stop here: nothing was made, and this computer will not run jobs.")
+    rep.tell("If you would rather not, stop here: this tool made nothing, and this computer will not run jobs.")
 
 
 def check_gh_road(host: Host, rep: Report, repo: str | None = None) -> bool:
@@ -767,16 +767,7 @@ def check_gh_road(host: Host, rep: Report, repo: str | None = None) -> bool:
     found = [n for n in GH_NOT_HANDED if env.get(n)]
     place = gh_config_dir(env, host.home())
     moved = [n for n in GH_PLACE_SETTINGS if env.get(n)]
-    data = load_state(host)
-    if (data.get("gh") or {}).get("config_dir") != place:
-        data["gh"] = dict(data.get("gh") or {}, config_dir=place)
-        try:
-            save_state(host, data)
-        except OSError as e:
-            rep.stop(f"could not keep where gh saves its login ({place}) in {host.state_dir()}: {e}. The watch runs "
-                     "without your shell and would read another place; nothing was changed. Settle what it says, then "
-                     "run the same command again")
-            return False
+    host.gh_place = place  # R160: this run's gh reads it here; the record keeps it only after the reads below pass
     unused = (f" Found in your shell and not used by this tool: {', '.join(found)}. The watch runs without your "
               "shell, so this tool's every GitHub call, setup's and the watch's alike, goes to github.com as the login "
               "gh saved; your own use of gh is unchanged.") if found else ""
@@ -785,7 +776,7 @@ def check_gh_road(host: Host, rep: Report, repo: str | None = None) -> bool:
         keyring_step_words(host, repo, rep)
         return False
     if kept == "unread":
-        rep.stop(f"{why}. Nothing was made, on this computer or on GitHub. Settle what it says, then run the same "
+        rep.stop(f"{why}. This tool made nothing, on this computer or on GitHub. Settle what it says, then run the same "
                  "command again")
         return False
     answer, name, why = login_read(host)
@@ -796,6 +787,17 @@ def check_gh_road(host: Host, rep: Report, repo: str | None = None) -> bool:
         rep.stop(f"GitHub could not be asked whether gh's saved login for github.com works: {why}. Nothing was "
                  f"changed; run the same command again.{unused}")
         return False
+    # R160: kept only once every login read has passed, so a stop above has made nothing on this computer
+    data = load_state(host)
+    if (data.get("gh") or {}).get("config_dir") != place:
+        data["gh"] = dict(data.get("gh") or {}, config_dir=place)
+        try:
+            save_state(host, data)
+        except OSError as e:
+            rep.stop(f"could not keep where gh saves its login ({place}) in {host.state_dir()}: {e}. The watch runs "
+                     "without your shell and would read another place; nothing was changed. Settle what it says, then "
+                     "run the same command again")
+            return False
     who = f"as {name}, the login gh saved for github.com" if name else \
         "as the login gh saved for github.com (its name could not be read from gh's answer)"
     where = (f", read from {place} (your shell's {' and '.join(moved)}; the watch reads it there too)"
@@ -1816,6 +1818,9 @@ def journal(host: Host, step: str, detail: str = "") -> None:
 
 
 def record_look(host: Host, repo: str, rep: Report, s: dict | None) -> None:
+    if (rep.stopped or rep.blocked) and not os.path.exists(state_path(host)):
+        return  # R160: a look cut short (a stop, or a step of the person's that nothing may pass) on a computer that
+        # never held the record makes none; setup then asks for a look, as it does when none was run
     data = load_state(host)
     keep = {k: v for k, v in (s or {}).items() if k in ("system", "machine", "cores", "mem", "disk", "free",
                                                           "battery", "lid", "os", "sleep_delay", "serves",

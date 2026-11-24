@@ -61,6 +61,10 @@ the cap (row R94).
   login. Every GitHub call of the tool is read that way; no answer to a call sent without a login is read as
   anything, and the watch and `status` say each reason by its kind: no login, a repository not there for this
   login, or no answer (row R160).
+- A stop before setup's first write makes nothing: on a computer that has never held the tool's record, a `look`
+  that stops, or that ends at a step of the person's, keeps no record of itself, and where gh keeps its login is
+  written down only once the login reads have passed. Those stops say "this tool made nothing": gh writes files of
+  its own in a home where it never ran, and the tool does not claim them (row R160).
 - Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
   path of Claude Code's own list of plugins and the plugin's name, never its version folder, and the tool says the
   skill was removed from Claude Code only when that list was read and names it nowhere: an update of the plugin says

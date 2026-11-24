@@ -5545,7 +5545,7 @@ class RuleTwo(unittest.TestCase):
         stop = next(x for x in lines if x.startswith("stop "))
         self.assertTrue(stop.startswith(f"stop {M.NO_LOGIN} the way this computer's check every 5 minutes will "
                                         "read it, when nobody is logged in: gh keeps it in this computer's keyring"), stop)
-        self.assertIn("Nothing was made, on this computer or on GitHub", stop)
+        self.assertIn("This tool made nothing, on this computer or on GitHub", stop)
         self.assertIn(f"`gh auth login --insecure-storage`, then `look {REPO}` again", stop)
         tells = [x for x in lines if x.startswith("tell the person ")]
         self.assertEqual(len(tells), 5, lines)
@@ -5555,12 +5555,25 @@ class RuleTwo(unittest.TestCase):
                      "(its scopes: gist, read:org, repo, workflow), on every repository of yours, not only this one",
                      "every copy or backup of your home folder", "if the disk is not encrypted",
                      "runs when nobody is logged in",
-                     "If you would rather not, stop here: nothing was made, and this computer will not run jobs"):
+                     "If you would rather not, stop here: this tool made nothing, and this computer will not run jobs"):
             self.assertIn(must, said, must)
         self.assertNotRegex(said, r"same is true of the keyring|keyring is (also|as)")  # not read by us: not said
+        self.assertNotIn("othing was made", " ".join(lines))  # gh's own files are gh's: only what this tool made is said
         self.assertEqual(gh.calls, [])
         self.assertNotIn(("gh", "api", "-i", "user", "--hostname", "github.com"), host.ran)
         self.assertEqual([a for a in host.ran if a[:1] == ("sudo",)], [])
+        # "this tool made nothing" is true (owner's finding 11-24): on a home that has never held the tool's record, the
+        # stop leaves no record behind, for the keyring stop and the could-not-be-read stop alike
+        self.assertEqual(os.listdir(host.state_dir()), [], "the keyring stop made the tool's record")
+        code, lines = run_setup(StandIn([]), host)  # setup after it: asks for a look, and still makes nothing
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertTrue(any(x.startswith(f"stop no look of {REPO} on this computer yet") for x in lines), lines)
+        self.assertEqual(os.listdir(host.state_dir()), [], "setup after the keyring stop made the tool's record")
+        unread_host = linux_host(runs={("gh", "auth", "token"): (1, "error connecting to the keyring\n")})
+        code, lines = look(StandIn([]), unread_host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn("This tool made nothing, on this computer or on GitHub", next(x for x in lines if x.startswith("stop ")))
+        self.assertEqual(os.listdir(unread_host.state_dir()), [], "the could-not-be-read stop made the tool's record")
         # where: a shell's token, or not read; the scopes left out when not read
         host = linux_host(runs={("gh", "auth", "token"): no_token, ("own", "gh", "auth", "status"): (
             0, "github.com\n  ✓ Logged in to github.com account example-person (GH_TOKEN)\n")})
@@ -5582,8 +5595,27 @@ class RuleTwo(unittest.TestCase):
         host.runs[("gh", "auth", "token")] = no_token
         host.runs[("own", "gh", "auth", "status")] = keyring
         gh = setup_gh(sha)
-        code, lines = run_setup(gh, host)
+        data = M.load_state(host)
+        data["gh"] = {"config_dir": os.path.join(TMP, "earlier-gh-place")}  # where an earlier look found it
+        M.save_state(host, data)
+        record = os.path.join(host.state_dir(), "minions.json")
+        with open(record, "rb") as f:
+            before = f.read()
+        # the shell now names another place for gh's login: the read goes there, and the record is not touched
+        moved = os.path.join(TMP, "moved-gh-place")
+        read_at, run = [], host.run
+        def run_seen(argv, timeout=20):
+            if tuple(argv[:3]) == ("gh", "auth", "token"):
+                read_at.append(host.gh_env()["GH_CONFIG_DIR"])
+            return run(argv, timeout)
+        host.run = run_seen
+        with mock.patch.dict(os.environ, {"GH_CONFIG_DIR": moved}):
+            code, lines = run_setup(gh, host)
+        host.run = run
         self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertEqual(read_at, [moved])
+        with open(record, "rb") as f:
+            self.assertEqual(f.read(), before, "the setup stop changed the tool's record")
         self.assertTrue(any(x.startswith(f"stop {M.NO_LOGIN}") for x in lines), lines)
         self.assertEqual(admin_steps(host), [])
         self.assertEqual(gh.calls, [])
@@ -5613,8 +5645,18 @@ class RuleTwo(unittest.TestCase):
         lines = look(StandIn([]), host)[1]
         stop = next(x for x in lines if x.startswith("stop "))
         self.assertTrue(stop.startswith("stop gh could not be asked whether it has a login for github.com"), stop)
-        self.assertIn("Nothing was made", stop)
+        self.assertIn("This tool made nothing", stop)
         self.assertNotIn("insecure-storage", stop)
+
+    def test_G1_20_a_login_github_refuses_makes_no_record_on_a_fresh_home(self):
+        # R160, owner 11-24: the need to log in comes after the login was read as the watch reads it, and before
+        # gh's place is kept; on a home that never held the tool's record, it leaves none, for each of its answers
+        for answer in ((4, NO_LOGIN), (1, "HTTP/2.0 401 Unauthorized\n\n{\"message\": \"Bad credentials\"}")):
+            host = linux_host(runs={("gh", "api", "-i", "user"): answer})
+            code, lines = look(StandIn([]), host)
+            self.assertEqual(code, M.EXIT_NEED, lines)
+            self.assertTrue(lines[0].startswith("need you: log in to GitHub: run `gh auth login`"), lines)
+            self.assertEqual(os.listdir(host.state_dir()), [], f"the need to log in made the tool's record: {answer}")
 
     def test_G5_25_the_watch_and_status_say_each_reason_by_its_kind(self):
         # R160 (owner's ruling 11-24): seen 2026-11-24, a watch with no login it could read said "GitHub answered
