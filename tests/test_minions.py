@@ -5496,6 +5496,9 @@ class Planted(unittest.TestCase):
     def test_child_path_without_the_stand_ins(self):
         subprocess.run(["true"], env=dict(os.environ, PATH="/usr/bin:/bin"))
 
+    def test_child_path_with_this_machines_folder_first(self):  # rule 17: the stand-ins are there, but stepped over
+        subprocess.run(["true"], env=dict(os.environ, PATH="/usr/bin" + os.pathsep + os.environ["PATH"]))
+
     def test_the_validator_test_as_it_was(self):  # test_G8_1's six lines at 66e3625
         if shutil.which("gh") and subprocess.run(["gh", "skill", "--help"], capture_output=True).returncode == 0 \\
                 and subprocess.run(["gh", "auth", "status"], capture_output=True).returncode == 0:
@@ -5529,6 +5532,7 @@ GUARD_CAUGHT = {"test_opens_the_real_home": "in this account's real home",
                 "test_bash_child_starts_sudo": "ran sudo -n true (a child)",
                 "test_swallows_the_error": "ran crontab",
                 "test_child_path_without_the_stand_ins": "a PATH that leaves out the stand-ins",
+                "test_child_path_with_this_machines_folder_first": "a PATH that puts /usr/bin before the stand-ins",
                 "test_the_validator_test_as_it_was": "ran gh"}
 
 
@@ -5596,7 +5600,7 @@ class MachineGuard(unittest.TestCase):
             self.assertIn("ERROR: tearDownModule", r.stderr)
             r = run(MINIONS_GUARD_OFF="1")
             self.assertEqual(r.returncode, 0, r.stderr[-3000:])
-            self.assertIn("Ran 10 tests", r.stderr)
+            self.assertIn("Ran 11 tests", r.stderr)
             self.assertNotIn("rule 17", r.stderr)
 
     def test_G9_12_the_guard_has_no_switch(self):

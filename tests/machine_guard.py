@@ -13,7 +13,8 @@ starts:
    temporary folder, so a bash child that starts sudo is counted though this hook is not in it.
 3. A Python audit hook in this process: starting a FORBIDDEN name found outside a temporary folder, or this
    module's own stand-in; starting a child whose environment names this account's real home as HOME, or no HOME,
-   or a PATH that leaves out the stand-ins; and opening, listing or changing anything in the real home outside the
+   or a PATH that leaves out the stand-ins or puts anything but a temporary folder before them (a child of that
+   child would find this machine's own claude, tmux, sudo or gh first); and opening, listing or changing anything in the real home outside the
    checkout, the temporary folder and Python's libraries. Each is stopped at that call (MachineReached) and counted.
    A test may bring its own stand-in, in a temporary folder of its own.
 
@@ -213,6 +214,13 @@ def _child(exe, argv, env):
         return f"started {name or 'a child'} with this account's real home as HOME"
     if p is not None and BIN not in p.split(os.pathsep):
         return f"started {name or 'a child'} with a PATH that leaves out the stand-ins ({p})"
+    if p is not None:  # rule 17, A CHILD'S OWN PATH IS WATCHED TOO: nothing of this machine's own before the stand-ins
+        tmp = os.path.realpath(tempfile.gettempdir())
+        ahead = [x for x in p.split(os.pathsep)[:p.split(os.pathsep).index(BIN)]
+                 if not (x and os.path.realpath(x).startswith(tmp + os.sep))]
+        if ahead:
+            return (f"started {name or 'a child'} with a PATH that puts {', '.join(x or '(the current folder)' for x in ahead)} "
+                    "before the stand-ins, so a child of it finds this machine's own programs first")
     return None
 
 
