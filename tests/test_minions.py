@@ -91,6 +91,9 @@ class FakeHost(M.Host):
         self._system, self.files, self.runs = system, dict(files or {}), dict(runs or {})
         # R160: gh has a login it can read with no session bus (a made-up value, one line, as `gh auth token` prints)
         self.runs.setdefault(("gh", "auth", "token"), (0, "made-up-login-value\n"))
+        # R172: a computer with our runner on it has its user (setup_host starts without it, until useradd)
+        self.runs.setdefault(("getent", "passwd", "minions-runner"),
+                             (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n"))
         self.runs.setdefault(("gh", "auth", "login", "--hostname", "github.com", "--help"), (0, GH_LOGIN_HELP))
         if which is None:  # every program the tool and its hooks run (G8.9); no container engine
             which = ("gh", "sudo", "systemctl", *M.PROGRAMS, *M.HOOK_PROGRAMS)
@@ -100,8 +103,12 @@ class FakeHost(M.Host):
         self._state = tempfile.mkdtemp(dir=TMP)
         self.home_mode, self.download, self.validated, self.tty = 0o750, b"a stand-in runner archive", 0, True
         self.enter, self.read_enters = True, 0  # G7.15: the person's own terminal; Enter pressed
+        self.broken = False  # rule 7's twice-taken test: a stand-in made to fail until the printed step is taken
 
     def _answer(self, argv, input=None):
+        if list(argv[:2]) == ["pgrep", "-u"] and str(argv[2]).isdigit():
+            # R172: the tool asks pgrep by the runner user's number; a stand-in written for its name answers it
+            argv = [*argv[:2], "minions-runner", *argv[3:]]
         for k in sorted(self.runs, key=len, reverse=True):
             if tuple(argv[:len(k)]) == k:
                 a = self.runs[k]
@@ -775,6 +782,12 @@ def setup_host(**kw):
     creds = "".join(f"600 minions-runner {FOLDER}/{n}\n" for n in (".credentials", ".runner", ".credentials_rsaparams"))
     host.runs.update({
         ("id", "-u", "minions-runner"): (1, "id: 'minions-runner': no such user"),
+        # R172: getent's own code for a key it did not find, until setup made the user (or a record says it did)
+        ("getent", "passwd", "minions-runner"): lambda argv, input=None: (
+            (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n")
+            if any(a[:3] == ("sudo", "-n", "useradd") for a in host.ran) or M.load_state(host).get("runner_user_made")
+            or any(k[:3] == ("pgrep", "-u", "minions-runner") for k in host.runs)  # a test of its processes has it
+            else (2, "")),
         ("id", "-nG", "minions-runner"): (0, "minions-runner\n"),
         ("sudo", "-n", "useradd"): (0, ""),
         ("sudo", "-n", "chmod"): (0, ""),
@@ -1167,7 +1180,7 @@ class G2(unittest.TestCase):
         # a runner user that is in an admin group is refused
         for groups in ("minions-runner sudo", "minions-runner docker", "minions-runner wheel", "minions-runner users"):
             host, sha = setup_host(runs={("id", "-nG", "minions-runner"): (0, groups + "\n"),
-                                         ("id", "-u", "minions-runner"): (0, "998\n")})
+                                         ("getent", "passwd", "minions-runner"): (0, "minions-runner:x:998:998::/home/minions-runner:/bin/bash\n")})
             fresh_look(host)
             made_by_us(host)  # R129: a user this tool made earlier; one it did not make is never taken (G2.14)
             code, lines = run_setup(setup_gh(sha), host)
@@ -1288,7 +1301,7 @@ class G2(unittest.TestCase):
         M.save_state(host, data)
         code, lines = run_setup(setup_gh(sha), host)
         self.assertEqual(code, M.EXIT_STOP, lines)
-        self.assertIn(f"run `look {REPO}` again", lines[-1])
+        self.assertIn(f"run `look {REPO}` first; then setup again", lines[-1])  # rule 7: the change, named
 
     def test_G2_13_root_runs_only_what_root_wrote_and_checked(self):
         # R127 (rule 28, ROOT RUNS ONLY WHAT ROOT OWNS; CHECKED AND USED ARE THE SAME COPY): root never runs the
@@ -1329,14 +1342,14 @@ class G2(unittest.TestCase):
     def test_G2_14_setup_takes_only_a_runner_user_it_made(self):
         # R129 (rule 28): a minions-runner this tool did not make (no record here says it made it), or one whose
         # answer could not be read, stops setup before any admin step; uninstall never removes a user it did not make.
-        for answer in ((0, "1001\n"), (2, "id: cannot read the user database\n")):
-            host, sha = setup_host(runs={("id", "-u", "minions-runner"): answer})
+        for answer in ((0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n"), (3, "getent: enumeration not supported\n")):
+            host, sha = setup_host(runs={("getent", "passwd", "minions-runner"): answer})
             fresh_look(host)
             code, lines = run_setup(setup_gh(sha), host)
             self.assertEqual(code, M.EXIT_STOP, lines)
             self.assertEqual(admin_steps(host), [], "nothing is touched")
             self.assertIn(M.NOT_OURS_USER if answer[0] == 0 else "could not read whether the user", lines[-1])
-        host, sha = setup_host(runs={("id", "-u", "minions-runner"): (0, "1001\n")})
+        host, sha = setup_host(runs={("getent", "passwd", "minions-runner"): (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n")})
         fresh_look(host)
         made_by_us(host)
         code, lines = run_setup(setup_gh(sha), host)
@@ -3766,9 +3779,13 @@ class World:
             return (0 if st == "active" else 3), st + "\n"
         if a[:2] == ["systemctl", "list-units"]:
             return 0, "".join(f"{u} loaded {self.active.get(u, 'inactive')}\n" for u in sorted(self.loaded))
+        if a[:1] == ["getent"]:  # R172: as glibc's getent answers: its line, or exit 2 for a key not found
+            return (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n") if self.user else (2, "")
         if a[:2] == ["pgrep", "-u"]:
-            if not self.user:  # as procps-ng 4.0.4 answers for a user that does not exist (seen, R167)
+            if not self.user and a[2] != "1001":  # as procps-ng 4.0.4 answers for a user that does not exist (seen)
                 return 2, "pgrep: invalid user name: minions-runner\n"
+            if not self.user:
+                return 1, ""  # by number: no process of that number
             if a[-1].endswith("Runner.Worker"):
                 return (0, "3333\n") if self.worker else (1, "")
             return (0, "2222\n") if self.listener else (1, "")
@@ -3863,7 +3880,7 @@ class G6(unittest.TestCase):
                  "find -print in /tmp", "empty /home/minions-runner", "userdel"]
         self.assertEqual([x for x in o if x in steps], steps, o)
         ran = list(host.ran)
-        procs = [i for i, a in enumerate(ran) if a == ("pgrep", "-u", "minions-runner")]
+        procs = [i for i, a in enumerate(ran) if a == ("pgrep", "-u", "1001")]  # R172: by the user's number
         cron = ran.index(("sudo", "-n", "crontab", "-r", "-u", "minions-runner"))
         self.assertTrue([i for i in procs if i < cron], "no process of that user is read back before its crontab goes")
         self.assertTrue(any("nothing of minions-runner is left running or scheduled" in x for x in lines), lines)
@@ -3872,7 +3889,7 @@ class G6(unittest.TestCase):
         # a process that outlives SIGKILL stops the uninstall before userdel, and is named
         gh, world, host = remove_setup()
         real = host._answer
-        host._answer = lambda argv, input=None: ((0, "4444\n") if list(argv) == ["pgrep", "-u", "minions-runner"]
+        host._answer = lambda argv, input=None: ((0, "4444\n") if list(argv) == ["pgrep", "-u", "1001"]
                                                   and "rmdir " + M.records_dir_of(FOLDER) in world.order
                                                   else real(argv, input))
         code, lines = run_uninstall(gh, host)
@@ -3942,7 +3959,7 @@ class G6(unittest.TestCase):
         self.assertEqual(code, M.EXIT_OK)
         self.assertTrue(lines[-1].startswith("ok census: your record of what this tool did"), lines[-1])
         # setup is where a foreign thing stops (G2.14)
-        host, sha = setup_host(runs={("id", "-u", "minions-runner"): (0, "1001\n")})
+        host, sha = setup_host(runs={("getent", "passwd", "minions-runner"): (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n")})
         fresh_look(host)
         self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_STOP)
 
@@ -4279,7 +4296,7 @@ class G6(unittest.TestCase):
         # start, removal or "no job runs" takes that third answer for none.
         PG = ("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.")
         # (Here the runner user reads there: an exit 2 for a user read absent is none, test_G6_27_an_absent_user...)
-        THERE = {("id", "-u", "minions-runner"): (0, "998\n")}
+        THERE = {("getent", "passwd", "minions-runner"): (0, "minions-runner:x:998:998::/home/minions-runner:/bin/bash\n")}
         for bad in ((2, "pgrep: invalid user name: minions-runner\n"), (127, "Command timed out after 20 seconds"),
                     (3, "")):
             host = setup_host(runs={PG: bad, ("systemctl", "is-active", UNIT): (3, "inactive\n"), **THERE})[0]
@@ -4328,10 +4345,213 @@ class G6(unittest.TestCase):
                 self.assertIn("ok census: the runner user: none", lines)
         # The runner user not read: pgrep's exit 2 stays could not be read.
         host = setup_host(runs={("pgrep", "-u", "minions-runner"): (2, "pgrep: invalid user name: minions-runner\n"),
-                                ("id", "-u", "minions-runner"): (1, "id: cannot find name for user ID 998\n")})[0]
+                                ("getent", "passwd", "minions-runner"): (3, "")})[0]
         self.assertIsNone(M.pids_list_or_none(host))
-        host.runs[("id", "-u", "minions-runner")] = (1, "id: 'minions-runner': no such user")
+        host.runs[("getent", "passwd", "minions-runner")] = (2, "")
         self.assertEqual(M.pids_list_or_none(host), [])
+        self.assertFalse([a for a in host.ran if a[:1] == ("pgrep",)], "R172: no pgrep for a user read absent")
+
+    def test_G6_30_a_user_removed_outside_the_tool_leaves_its_home_named_and_the_leave_finishes(self):
+        # R167, R173 (FAULT 2, owner 5:14 PM ET 11-24, point 4; seen on a stock Ubuntu 24.04): the runner user removed by
+        # hand, its home kept. Every read in that home was made AS that user, who was gone, so it was "could not be
+        # read", counted as there, and uninstall stopped at the folder with "Run the same command again" (2 of 2).
+        # Now: nothing is tried as that user, nothing inside its home is deleted, the leave goes to its end (GitHub's
+        # side, the units, the hooks, the state, the copy), and the home is named as what stayed, with why and the
+        # one whole command; the end is "finished, something stayed" (exit 0), never STOP or WAIT, in every run.
+        home = f"/home/{M.RUNNER_USER}"
+        for everything in (True, False):
+            gh, world, host = remove_setup(moved=False)  # no put-back pull request to merge
+            world.user, world.listener = False, False  # its home and the runner's folder are kept
+            for n in (1, 2):
+                code, lines = run_uninstall(gh, host, repo=None if everything else REPO, everything=everything)
+                self.assertEqual(code, M.EXIT_OK, (n, lines))
+                self.assertFalse([x for x in lines if x.startswith(("stop", "waiting"))], (n, lines))
+                self.assertFalse([x for x in lines if "run the same command again" in x.lower()
+                                  or "run it again" in x.lower()], (n, lines))
+                self.assertFalse([a for a in host.ran if a[2:5] == ("-u", M.RUNNER_USER, "--")],
+                                 "nothing is tried as a user that is gone")
+                self.assertIn(home, world.paths)
+                self.assertIn(FOLDER, world.paths, "nothing inside its home is deleted")
+                named = [x for x in lines if f"{home} stayed" in x or f"the folder {home}: stayed" in x]
+                self.assertTrue(named, lines)
+                for x in named:
+                    self.assertIn("`sudo rm -rf --one-file-system /home/minions-runner`", x)
+                    self.assertIn("the user was removed outside this tool; this tool deletes inside a runner's home "
+                                  "only as that user", x)
+                if everything:
+                    self.assertTrue([x for x in lines if x.startswith(f"ok census: the folder {home}: stayed")], lines)
+                    self.assertEqual(lines[-1], "ok this tool is off this computer; what stayed is yours, named above "
+                                                "with why each stayed")
+                    self.assertNotIn(M.HOOKS_ROOT, world.paths)
+            self.assertIsNone(gh.runner)  # GitHub's side went
+            self.assertNotIn(f"/etc/systemd/system/{UNIT}", world.paths)
+            self.assertNotIn(M.hook_dir(REPO), world.paths)
+        # A disk mounted inside that home is named first: the command skips it (seen in the rehearsal, exit 1).
+        gh, world, host = remove_setup(moved=False)  # no put-back pull request to merge
+        world.user, world.listener = False, False
+        host.files["/proc/self/mountinfo"] = (f"30 1 0:5 / / rw - ext4 /dev/vda1 rw\n"
+                                              f"99 30 0:60 / {home}/mnt rw - tmpfs tmpfs rw\n")
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        x = next(x for x in lines if f"{home} stayed" in x)
+        self.assertIn(f"a disk is mounted inside it ({home}/mnt)", x)
+        self.assertLess(x.index("unmount it first"), x.index("`sudo rm -rf"))
+
+    def test_G2_14_setup_refuses_a_home_left_by_a_user_removed_outside_the_tool(self):
+        # R173 (owner 5:14 PM ET 11-24, point 4; R130): with the runner user absent and its home there, setup went on
+        # to useradd, which keeps a folder that is there, so a new user of that name took over what a job had left
+        # in it. Now setup stops before any admin step, names the folder and the one whole command, and goes on once
+        # that folder is gone.
+        home = f"/home/{M.RUNNER_USER}"
+        host, sha = setup_host()
+        host.dirs[home] = True
+        fresh_look(host)
+        for n in (1, 2):
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertEqual(admin_steps(host), [], "nothing is touched, before any admin step")
+            self.assertEqual(host.validated, 0, "no password asked")
+            self.assertIn(f"the folder {home} is here", lines[-1])
+            self.assertIn("first: `sudo rm -rf --one-file-system /home/minions-runner`; then run the same command "
+                          "again", lines[-1])
+        del host.dirs[home]  # the step taken as printed
+        self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+
+    # Rule 7 (THE SAME STOP MUST NOT COME BACK; A WAIT THAT MAY NOT END): the words that name, in a stop's FIRST
+    # printing, what must change or what a second run can find different, and what to do when the same lines come back
+    NAMED_CHANGE = re.compile(r"\bfirst\b|if these same lines come back|type the password|in your own terminal|"
+                              r"once no job", re.I)
+
+    def twice(self, make, fix, run):
+        """One world taken twice in the unchanged world, and once with the printed step taken (fix). A stop or wait
+        whose second run in the unchanged world ends in the same words must carry a named change; with the change
+        made, the second run must end differently (the promise is real). Returns the first run's end line."""
+        def end(lines):
+            stops = [x for x in lines if x.startswith(("stop ", "waiting ", "need you"))
+                     and "press Enter here to go on" not in x and "where sudo asks for it below" not in x]
+            return stops[-1] if stops else None
+        w = make()
+        code1, lines1 = run(w)
+        e1 = end(lines1)
+        code2, lines2 = run(w)  # the unchanged world
+        if e1 is not None and end(lines2) == e1:
+            self.assertTrue(self.NAMED_CHANGE.search(e1), f"the same stop came back with no change named: {e1}")
+        for x in lines2:
+            if x.startswith("warn ") and re.search(r"\bagain\b", x):
+                self.assertTrue(self.NAMED_CHANGE.search(x), f"a 'run again' warning with no change named: {x}")
+        if e1 is not None:
+            self.assertIsNotNone(fix, f"a stop with no step to take in the suite's world: {e1}")
+            w = make()
+            run(w)
+            fix(w)
+            self.assertNotEqual(end(run(w)[1]), e1, f"the step taken as printed ended in the same stop: {e1}")
+        return code1, e1
+
+    def test_G7_19_every_stop_of_uninstall_taken_as_printed_twice_does_not_come_back(self):
+        # R174 (family rule 7, THE SAME STOP MUST NOT COME BACK): each stop and "run it again" line, taken as printed
+        # twice with nothing changed between, ends differently or names what must change first.
+        def gh_down(w):
+            gh, world, host = w
+            gh.down = True
+        def gh_up(w):
+            w[0].down = False
+        def answer_wrap(match, said):
+            def mutate(w):
+                gh, world, host = w
+                real = host._answer
+                host._answer = lambda a, i=None: said if host.broken and match(list(a)) else real(a, i)
+                host.broken = True
+            return mutate
+        def mended(w):
+            w[2].broken = False
+        def make_with(mutate):
+            def make():
+                gh, world, host = remove_setup(moved=False)
+                real_api = gh.api
+                gh.down = False
+                gh.api = lambda m, p, b=None: (502, {}) if gh.down and "actions/runners" in p else real_api(m, p, b)
+                w = (gh, world, host)
+                mutate(w)
+                return w
+            return make
+        def gone(w):
+            w[1].user, w[1].listener = False, False
+        def stuck_unit(w):
+            gh, world, host = w
+            real = world.answer
+            def answer(a, i=None):
+                if host.broken and list(a[:4]) == ["sudo", "-n", "systemctl", "stop"] and UNIT in a:
+                    return 0, ""  # told to stop, and it does not
+                return real(a, i)
+            host._answer = answer
+            host.broken = True
+        def run(w):
+            gh, world, host = w
+            return run_uninstall(gh, host, repo=None, everything=True)
+        worlds = {
+            "the runner user removed outside the tool, its home kept": (gone, None),
+            "GitHub answers 502": (gh_down, gh_up),
+            "pgrep cannot answer": (answer_wrap(lambda a: a[:3] == ["pgrep", "-u", "1001"], (3, "")), mended),
+            "getent cannot answer": (answer_wrap(lambda a: a[:1] == ["getent"], (3, "")), mended),
+            "the service does not stop": (stuck_unit, mended),
+            "systemd cannot be read": (answer_wrap(lambda a: a[:2] == ["systemctl", "show"],
+                                                   (1, "Failed to connect to bus: No medium found\n")), mended),
+            "the runner's folder is not deleted": (answer_wrap(lambda a: a[:1] == ["rm"] or a[5:6] == ["rm"],
+                                                               (1, "rm: cannot remove: Operation not permitted\n")),
+                                                   mended),
+            "userdel refuses": (answer_wrap(lambda a: a[:1] == ["userdel"],
+                                            (8, "userdel: user minions-runner is currently used by process 4444\n")),
+                                mended),
+            "the jobs' records cannot be read": (answer_wrap(lambda a: a[5:6] == ["cat"], (1, "cat: denied\n")),
+                                                 mended),
+        }
+        ends = {}
+        for name, (mutate, fix) in worlds.items():
+            with self.subTest(world=name):
+                code, e = self.twice(make_with(mutate), fix, run)
+                ends[name] = (code, e)
+        self.assertEqual(ends["the runner user removed outside the tool, its home kept"], (M.EXIT_OK, None))
+        self.assertEqual(ends["the jobs' records cannot be read"][1], None)  # kept and named; the leave finishes
+
+    def test_G7_19_every_stop_of_setups_first_steps_taken_as_printed_twice_does_not_come_back(self):
+        # R174: the same for setup's first steps: the look, the runner user, its home, the Enter and the admin password.
+        home = f"/home/{M.RUNNER_USER}"
+        def make_with(mutate, look=True):
+            def make():
+                host, sha = setup_host()
+                if look:
+                    fresh_look(host)
+                mutate(host)
+                return host, sha
+            return make
+        def run(w):
+            host, sha = w
+            return run_setup(setup_gh(sha), host)
+        def getent(answer):
+            return lambda host: host.runs.__setitem__(("getent", "passwd", "minions-runner"), answer)
+        THERE = (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n")
+        def no_password(host):
+            host.runs[("sudo", "-n", "true")] = (1, "sudo: a password is required\n")
+            host.sudo_validate = lambda: 1
+        def password(w):
+            del w[0].sudo_validate  # the class's own: sudo takes the password
+        worlds = {
+            "no look yet": (make_with(lambda h: None, look=False), lambda w: fresh_look(w[0])),
+            "a look 90 minutes old": (make_with(lambda h: fresh_look(h, minutes=90)), lambda w: fresh_look(w[0])),
+            "a user of that name this tool did not make": (make_with(getent(THERE)),
+                                                           lambda w: getent((2, ""))(w[0])),
+            "the user could not be read": (make_with(getent((3, ""))), lambda w: getent((2, ""))(w[0])),
+            "a home left by a user removed outside the tool": (make_with(lambda h: h.dirs.__setitem__(home, True)),
+                                                               lambda w: w[0].dirs.pop(home)),
+            "your home open to every user": (make_with(lambda h: setattr(h, "home_mode", 0o755)),
+                                             lambda w: setattr(w[0], "home_mode", 0o750)),
+            "no Enter read": (make_with(lambda h: setattr(h, "enter", False)), lambda w: setattr(w[0], "enter", True)),
+            "sudo did not take the password": (make_with(no_password), password),
+        }
+        for name, (make, fix) in worlds.items():
+            with self.subTest(world=name):
+                code, e = self.twice(make, fix, run)
+                self.assertIsNotNone(e, f"{name}: the world was meant to stop")
 
     def test_G6_27_the_slice_is_never_stopped_while_a_unit_in_it_runs(self):
         # R167 (owner 3:51 PM ET 11-24, change 4; rule 30): a stop of the slice ends every unit in it, a running job
@@ -4419,7 +4639,7 @@ class G6(unittest.TestCase):
         real = M.tool_path
         M.tool_path = lambda: M.TOOL_COPY
         try:
-            for match in (lambda a: a == ["pgrep", "-u", "minions-runner"],  # the runner user's processes
+            for match in (lambda a: a == ["pgrep", "-u", "1001"],  # the runner user's processes (by number, R172)
                           lambda a: a[:2] == ["systemctl", "list-units"]):  # the slice's own units
                 gh, world, host = remove_setup()
                 host._answer = (lambda r, m: lambda a, i=None: (3, "") if m(list(a)) else r(a, i))(world.answer, match)
@@ -4521,30 +4741,103 @@ class G6(unittest.TestCase):
                   "sudo": "sudo: Ein Passwort ist notwendig\n"}
         ENGLISH = {"id": "id: \u2018minions-runner\u2019: no such user\n",
                    "pgrep": "pgrep: invalid user name: minions-runner\n", "sudo": "sudo: a password is required\n"}
+        user = {"line": ""}  # getent's line for the runner user, "" when it is not there
         def fake_run(argv, input=None, **kw):
             env = kw.get("env") if kw.get("env") is not None else dict(os.environ)
             seen.append((list(argv), env))
             c = env.get("LC_ALL") == "C.UTF-8" and "LANGUAGE" not in env
             words = ENGLISH if c else GERMAN
             name = argv[0]
-            if name in ("id", "pgrep", "sudo"):
-                return subprocess.CompletedProcess(argv, {"id": 1, "pgrep": 2, "sudo": 1}[name], "", words[name])
+            if name == "getent":  # glibc's getent: its line, or exit 2 with no words at all, in every language
+                return subprocess.CompletedProcess(argv, 0 if user["line"] else 2, user["line"], "")
+            if name == "pgrep" and not argv[2].isdigit() and not user["line"]:
+                return subprocess.CompletedProcess(argv, 2, "", words["pgrep"])
+            if name == "pgrep":
+                return subprocess.CompletedProcess(argv, 1, "", "")
+            if name in ("id", "sudo"):
+                return subprocess.CompletedProcess(argv, 1, "", words[name])
             return subprocess.CompletedProcess(argv, 0, "HTTP/2.0 200 OK\r\n\r\n{}", "")
         shell = {"LANG": "de_DE.UTF-8", "LANGUAGE": "de_DE:de", "LC_MESSAGES": "de_DE.UTF-8", "HOME": "/home/you",
                  "PATH": "/usr/bin:/bin"}
         host = M.Host()
-        with mock.patch.dict(os.environ, shell, clear=True), mock.patch.object(M.subprocess, "run", fake_run):
+        with mock.patch.dict(os.environ, shell, clear=True), mock.patch.object(M.subprocess, "run", fake_run), \
+                mock.patch.object(M.platform, "system", lambda: "Linux"):
             self.assertEqual(M.runner_user_state(host)[0], "absent")  # setup's first step reads it
             self.assertEqual(M.pids_list_or_none(host), [])  # uninstall with the user gone: none
+            user["line"] = "minions-runner:x:998:998::/home/minions-runner:/bin/bash\n"
+            self.assertEqual(M.runner_user_state(host), ("there", "998"))
+            self.assertEqual(M.pids_list_or_none(host), [])  # pgrep's exit 1: none
             rc, out = M.sudo(host, ["true"])
             self.assertIn("sudo's permission ran out", M.said(out))  # sudo's refusal read as one
             host.run_in(["gh", "api", "x"], "{}")
             M.GitHub(host).api("GET", "repos/o/r")
+            # THE LIMIT (rule 30 (ii)): the C language is on the call, never on the tool's own process
+            self.assertEqual((os.environ.get("LANGUAGE"), os.environ.get("LC_ALL")), ("de_DE:de", None))
         self.assertGreaterEqual(len(seen), 6)
+        # R172 (i): an exit code or a field first: whether the runner user is there is getent's exit code, and its
+        # processes are asked by its NUMBER, so no word of id's or of pgrep's is read for either
+        self.assertFalse([a for a, _ in seen if a[:1] == ["id"]], seen)
+        self.assertIn(["pgrep", "-u", "998"], [a for a, _ in seen])
+        self.assertFalse([a for a, _ in seen if a[:2] == ["pgrep", "-u"] and not a[2].isdigit()], seen)
         for argv, env in seen:
             self.assertEqual(env.get("LC_ALL"), "C.UTF-8", argv)
             self.assertNotIn("LANGUAGE", env, argv)
             self.assertEqual(env.get("LANG"), "de_DE.UTF-8", argv)  # nothing else of the shell changes
+        # Rule 30 (A NAME IS READ WHOLE, (3)): on a Mac no call is moved (macOS 13 has no C.UTF-8 and falls to
+        # plain C, ASCII, with no error, seen by the owner), so a name in an answer comes out whole there
+        with mock.patch.object(M.platform, "system", lambda: "Darwin"):
+            self.assertEqual(M.c_language(shell), shell)
+
+    def test_G6_29_nothing_the_tool_starts_for_a_job_or_the_person_carries_the_c_language(self):
+        # R172 (rule 30, WHAT IT NEVER TOUCHES): the runner's configuration and its service start from an environment
+        # built by name (env -i, with the locale every job gets, LANG=C.UTF-8, R143); no unit, drop-in, .env or
+        # job hook this tool writes carries LC_ALL or LANGUAGE, whatever the shell setup ran from had.
+        shell = {"LANG": "de_DE.UTF-8", "LANGUAGE": "de_DE:de", "LC_ALL": "de_DE.UTF-8", "HOME": "/home/you",
+                 "PATH": "/usr/bin:/bin"}
+        with mock.patch.dict(os.environ, shell, clear=True):
+            host, sha = setup_host()
+            fresh_look(host)
+            self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+        self.assertEqual(M.RUNNER_ENV[:2], ("env", "-i"))
+        self.assertFalse([x for x in M.RUNNER_ENV if x.startswith(("LC_", "LANGUAGE"))], M.RUNNER_ENV)
+        starts = [a for a in host.ran if "bash" in a and "-u" in a]
+        self.assertTrue(starts and all(tuple(M.RUNNER_ENV) == a[a.index("--") + 1:][:len(M.RUNNER_ENV)]
+                                       for a in starts), starts)
+        written = [(a, i) for a, i in host.fed if i] + [(p, v) for p, v in host.files.items()
+                                                        if isinstance(v, str) and p != M.TOOL_COPY]  # not its source
+        self.assertTrue(written)
+        for what, text in written:
+            self.assertNotIn("LC_ALL", text, what)
+            self.assertNotIn("LANGUAGE", text, what)
+            self.assertNotIn("de_DE", text, what)
+
+    def test_G6_29_every_phrase_matched_is_on_the_list(self):
+        # R172 (iii): the repository holds the list of every phrase matched in another program's answer (program,
+        # phrase, version seen), docs/phrases.md. Every literal the code matches against an answer (`in` with said(),
+        # out, head, mode, words or entry on the right; re.search/match/fullmatch/findall on one of those) is on
+        # the list, and every phrase on the list is still matched by the code.
+        with open(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8") as f:
+            src = f.read()
+        with open(os.path.join(ROOT, "docs", "phrases.md"), encoding="utf-8") as f:
+            listed = set(re.findall(r"^\s*- phrase: `([^`]+)`", f.read(), re.M))
+        own = {"could not be read"}  # doctor's own line (copy_version_line), not another program's answer
+        subj = re.compile(r"\bsaid\(|^(out|head|mode|words|entry)(\.lower\(\)|\.strip\(\))?$")
+        matched = set()
+        for n in ast.walk(ast.parse(src)):
+            if isinstance(n, ast.Compare) and len(n.ops) == 1 and isinstance(n.ops[0], (ast.In, ast.NotIn)) \
+                    and isinstance(n.left, ast.Constant) and isinstance(n.left.value, str) \
+                    and subj.search(ast.get_source_segment(src, n.comparators[0])):
+                matched.add(n.left.value)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) \
+                    and n.func.value.id == "re" and n.func.attr in ("search", "match", "fullmatch", "findall") \
+                    and len(n.args) >= 2 and isinstance(n.args[0], ast.Constant) \
+                    and subj.search(ast.get_source_segment(src, n.args[1])):
+                matched.add(n.args[0].value)
+        self.assertIn("a password is required", matched)  # the finder finds
+        self.assertIn("Stopping |Stopped |Failed with result|Deactivated", matched)
+        self.assertEqual(sorted(own - matched), [], "an exemption no longer matched: take it out")
+        self.assertEqual(sorted(matched - listed - own), [], "matched in the code, not on docs/phrases.md")
+        self.assertEqual(sorted(listed - matched), [], "on docs/phrases.md, no longer matched in the code")
 
     def test_G6_28_a_warning_on_standard_error_is_never_part_of_an_answer(self):
         # R168 (owner 4:01 PM ET 11-24; family rule 30's last paragraph, "a warning is not part of the answer"): every
@@ -5239,6 +5532,38 @@ class P1a(unittest.TestCase):
         self.assertEqual(M.uninstall(None, everything=True, host=host, gh=gh, out=out, interactive=False), M.EXIT_NEED)
         self.assertIn(f"run `python3 -I {M.tool_path()} uninstall --all` there", out.getvalue().splitlines()[-1])
 
+    def test_G8_20_a_printed_command_line_quotes_every_path_a_folder_with_a_space(self):
+        # R175 (owner 5:14 PM ET 11-24, point 6): every path in a printed command line is quoted for the shell, so
+        # a copy of the tool in a folder with a space in its name is one argument when the line is pasted as printed.
+        spaced = "/home/you/my projects/windstorm-repo-minions/scripts/minions.py"
+        W_SVC = f"{M.WATCH_UNIT}.service"
+        def argv_of(line, sub):
+            cmds = [c for c in re.findall(r"`([^`]+)`", line) if sub in c]
+            self.assertTrue(cmds, line)
+            return shlex.split(cmds[0])
+        bus = (1, "Failed to connect to bus: No such file or directory\n")
+        with mock.patch.object(M, "tool_path", lambda: spaced):
+            # the stop of uninstall --all, the watch's service unread
+            gh, world, host = remove_setup()
+            host._answer = (lambda real: lambda a, i=None: bus if list(a[:3]) == ["systemctl", "show", W_SVC]
+                            else real(a, i))(world.answer)
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertEqual(argv_of(lines[-1], "uninstall --all"), ["python3", "-I", spaced, "uninstall", "--all"])
+            # the stop of uninstall <repo>, the runner's service unread
+            gh, world, host = remove_setup()
+            host._answer = (lambda real: lambda a, i=None: bus if list(a[:3]) == ["systemctl", "show", UNIT]
+                            else real(a, i))(world.answer)
+            code, lines = run_uninstall(gh, host)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertEqual(argv_of(lines[-1], f"uninstall {REPO}"), ["python3", "-I", spaced, "uninstall", REPO])
+            self.assertEqual(shlex.split(M.tool_cmd()), ["python3", "-I", spaced])
+            # the step when the installed copy may be gone: the clone setup was run from, a space in its name
+            step = M.copy_gone_step({"clone": "/home/you/my projects/windstorm-repo-minions"})
+            self.assertEqual(shlex.split(step.strip("`")), ["python3", "-I", spaced, "uninstall", "--all"])
+            self.assertEqual(shlex.split(M.copy_gone_step({}).strip("`")), ["python3", "-I", spaced, "uninstall",
+                                                                           "--all"])
+
     def test_G7_15_each_line_on_the_persons_screen_is_one_sentence_and_the_count_is_bound(self):
         # The owner's word (2026-11-23): twelve lines is a lot to read, so each is one plain sentence, and the count
         # grows only with a row: eleven, twelve on a laptop.
@@ -5388,7 +5713,7 @@ class P1a(unittest.TestCase):
             gh, world, host = remove_setup()
             alive = set(world_pids) | set(other)
             def answer(argv, input=None):
-                if list(argv) == ["pgrep", "-u", "minions-runner"]:
+                if list(argv) == ["pgrep", "-u", "1001"]:  # R172: by the runner user's number
                     return (0, "".join(f"{p}\n" for p in sorted(alive, key=int))) if alive else (1, "")
                 if list(argv[:7]) == ["sudo", "-n", "-u", "minions-runner", "--", "kill", "-TERM"]:
                     alive.difference_update(argv[7:])  # R128: as the runner user
@@ -5985,6 +6310,10 @@ class G8Words(unittest.TestCase):
                 a = n.args[0]
                 if isinstance(a, (ast.Name, ast.Call)):
                     continue  # public_words, blind_words, the memory floor: checked below
+                steps = {"settle_first", "came_back", "github_next", "unit_next", "kept_home_step"}
+                if any(isinstance(x, ast.Call) and isinstance(x.func, ast.Name) and x.func.id in steps
+                       for x in ast.walk(a)):
+                    continue  # rule 7: the step is built by one of the step helpers, each checked below
                 words = " ".join(x.value for x in ast.walk(a) if isinstance(x, ast.Constant) and isinstance(x.value, str))
                 if words.strip() == "start test:":
                     continue  # its words are ZERO_JOB_WORDS, checked below
@@ -5993,7 +6322,9 @@ class G8Words(unittest.TestCase):
                 if not self.NEXT.search(re.sub(r"^\s*`[^`]*`", "", words)):
                     lacking.append((n.lineno, words[:80]))
         self.assertEqual(lacking, [])
-        for built in (M.ZERO_JOB_WORDS, M.public_words(REPO, {"time": "t"}),
+        for built in (M.settle_first(), M.came_back("x", "y", "z"), M.github_next(500, REPO), M.github_next(403, REPO),
+                      M.unit_next("u", ("unread", "w"), "c"), M.unit_next("u", ("running", "active"), "c"),
+                      M.ZERO_JOB_WORDS, M.public_words(REPO, {"time": "t"}),
                       M.memory_floor_line(REPO, {"MemoryMax": 1, "pct": 60, "mem": 2 * 1024 ** 3, "cores": 1}),
                       M.memory_floor_line(REPO, {"MemoryMax": 1, "pct": 60, "mem": 16 * 1024 ** 3, "cores": 1})):
             self.assertTrue(self.NEXT.search(built), built)
@@ -6360,7 +6691,7 @@ class RuleTwo(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertTrue(lines[0].startswith("stop GitHub could not be asked whether gh's saved login for github.com "
                                             "works: Get \"https://api.github.com/user\""), lines)
-        self.assertIn("run the same command again", lines[0])
+        self.assertIn("if these same lines come back, running it again changes nothing: the road named", lines[0])
         self.assertNotRegex(lines[0], r"gh auth|log in|logout|refresh")
         host, sha = setup_host()
         fresh_look(host)

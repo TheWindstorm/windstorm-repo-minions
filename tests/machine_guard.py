@@ -62,7 +62,7 @@ LEFT_OFF = {
     **{n: _FILES for n in ("install", "cp", "rm", "rmdir", "chmod", "chown", "tee", "tar", "mktemp", "find", "mkdir",
                            "realpath", "dirname")},
     **{n: "the hook tests use it on processes they started" for n in ("kill", "pgrep", "sleep", "setsid")},
-    **{n: _READS for n in ("cat", "stat", "id", "test", "sha256sum", "systemd-detect-virt", "sysctl", "sw_vers",
+    **{n: _READS for n in ("cat", "stat", "id", "getent", "test", "sha256sum", "systemd-detect-virt", "sysctl", "sw_vers",
                            "netstat", "date", "awk", "seq", "df", "tail", "tr")},
     **{n: _ON_PURPOSE for n in ("bash", "env", "python3", "git")},
     "sh": "the tool runs it only as `sh -c` with its own fixed `test -e` script (R167), which reads only",
