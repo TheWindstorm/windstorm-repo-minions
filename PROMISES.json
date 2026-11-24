@@ -1730,6 +1730,34 @@
    "issue": 311,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R124",
+   "seen": "2026-11-23, family rule 8 (the catalog is shared), from a sister skill's stock-machine round on Claude Code 2.1.331: `claude plugin marketplace remove` of a catalog also uninstalled the other plugin from it and deletes their saved options, secrets and data where it can. Read here before the 0.1.0 tag: the command is in no step of the README, the skill or the tool, nor in what uninstall --all and its census print; nothing yet holds that.",
+   "promise": "No step this skill gives, in the README, the skill, the tool's printed lines or what uninstall and its census print, tells the person or an agent to remove a plugin catalog (`plugin marketplace remove`); leaving is our `uninstall --all` and, for Claude Code's own part, its `plugin uninstall` of this plugin only. A test reads every printed line and every document for it.",
+   "codon": "G6.15",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R125",
+   "seen": "2026-11-23, family rule 23 (Python's own cache is a write). Read here before the 0.1.0 tag: on a stock machine the whole-home listings inside the clone's scripts folder held minions.py only after setup, a job and uninstall (no __pycache__); the tool is one file run as the main script and imports only the standard library, so Python writes no cache for it. Nothing yet holds that if a second module appears.",
+   "promise": "The skill's Python leaves no `__pycache__` or `.pyc` beside its code, in the clone, in Claude Code's plugin folder or in the copy setup installs: every line that starts it runs one file with no module of ours imported, or with -B / sys.dont_write_bytecode set before the first such import. A test runs each command from a scratch copy and lists the folder after.",
+   "codon": "G6.16",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "proven": "",
+   "issue": "",
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
