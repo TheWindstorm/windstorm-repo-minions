@@ -54,7 +54,7 @@ Folders, and who can write them:
 | `install_watch` | `(argv)` | no: `systemctl daemon-reload`, `enable --now` the timer. The watch runs as you (`User=`), from root's copy | no | nothing. The watch's service and timer are written by `root_file` (0644 root:root) |
 | `install_watch` | `systemctl start` | no | no | nothing |
 | `start_runner` | `systemctl start` | no | no | nothing |
-| `stop_runner` | `systemctl stop` | no | no | nothing |
+| `_stop_runner` | `systemctl stop` | no | no | nothing |
 | `resume` | `systemctl enable` | no | no | nothing |
 | `reregister` | `(argv)` | no: `systemctl enable`, `start` | no | nothing |
 | `doctor_one` | `stat` | no | no: the hooks (root's) and the runner user's home entry. The credential files are read as the runner user (R128) | nothing |
@@ -65,6 +65,7 @@ Folders, and who can write them:
 | `remove_service` | `systemctl reset-failed` | no | no | nothing |
 | `remove_folders` | `rm` | no | no: the hooks only (root's). The runner's folder is deleted as the runner user (R128) | nothing |
 | `empty_then_rmdir` | `rmdir` | no | no: a records folder that the runner user has already emptied. `rmdir` follows nothing and removes only an empty folder | nothing |
+| `remove_shared` | `systemctl stop` | no | no | nothing |
 | `remove_shared` | `systemctl disable` | no | no | nothing |
 | `remove_shared` | `rm` | no | no: root's folders, and `seen` (yours) | nothing |
 | `remove_shared` | `rmdir` | no | no | nothing |

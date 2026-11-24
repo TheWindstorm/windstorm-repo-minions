@@ -3060,6 +3060,14 @@ class G5(unittest.TestCase):
         host3.runs[("pgrep", "-u", "minions-runner", "-f")] = (1, "")
         gh = StatusGH(private=True)
         gh.r[REPO]["labels"] = ["minions-held"]
+        # R167 (rule 6): the enable's exit is read; refused, nothing goes on and it is said (G6.27)
+        enable = ("sudo", "-n", "systemctl", "enable", UNIT)
+        host3.runs[enable] = (1, "Failed to enable unit: Access denied\n")
+        code, lines = run_cmd(M.resume, REPO, host=host3, gh=gh, private_again=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn("could not be enabled again: Failed to enable unit: Access denied", lines[-1])
+        self.assertFalse(any(x[:4] == ("sudo", "-n", "systemctl", "start") for x in host3.ran))
+        del host3.runs[enable]
         code, lines = run_cmd(M.resume, REPO, host=host3, gh=gh, private_again=True)
         self.assertEqual(code, M.EXIT_OK, lines)
         self.assertIn(("sudo", "-n", "systemctl", "enable", "actions.runner.example-org-example-repo.minions-box-1.service",
@@ -4197,6 +4205,122 @@ class G6(unittest.TestCase):
         self.assertEqual(code, M.EXIT_STOP, lines)
         self.assertIn(f"whether {M.SLICE} is gone could not be read", lines[-1])
         self.assertNotIn("still loaded or active", lines[-1])
+
+    def test_G6_27_a_pgrep_that_cannot_answer_is_never_no_process(self):
+        # R167 (rule 6, each read failed in turn): pgrep's exit 0 is the list, 1 is none, anything else could not be
+        # read (a user that does not exist answers 2 with one line, seen; a timeout is the host's 127). No stop,
+        # start, removal or "no job runs" takes that third answer for none.
+        PG = ("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.")
+        for bad in ((2, "pgrep: invalid user name: minions-runner\n"), (127, "Command timed out after 20 seconds"),
+                    (3, "")):
+            host = setup_host(runs={PG: bad, ("systemctl", "is-active", UNIT): (3, "inactive\n")})[0]
+            rep = M.Report(io.StringIO())
+            self.assertFalse(M.stop_runner(host, UNIT, FOLDER, rep, drained=True), bad)
+            self.assertIn("could not be read", rep.lines[-1])
+            self.assertIn(f"pgrep answered code {bad[0]}", rep.lines[-1])
+            self.assertNotIn("is stopped", rep.lines[-1])
+            rep = M.Report(io.StringIO())
+            self.assertFalse(M.start_runner(host, UNIT, FOLDER, rep), bad)
+            self.assertIn("could not be read", rep.lines[-1])
+            self.assertFalse(any(a[:4] == ("sudo", "-n", "systemctl", "start") for a in host.ran))
+            # The runner user's processes, before the user is deleted.
+            host = setup_host(runs={("pgrep", "-u", "minions-runner"): bad})[0]
+            rep = M.Report(io.StringIO())
+            self.assertFalse(M.end_runner_users_processes(host, rep), bad)
+            self.assertIn("could not be read", rep.lines[-1])
+            self.assertIn("the user is not deleted", rep.lines[-1])
+        # The drain inside uninstall: a job's process not read is never "no job runs": held, nothing stopped.
+        bad = (2, "pgrep: invalid user name: minions-runner\n")
+        gh, world, host = remove_setup()
+        host._answer = (lambda real: lambda a, i=None: bad if list(a[:2]) == ["pgrep", "-u"] and
+                        a[-1].endswith("Runner.Worker") else real(a, i))(world.answer)
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertIn("whether a job process runs here could not be read", lines[-1])
+        self.assertNotIn(f"stop {UNIT}", world.order)
+        self.assertIn(FOLDER, world.paths)
+        self.assertFalse(any(m == "DELETE" for m, p in gh.calls), gh.calls)
+
+    def test_G6_27_stopped_is_said_only_from_a_word_seen_after_a_real_stop(self):
+        # R167 (rule 30): after the stop and no process left, the service's is-active word decides: "inactive" (every
+        # word our run logs printed after a real stop: 107 of 107) and "failed" are stopped; a running word is not;
+        # anything else, and a systemctl that could not reach the manager, is "could not be read".
+        PG = ("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.")
+        for ans, ok, words in (((3, "inactive\n"), True, "the service is inactive"),
+                               ((3, "failed\n"), True, "the service is failed"),
+                               ((0, "active\n"), False, "reads active after its stop"),
+                               ((0, "deactivating\n"), False, "reads deactivating after its stop"),
+                               ((1, "Failed to connect to bus: No such file or directory\n"), False,
+                                "could not be read (systemctl answered code 1: Failed to connect to bus"),
+                               ((0, ""), False, "could not be read (systemctl answered code 0: nothing)")):
+            host = setup_host(runs={PG: (1, ""), ("systemctl", "is-active", UNIT): ans})[0]
+            rep = M.Report(io.StringIO())
+            self.assertEqual(M.stop_runner(host, UNIT, FOLDER, rep, drained=True), ok, ans)
+            self.assertIn(words, rep.lines[-1])
+
+    def test_G6_27_a_watch_unit_not_read_gone_ends_the_run_and_its_stop_is_sent_every_run(self):
+        # R167 (rule 30): a watch unit read still there after its removal: that run removes nothing more (the slice,
+        # the tool's own folders and copy, the records and the runner user stay); and the stop to the watch's units is
+        # sent on every run, file or no file, so the same command run again can finish.
+        W_SVC = f"{M.WATCH_UNIT}.service"
+        gh, world, host = remove_setup()
+        host._answer = (lambda real: lambda a, i=None: (0, "LoadState=loaded\nActiveState=inactive\n"
+                                                           f"FragmentPath=/etc/systemd/system/{W_SVC}\n")
+                        if list(a[:3]) == ["systemctl", "show", W_SVC] else real(a, i))(world.answer)
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertIn(f"{W_SVC} is still there after its removal", lines[-1])
+        self.assertIn(SLICE_FILE, world.paths)
+        self.assertIn(M.HOOKS_ROOT, world.paths)
+        self.assertTrue(world.user)
+        self.assertNotIn(f"stop {M.SLICE}", world.order)
+        self.assertNotIn(f"/etc/systemd/system/{W_SVC}", world.paths)  # its file went before the read
+        n = len(world.order)
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertGreaterEqual(world.order[n:].count(f"stop {W_SVC}"), 2, world.order[n:])  # watch_off and the removal
+
+    def test_G6_27_an_answer_that_is_not_the_list_is_never_none(self):
+        # R167 (rule 6, the uninstall road's other reads, each failed in turn): root's `test -e` says "not there" only
+        # with exit 1 and nothing written (sudo's own refusal is exit 1 with its words); atq's list only with exit 0;
+        # find's only with exit 0 or 1 (1: a folder it may not enter, on any stock /tmp); systemd's unit list only
+        # with exit 0. Anything else is "could not be read", and the runner user is not deleted over it.
+        host = setup_host()[0]
+        P = "/etc/systemd/system/x.service"
+        for ans, want in (((0, ""), True), ((1, ""), False), ((1, "sudo: unable to resolve host box: Name or service "
+                                                                   "not known\n"), None),
+                          ((2, "test: extra argument\n"), None), ((127, "Command timed out"), None)):
+            host.runs[("sudo", "-n", "test", "-e", P)] = ans
+            self.assertIs(M.root_test(host, P), want, ans)
+            self.assertEqual(M.exists_as_root(host, P), want is not False, ans)
+        def with_(world, host, match, ans):
+            host._answer = (lambda real: lambda a, i=None: ans if match(list(a)) else real(a, i))(world.answer)
+        for match, ans, words in (
+                (lambda a: a[-1:] == ["atq"], (1, "Can't open /var/run/atd.pid to signal atd. No atd running?\n"),
+                 "its at jobs (could not be read: atq answered code 1"),
+                (lambda a: "find" in a and a[-1] == "-print", (2, "find: '/tmp': Input/output error\n"),
+                 "(could not be read: find answered code 2")):
+            gh, world, host = remove_setup()
+            host._which.add("atq")
+            with_(world, host, match, ans)
+            code, lines = run_uninstall(gh, host)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertIn(f"the user {M.RUNNER_USER} is not deleted", lines[-1])
+            self.assertIn(words, lines[-1])
+            self.assertTrue(world.user)
+        # find's exit 1 with its list is the list (seen on every stock /tmp): the leave goes on.
+        gh, world, host = remove_setup()
+        with_(world, host, lambda a: "find" in a and a[-1] == "-print",
+              (1, "find: '/tmp/systemd-private-x': Permission denied\n"))
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        # The census: a unit list systemd did not give is said not read, never "none".
+        gh, world, host = remove_setup()
+        with_(world, host, lambda a: a[:2] == ["systemctl", "list-units"], (1, "Failed to connect to bus: x\n"))
+        rep = M.Report(io.StringIO())
+        M.census(gh, host, [REPO], False, rep)
+        self.assertTrue([x for x in rep.lines if "census: systemd's units of ours: not read (systemctl answered code 1"
+                         in x], rep.lines)
 
     def test_G6_2_uninstall_all_leaves_nothing_and_offers_the_workflows_back(self):
         gh, world, host = remove_setup()

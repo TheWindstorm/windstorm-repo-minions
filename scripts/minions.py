@@ -3136,10 +3136,33 @@ def listed_runner(gh: GitHub, repo: str, name: str) -> dict | None:
     return read_runner(gh, repo, name)[1]
 
 
+class PidsUnread(Exception):
+    """R167 (rule 6): pgrep answered neither its list (exit 0) nor "none" (exit 1); the words say what it answered."""
+
+
+def pgrep_read(host: Host, argv: list[str]) -> list[str]:
+    """R167: pgrep's three answers: exit 0 is the list, exit 1 is none, anything else could not be read (raised)."""
+    rc, out = host.run(argv)
+    if rc == 0:
+        return [x for x in out.split() if x.isdigit()]
+    if rc == 1:
+        return []
+    first = next((x.strip() for x in out.splitlines() if x.strip()), "")
+    raise PidsUnread(f"pgrep answered code {rc}: " + (first[:160] or "nothing"))
+
+
 def runner_pids(host: Host, folder: str, part: str = "Runner.") -> list[int]:
-    """Processes of THIS runner (its own folder's programs), by exact PID. Read only; never a broad kill."""
-    rc, out = host.run(["pgrep", "-u", RUNNER_USER, "-f", f"{folder}/bin/{part}"])
-    return [int(x) for x in out.split() if x.isdigit()] if rc == 0 else []
+    """Processes of THIS runner (its own folder's programs), by exact PID. Read only; never a broad kill. Raises
+    PidsUnread when pgrep could not answer: never taken for "no process"."""
+    return [int(x) for x in pgrep_read(host, ["pgrep", "-u", RUNNER_USER, "-f", f"{folder}/bin/{part}"])]
+
+
+def pids_or_unread(host: Host, folder: str, part: str = "Runner.") -> list[int] | bool:
+    """R167: for a yes/no "does a process of it run?": a read that could not answer is True (it may run), never no."""
+    try:
+        return runner_pids(host, folder, part)
+    except PidsUnread:
+        return True
 
 
 def set_labels(gh: GitHub, repo: str, runner_id, labels: list[str]) -> list[str] | None:
@@ -3151,7 +3174,19 @@ def set_labels(gh: GitHub, repo: str, runner_id, labels: list[str]) -> list[str]
 
 def stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool) -> bool:
     """G4.6, G4.7: the one way the tool stops a runner. Only after a drain; SIGTERM, then read back that no process
-    of this runner is left, before anything may start it again."""
+    of this runner is left, before anything may start it again. R167: a read that could not answer stops here."""
+    try:
+        return _stop_runner(host, unit, folder, rep, drained)
+    except PidsUnread as e:
+        rep.stop(f"whether a process of the runner is left could not be read ({e}): it is not called stopped, and "
+                 "nothing will start it again until that reads. Run the same command again")
+        return False
+
+
+STOPPED_WORDS, RUNNING_WORDS = ("inactive", "failed"), ("active", "activating", "deactivating", "reloading")
+
+
+def _stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool) -> bool:
     if not drained:
         rep.stop("the runner is stopped only after a drain (a stop cancels a running job within seconds): run "
                  "`drain <owner/repo>` first")
@@ -3186,7 +3221,16 @@ def stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool) 
         rep.stop(f"the runner did not stop: process(es) {', '.join(map(str, left))} are left; nothing will start "
                  "it again until they are gone")
         return False
-    rep.ok(f"the runner is stopped: the service is {active.strip() or 'not read'}, and no process of it is left")
+    word = active.strip().splitlines()[0].strip() if active.strip() else ""
+    if word in RUNNING_WORDS:  # R167 (rule 30): "stopped" only from a stopped word, as seen after real stops
+        rep.stop(f"the runner's service reads {word} after its stop, though no process of it is left: it is not "
+                 "called stopped, and nothing will start it again. Run the same command again")
+        return False
+    if word not in STOPPED_WORDS:
+        rep.stop(f"whether the runner's service stopped could not be read (systemctl answered code {rc}: "
+                 f"{word[:160] or 'nothing'}): it is not called stopped. Run the same command again")
+        return False
+    rep.ok(f"the runner is stopped: the service is {word}, and no process of it is left")
     return True
 
 
@@ -3195,7 +3239,12 @@ def start_runner(host: Host, unit: str, folder: str, rep: Report) -> bool:
     rc, active = host.run(systemctl("is-active", unit))
     if active.strip() == "active":
         return True
-    left = runner_pids(host, folder)
+    try:
+        left = runner_pids(host, folder)
+    except PidsUnread as e:  # R167: never started over a read that could not answer, so two copies never run
+        rep.stop(f"whether a process of this runner is still there could not be read ({e}): it is not started "
+                 "again, so two copies never run. Run the same command again")
+        return False
     if left:
         rep.stop(f"process(es) {', '.join(map(str, left))} of this runner are still there while its service is "
                  "not: it is not started again, so two copies never run")
@@ -3261,7 +3310,12 @@ def wait_idle(gh: GitHub, host: Host, repo: str, mine: dict, wait_s: int, poll_s
             rep.wait(f"for GitHub: {gh.why}. Held, nothing stopped. Next: `{next_cmd}` again after that time")
             return "running"
         busy = bool(r.get("busy"))
-        worker = runner_pids(host, mine["folder"], "Runner.Worker")
+        try:
+            worker = runner_pids(host, mine["folder"], "Runner.Worker")
+        except PidsUnread as e:  # R167: never "no job runs" from a read that could not answer
+            rep.wait(f"whether a job process runs here could not be read ({e}). Held, nothing stopped. Next: "
+                     f"`{next_cmd}` again")
+            return "running"
         if not busy and not worker:
             return "idle" if r.get("status") == "online" else "offline"
         if host.now() >= deadline:
@@ -3391,7 +3445,11 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
         if not admin():
             return rep.code()
         journal(host, "enable", mine["unit"])
-        sudo(host, systemctl("enable", mine["unit"]))
+        rc, out = sudo(host, systemctl("enable", mine["unit"]))
+        if rc != 0:  # R167: its exit is read; a service not enabled would not come back after a restart
+            rep.stop(f"the runner's service could not be enabled again: {tail(out) or f'code {rc}'}. Settle what it "
+                     f"says, then `resume {repo} --private-again` again")
+            return rep.code()
     if mine.get("gone_on_github"):
         rep.stop(f"GitHub no longer lists our runner {mine['name']}: run `setup {repo}` again to register it")
         return rep.code()
@@ -3506,7 +3564,11 @@ def survey_words(data: dict, repo: str) -> str:
 
 def computer_side(host: Host, mine: dict) -> tuple[str, list[int], dt.datetime]:
     rc, active = host.run(systemctl("is-active", mine["unit"]))
-    return active.strip() or "not read", runner_pids(host, mine["folder"], "Runner.Worker"), host.now()
+    try:
+        worker = runner_pids(host, mine["folder"], "Runner.Worker")
+    except PidsUnread:  # status's road: said as no job process, as before R167 (its own row, due 0.1.1)
+        worker = []
+    return active.strip() or "not read", worker, host.now()
 
 
 def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int], at: dt.datetime,
@@ -3958,8 +4020,8 @@ def name_cut_jobs(gh: GitHub, host: Host, repo: str, mine: dict, data: dict, rer
             oom_after = j["end"]["oom"]
         else:
             oom_after = nxt["oom"] if nxt else here.get("oom")
-        if j["end"] is None and nxt is None and runner_pids(host, mine["folder"], "Runner.Worker"):
-            continue  # still running
+        if j["end"] is None and nxt is None and pids_or_unread(host, mine["folder"], "Runner.Worker"):
+            continue  # still running, or not read (R167: never named cut from a read that could not answer)
         key = f"{j['start']['run']}/{j['start']['attempt']}/{j['start']['t']}"
         done_ = settled.get(key)
         if done_ is not None:  # R90: a finished job is read from GitHub once, then judged from what was kept
@@ -4184,7 +4246,10 @@ def memory_held_pass(host: Host, mine: dict, data: dict) -> None:
     needed): the count of times it was held at its high mark rose since the last pass, and the job's tasks all
     stalled on memory for a real share of the last minute (or, without that file, its memory sits at the high mark).
     Written down pass by pass; `status` names it first once HELD_PASSES passes in a row found it."""
-    worker = runner_pids(host, mine.get("folder") or "", "Runner.Worker")
+    try:
+        worker = runner_pids(host, mine.get("folder") or "", "Runner.Worker")
+    except PidsUnread:  # R167: nothing written down from a read that could not answer
+        return
     ev = re.search(r"^high (\d+)$", host.read(MEMORY_EVENTS) or "", re.M)
     high = int(ev.group(1)) if ev else None
     before, mine["mem_high_count"] = mine.get("mem_high_count"), high
@@ -4245,7 +4310,7 @@ def offline_while_running(host: Host, mine: dict, r: dict, data: dict) -> None:
     The watch only writes it down (it has no admin rights and restarts nothing); `status` names it first."""
     rc, active = host.run(systemctl("is-active", mine.get("unit") or "none"))
     stuck = (r.get("status") != "online" and active.strip() == "active"
-             and not runner_pids(host, mine.get("folder") or "", "Runner.Worker"))
+             and not pids_or_unread(host, mine.get("folder") or "", "Runner.Worker"))
     if stuck and not mine.get("offline_since"):
         mine["offline_since"] = stamp(host.now())
         mine["offline_slept_s"] = host.slept_s()  # R85: time asleep is not counted against it
@@ -4383,8 +4448,8 @@ def gone_on_github(host: Host, repo: str, data: dict, rep: Report) -> None:
     (both seen, no restart loop); the watch, which has no admin rights (G9.7), only reads the service and names it.
     `setup` again stops what still runs before it registers again."""
     mine = data["runners"][repo]
-    if runner_pids(host, mine["folder"], "Runner.Worker"):
-        return  # a job process still runs here: named once it ends
+    if pids_or_unread(host, mine["folder"], "Runner.Worker"):
+        return  # a job process still runs here (or could not be read, R167): named once it ends
     rc, active = host.run(systemctl("is-active", mine["unit"]))
     journal(host, "gone on GitHub", f"{repo} {mine['name']}: its service is {active.strip() or 'not read'}")
     mine["gone_on_github"] = stamp(host.now())
@@ -4497,7 +4562,13 @@ def reregister(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> bo
     """G5.12: `setup` again for a runner GitHub removed: registered again in place, its folders and labels kept."""
     mine = data["runners"][repo]
     folder = mine["folder"]
-    if runner_pids(host, folder, "Runner.Worker"):
+    try:
+        worker = runner_pids(host, folder, "Runner.Worker")
+    except PidsUnread as e:
+        rep.wait(f"whether a job process of {mine['name']} runs here could not be read ({e}); nothing is changed. "
+                 f"Next: `setup {repo}` again")
+        return False
+    if worker:
         rep.wait(f"a job process of {mine['name']} still runs here; nothing is changed. Next: `setup {repo}` again "
                  "once it has ended")
         return False
@@ -4975,7 +5046,9 @@ def root_test(host: Host, path: str) -> bool | None:
     rc, out = how(host, ["test", "-e", path])
     if rc == 0:
         return True
-    return None if "a password is required" in out else False
+    # R167 (rule 6): `test -e` says "not there" with exit 1 and nothing written; sudo's own refusal is also exit 1, with
+    # its words: that, and any other exit, could not be read
+    return False if rc == 1 and not out.strip() else None
 
 
 def empty_then_rmdir(host: Host, path: str) -> None:
@@ -5009,7 +5082,7 @@ def unit_read(host: Host, unit: str) -> tuple[str, str]:
     got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     if rc != 0 or not got.get("ActiveState") or not got.get("LoadState"):
         first = next((x.strip() for x in out.splitlines() if x.strip()), "")
-        return "unread", (first[:160] or f"systemctl answered nothing, exit {rc}")
+        return "unread", f"systemctl answered code {rc}: " + (first[:160] or "nothing")
     act = got["ActiveState"]
     if act in RUNNING_STATES:
         return "running", act
@@ -5181,16 +5254,23 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
         if state == "running":
             return False
         rep.ok(f"drained: no job runs on {mine['name']}")
-    elif folder and runner_pids(host, folder, "Runner.Worker"):
-        rep.wait(f"a job process of this runner still runs here, while GitHub no longer lists it; nothing is cut. "
-                 f"Next: `{next_cmd}` again")
-        return False
+    elif folder:
+        try:
+            worker = runner_pids(host, folder, "Runner.Worker")
+        except PidsUnread as e:  # R167: never "no job runs" from a read that could not answer
+            rep.wait(f"whether a job process of this runner runs here could not be read ({e}), while GitHub no "
+                     f"longer lists it; nothing is cut. Next: `{next_cmd}` again")
+            return False
+        if worker:
+            rep.wait(f"a job process of this runner still runs here, while GitHub no longer lists it; nothing is cut. "
+                     f"Next: `{next_cmd}` again")
+            return False
     unit = mine.get("unit") or ""
     if not unit and folder:  # R96: a setup cut before it recorded the unit; the runner's own file names it
         rc, named = as_runner(host, ["cat", f"{folder}/.service"])
         unit = named.strip() if rc == 0 and re.fullmatch(UNIT_RE, named.strip()) else ""
     again = f"python3 -I {tool_path()} {next_cmd}"
-    if runner_pids(host, folder) or (unit and unit_read(host, unit)[0] != "gone"):
+    if pids_or_unread(host, folder) or (unit and unit_read(host, unit)[0] != "gone"):
         if not stop_runner(host, unit, folder, rep, drained=True):
             return False
     if unit:  # R167 (rule 30): read stopped before anything of it is removed; not read stopped, nothing is
@@ -5381,7 +5461,10 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     # G4.5: the version, GitHub's self-update on.
     runner_version(host, folder, rep)
     # G4.7: never two copies.
-    listeners = runner_pids(host, folder, "Runner.Listener")
+    try:
+        listeners = runner_pids(host, folder, "Runner.Listener")
+    except PidsUnread:  # doctor's road: as before R167 (its own row, due 0.1.1)
+        listeners = []
     if len(listeners) > 1:
         bad("one copy", f"{len(listeners)} copies of the runner run ({', '.join(map(str, listeners))}): "
                         f"`drain {repo} --stop`, then `resume {repo}`")
@@ -5480,10 +5563,9 @@ def watch_off(host: Host, rep: Report) -> bool:
     to stop and both are READ stopped (or gone). If either is not, nothing was removed: the stop says what was read of
     each and the one step as a whole command line."""
     units = (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service")
-    for unit in units:
-        if exists_as_root(host, unit_path(unit)):
-            journal(host, "stop", unit)
-            sudo(host, systemctl("stop", unit))
+    for unit in units:  # R167: the stop is sent every run, file or no file
+        journal(host, "stop", unit)
+        sudo(host, systemctl("stop", unit))
     reads = {u: unit_read(host, u) for u in units}
     if all(r[0] in ("stopped", "gone") for r in reads.values()):
         return True
@@ -5496,9 +5578,10 @@ def remove_shared(host: Host, rep: Report) -> bool:
     """G6.2: the watch, the slice (stopped first, G6.5), the tool's own folders, then the runner user."""
     ok = True
     for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):
+        sudo(host, systemctl("stop", unit))  # R167: sent every run, file or no file, so a run again can finish
         if exists_as_root(host, unit_path(unit)):
             journal(host, "remove", unit)
-            sudo(host, systemctl("disable", "--now", unit))
+            sudo(host, systemctl("disable", unit))
             sudo(host, ["rm", "-f", unit_path(unit)])
     sudo(host, systemctl("daemon-reload"))
     # R132 (seen 2026-11-24): a watch whose last pass stopped (exit 2, a repository read public) stays loaded as
@@ -5506,7 +5589,7 @@ def remove_shared(host: Host, rep: Report) -> bool:
     sudo(host, systemctl("reset-failed", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"))
     for unit in (f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service"):
         if not gone_or_stop(host, unit, rep, f"python3 -I {tool_path()} uninstall --all"):
-            ok = False
+            return False  # R167: a unit not read gone, so this run removes nothing more
     if ok:
         rep.ok("the watch's timer and service are gone, read back")
     if not remove_slice(host, rep):
@@ -5573,12 +5656,17 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         if host.which("atq"):
             rc, out = sudo(host, ["atq"])
             jobs = [x.split()[0] for x in out.splitlines() if x.split() and x.split()[-1] == RUNNER_USER]
-            if jobs:
+            if rc != 0:  # R167: an answer that is not atq's list is not "no at job"
+                left.append(f"its at jobs (could not be read: atq answered code {rc}: {tail(out) or 'nothing'})")
+            elif jobs:
                 journal(host, "at jobs off", f"{RUNNER_USER}: {', '.join(jobs)}")
                 sudo(host, ["atrm", *jobs])
                 rc, out = sudo(host, ["atq"])
                 still = [x.split()[0] for x in out.splitlines() if x.split() and x.split()[-1] == RUNNER_USER]
-                if still:
+                if rc != 0:
+                    left.append(f"its at jobs {', '.join(jobs)} (whether they are off could not be read: atq "
+                                f"answered code {rc}: {tail(out) or 'nothing'})")
+                elif still:
                     left.append(f"its at jobs {', '.join(still)}")
         linger = f"/var/lib/systemd/linger/{RUNNER_USER}"
         if exists_as_root(host, linger):
@@ -5590,6 +5678,11 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-delete"])
         rc, out = as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-print"])
         files = [x for x in out.splitlines() if x.startswith(PUBLIC_TMP)]
+        # R167: find exits 1 when a folder it may not enter was met (systemd's private folders in /tmp, on any stock
+        # system), and still lists the rest; any other exit is not a list
+        if rc not in (0, 1):
+            left.append(f"its files in {', '.join(PUBLIC_TMP)} (could not be read: find answered code {rc}: "
+                        f"{tail(out) or 'nothing'})")
         if files:
             left.append(f"its files {', '.join(files[:5])}" + (f" and {len(files) - 5} more" if len(files) > 5 else ""))
         if left:
@@ -5614,20 +5707,37 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
     return True
 
 
+def pids_list_or_none(host: Host) -> list[str] | None:
+    """The runner user's processes: the list, or None when pgrep could not answer (R167)."""
+    try:
+        return pgrep_read(host, ["pgrep", "-u", RUNNER_USER])
+    except PidsUnread:
+        return None
+
+
 def end_runner_users_processes(host: Host, rep: Report) -> bool:
     """R130: every process of the runner user ended, read back. A job's sleep hold is named as one (R91); the rest is
     a job's too (the user is this tool's own), and is ended by that user's id: `kill -KILL -1` run AS that user, which
     reaches every process of it and nothing of anyone else's."""
-    left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+    try:  # R167: pgrep's exit is read: 0 the list, 1 none, anything else could not be read
+        left = pgrep_read(host, ["pgrep", "-u", RUNNER_USER])
+    except PidsUnread as e:
+        rep.stop(f"whether processes of {RUNNER_USER} run could not be read ({e}): the user is not deleted. Run "
+                 "the same command again: it finishes from here")
+        return False
     ours = our_leftover_holds(host, left)
     if ours:  # R91: a job's sleep hold left behind (a service stopped mid-job): ours, so ended here, by exact PID
         journal(host, "end", f"leftover sleep holds of ours: {', '.join(ours)}")
         as_runner(host, ["kill", "-TERM", *ours])  # R128: as the runner user
         for _ in range(25):
-            left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
-            if not set(ours) & set(left):
+            left = pids_list_or_none(host)
+            if left is None or not set(ours) & set(left):
                 break
             host.sleep(0.2)
+        if left is None:
+            rep.stop(f"whether a job's sleep hold ({', '.join(ours)}) is ended could not be read: the user is not "
+                     "deleted. Run the same command again: it finishes from here")
+            return False
         rep.ok(f"a job's sleep hold left behind by a stopped service ({', '.join(ours)}) is ended")
     if left:
         what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
@@ -5635,7 +5745,11 @@ def end_runner_users_processes(host: Host, rep: Report) -> bool:
         for _ in range(3):
             as_runner(host, ["kill", "-KILL", "-1"])
             for _ in range(10):
-                left = host.run(["pgrep", "-u", RUNNER_USER])[1].split()
+                left = pids_list_or_none(host)
+                if left is None:
+                    rep.stop(f"whether processes of {RUNNER_USER} still run could not be read: the user is not "
+                             "deleted. Run the same command again: it finishes from here")
+                    return False
                 if not left:
                     break
                 host.sleep(0.2)
@@ -5709,7 +5823,9 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
             unread.append(path)
         return bool(t)
     rc, out = host.run(systemctl("list-units", "--all", "--plain", "--no-legend", "actions.runner.*", "minions*"))
-    units = sorted({x.split()[0] for x in out.splitlines() if x.strip() and not x.startswith("0 ")})
+    units = sorted({x.split()[0] for x in out.splitlines() if x.strip() and not x.startswith("0 ")}) if rc == 0 else []
+    if rc != 0:  # R167: a list systemd did not give is not "none"
+        rep.warn(f"census: systemd's units of ours: not read (systemctl answered code {rc}: {tail(out) or 'nothing'})")
     mark = len(unread)
     files = [u for u in ("minions.slice", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service")
              if there(unit_path(u))]
