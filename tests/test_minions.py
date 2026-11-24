@@ -4431,6 +4431,81 @@ class G6(unittest.TestCase):
         finally:
             M.tool_path = real
 
+    def test_G6_28_a_refusal_on_standard_error_is_shown_in_its_own_words(self):
+        # R168 (owner 4:36 PM ET 11-24, words lost): where a line the person reads carries a program's answer, a
+        # refusal on standard error (standard output empty) is shown in its own words, never "not read" alone. One
+        # refusal at each such line, in the world that reaches it.
+        TIMER, HOME_R = f"{M.WATCH_UNIT}.timer", f"/home/{M.RUNNER_USER}"
+        def refuse(host, key, words):
+            host.runs[key] = (1, M.Out("", words + "\n"))
+        cases = [  # (world, the command refused, the words; the line that must show them)
+            ("setup", ("id", "-nG", "minions-runner"), "id: WORDS-groups"),
+            ("setup", ("sudo", "-n", "stat", "-c", "%a", HOME_R), "stat: WORDS-mode"),
+            ("setup", ("systemctl", "is-active", TIMER), "Failed to connect to bus: WORDS-timer"),
+            ("doctor", ("sudo", "-n", "stat", "-c", "%a", HOME_R), "stat: WORDS-doctor-mode"),
+            ("doctor", ("systemctl", "is-active", TIMER), "Failed to connect to bus: WORDS-doctor-timer"),
+            ("doctor", ("systemctl", "is-active", UNIT), "Failed to connect to bus: WORDS-doctor-unit"),
+            ("status", ("systemctl", "is-active", UNIT), "Failed to connect to bus: WORDS-status-unit"),
+        ]
+        for world, key, words in cases:
+            if world == "setup":
+                host, sha = setup_host()
+                fresh_look(host)
+                refuse(host, key, words)
+                code, lines = run_setup(setup_gh(sha), host)
+            else:
+                host, sha = doctor_world()
+                refuse(host, key, words)
+                code, lines = (run_doctor(host, sha) if world == "doctor"
+                               else run_cmd(M.status, REPO, host=host, gh=setup_gh(sha)))
+            self.assertTrue([a for a in host.ran if a[:len(key)] == key], (world, key))
+            self.assertTrue([x for x in lines if words in x], (world, key, lines))
+            self.assertFalse([x for x in lines if x.endswith(("(not read)", "not read")) and key[-1] in x
+                              and words not in x], (world, key, lines))
+        self.assertEqual(M.answer_or_words(M.Out("", "x: WORDS\n")), "not read: x: WORDS")
+        self.assertEqual(M.answer_or_words(M.Out("inactive\n", "")), "inactive")
+
+    def test_G6_27_a_copy_left_by_a_first_uninstall_all_is_finished_by_the_next_run(self):
+        # R167 (owner 4:36 PM ET 11-24, changes 2 and 5): a first `uninstall --all` removed the state and then could
+        # not delete the tool's copy (rm refused), or could not read whether it is gone; the second run, with no state
+        # left, reaches the copy's removal again and finishes. Where it could not be read, the step names the clone
+        # setup was run from, as a whole command line, and that step taken as printed finishes.
+        CLONE = "/home/you/windstorm-repo-minions"
+        for how in ("rm refused", "not read"):
+            gh, world, host = remove_setup()
+            data = M.load_state(host)
+            data["skill_from"] = {"clone": CLONE}
+            M.save_state(host, data)
+            real = world.answer
+            rm_sent = []
+            def first(argv, input=None, real=real, how=how, once=[True], rm_sent=rm_sent):
+                a = list(argv)
+                if how == "rm refused" and a[:2] == ["sudo", "-n"] and a[2:3] == ["rm"] and a[-1] == M.HOOKS_ROOT \
+                        and once[0]:
+                    once[0] = False
+                    return 1, f"rm: cannot remove '{M.HOOKS_ROOT}': Device or resource busy"
+                if how == "not read" and a == ["sudo", "-n", "test", "-e", M.HOOKS_ROOT] and once[0] and rm_sent:
+                    once[0] = False  # the read after the copy's removal
+                    return 1, "sudo: a terminal is required to read the password"
+                if a[2:3] == ["rm"] and a[-1] == M.HOOKS_ROOT:
+                    rm_sent.append(1)
+                return real(argv, input)
+            host._answer = first
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_STOP, (how, lines))
+            self.assertEqual(M.load_state(host).get("runners") or {}, {}, how)  # the state went before the copy
+            if how == "not read":
+                stop = [x for x in lines if x.startswith("stop ") and M.HOOKS_ROOT in x]
+                self.assertTrue(stop and f"`python3 -I {CLONE}/scripts/minions.py uninstall --all`" in stop[0], lines)
+            else:
+                self.assertIn(M.HOOKS_ROOT, world.paths)
+                stop = [x for x in lines if x.startswith("stop ") and M.HOOKS_ROOT in x]
+                self.assertTrue(stop and "Run the same command again" in stop[0], lines)
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertNotIn(code, (M.EXIT_STOP, M.EXIT_WAIT), (how, lines))
+            self.assertNotIn(M.HOOKS_ROOT, world.paths, how)
+            self.assertTrue(any(x.endswith("the very last removal") for x in lines), (how, lines))
+
     def test_G6_28_a_warning_on_standard_error_is_never_part_of_an_answer(self):
         # R168 (owner 4:01 PM ET 11-24; family rule 30's last paragraph, "a warning is not part of the answer"): every
         # run through Host joined standard output and standard error, so a warning (seen: sudo's "unable to resolve

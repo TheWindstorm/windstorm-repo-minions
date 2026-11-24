@@ -2199,7 +2199,7 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
     groups = set(out.split()) if rc == 0 else set()
     extra = groups - {RUNNER_USER}
     if rc != 0 or extra & ADMIN_LIKE_GROUPS or extra:
-        rep.stop(f"{RUNNER_USER} is in other groups ({', '.join(sorted(extra)) or 'not read'}): a runner user must be "
+        rep.stop(f"{RUNNER_USER} is in other groups ({', '.join(sorted(extra)) or answer_or_words(out)}): a runner user must be "
                  "in its own group only, never one that gives admin rights. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     home = f"/home/{RUNNER_USER}"
@@ -2207,7 +2207,7 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
     sudo(host, ["chmod", "0750", home])
     rc, out = sudo(host, ["stat", "-c", "%a", home])
     if rc != 0 or out.strip() != "750":
-        rep.stop(f"the runner's home {home} is not closed to others (mode {out.strip() or 'not read'}). Settle what it says, then run the same command again: what was done is read back, never done twice")
+        rep.stop(f"the runner's home {home} is not closed to others (mode {answer_or_words(out)}). Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rep.ok(f"{RUNNER_USER}: in its own group only, no admin rights, its home closed to others (750)")
     return True
@@ -2563,7 +2563,7 @@ def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: 
         s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
         mine = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == name]
         rc, active = host.run(systemctl("is-active", unit))
-        active = active.strip()
+        active = answer_or_words(active) if rc != 0 and not active.strip() else active.strip()
         if mine:
             r = mine[0]
             got = sorted(x.get("name") for x in r.get("labels", []))
@@ -3628,7 +3628,7 @@ def computer_side(host: Host, mine: dict) -> tuple[str, list[int], dt.datetime]:
         worker = runner_pids(host, mine["folder"], "Runner.Worker")
     except PidsUnread:  # status's road: said as no job process, as before R167 (its own row, due 0.1.1)
         worker = []
-    return active.strip() or "not read", worker, host.now()
+    return answer_or_words(active), worker, host.now()
 
 
 def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int], at: dt.datetime,
@@ -4476,7 +4476,7 @@ def public_now(gh: GitHub, host: Host, repo: str, mine: dict) -> dict:
     else:
         ps["unread"] = f"GitHub not read now (HTTP {s}): from the watch's pass"
     rc, active = host.run(systemctl("is-active", mine["unit"]))
-    ps["service"] = active.strip() or "not read"
+    ps["service"] = answer_or_words(active)
     return ps
 
 
@@ -4511,7 +4511,7 @@ def gone_on_github(host: Host, repo: str, data: dict, rep: Report) -> None:
     if pids_or_unread(host, mine["folder"], "Runner.Worker"):
         return  # a job process still runs here (or could not be read, R167): named once it ends
     rc, active = host.run(systemctl("is-active", mine["unit"]))
-    journal(host, "gone on GitHub", f"{repo} {mine['name']}: its service is {active.strip() or 'not read'}")
+    journal(host, "gone on GitHub", f"{repo} {mine['name']}: its service is {answer_or_words(active)}")
     mine["gone_on_github"] = stamp(host.now())
     save_state(host, data)
     rep.warn(gone_words(repo, mine))
@@ -4585,7 +4585,7 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
         sudo(host, argv)
     rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
     if active.strip() != "active":
-        rep.stop(f"the watch's timer is not active ({active.strip() or 'not read'}). Settle what it says, then run the same command again: what was done is read back, never done twice")
+        rep.stop(f"the watch's timer is not active ({answer_or_words(active)}). Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     data = load_state(host)
     data["watch"] = dict(data.get("watch") or {}, every_s=every_s)
@@ -5420,7 +5420,7 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
     if active.strip() == "active":
         rep.ok("the watch's timer is active")
     else:
-        rep.warn(f"the watch's timer is {active.strip() or 'not read'}: `setup` again puts it back")
+        rep.warn(f"the watch's timer is {answer_or_words(active)}: `setup` again puts it back")
         broken.append("the watch")
     kind, words = copy_version_line(host)  # G4.10 (R101)
     (rep.ok if kind == "ok" else rep.warn)(words)
@@ -5456,7 +5456,8 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
         rep.ok(f"{repo}: {RUNNER_USER} is in its own group only, no admin rights")
     rc, mode = sudo(host, ["stat", "-c", "%a", f"/home/{RUNNER_USER}"])
     if rc != 0:
-        rep.warn(f"{repo}: the mode of /home/{RUNNER_USER}: not read")
+        rep.warn(f"{repo}: the mode of /home/{RUNNER_USER}: not read" + (  # R168: stat's own refusal, its words
+            "" if "a password is required" in said(mode) else f": {last_line(mode)[:160] or 'nothing'}"))
     elif mode.strip() not in ("750", "700"):
         bad("runner home", f"/home/{RUNNER_USER} is open to others (mode {mode.strip()}): "
                            f"`sudo chmod 750 /home/{RUNNER_USER}`")
@@ -5549,7 +5550,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     # G2.6, G2.7, G2.10: GitHub's side and the service, with only our labels (or our hold's).
     s, r = read_runner(gh, repo, name)
     rc, active = host.run(systemctl("is-active", unit))
-    active = active.strip() or "not read"
+    active = answer_or_words(active)
     if s != 200:
         rep.warn(f"{repo}: GitHub's list of runners: not read (HTTP {s})")
     elif r is None:
@@ -5712,7 +5713,7 @@ def journal_copy_removal(host: Host) -> None:
         journal(host, "delete", f"{HOOKS_ROOT} (the tool's copy and the job hooks: the very last step)")
 
 
-def remove_copy(host: Host, rep: Report) -> bool:
+def remove_copy(host: Host, rep: Report, src: dict) -> bool:
     """R167 (owner 3:51 PM ET 11-24, answer 6): the tool's copy and the job hooks, the very last removal of
     `uninstall --all`: the skill tells the person to run uninstall from this copy, so nothing that may stop comes
     after it. A copy still there names itself; one not read names the clone the person set up from."""
@@ -5721,7 +5722,7 @@ def remove_copy(host: Host, rep: Report) -> bool:
     t = root_test(host, HOOKS_ROOT)
     if t is None:
         rep.stop(f"whether {HOOKS_ROOT} (the tool's copy and the job hooks) is deleted could not be read: everything "
-                 "else is off. Run uninstall --all again from the clone you set this tool up from: it finishes here")
+                 f"else is off. Your next step, to run it again: {copy_gone_step(src)}; it finishes here")
         return False
     if t:
         rep.stop(f"could not delete {HOOKS_ROOT} (the tool's copy and the job hooks): everything else is off. Run the "
@@ -5729,6 +5730,21 @@ def remove_copy(host: Host, rep: Report) -> bool:
         return False
     rep.ok(f"the tool's copy and the job hooks are deleted ({HOOKS_ROOT}), the very last removal")
     return True
+
+
+def copy_gone_step(src: dict) -> str:
+    """R167 (owner 4:36 PM ET 11-24, change 2): the step when the installed copy may be gone, as a whole command line:
+    the clone setup was run from (kept by setup, R161), or this running copy when it is not the installed one. A
+    plugin's version folder is never named (rule 29): Claude Code's own skill is the step. With neither known, the
+    installed copy's own line, said as what to try if that copy is still there."""
+    if src.get("clone"):
+        return f"`python3 -I {os.path.join(src['clone'], 'scripts', 'minions.py')} uninstall --all`"
+    here = tool_path()
+    if not here.startswith(HOOKS_ROOT + "/") and PLUGIN_CACHE not in here:
+        return f"`python3 -I {here} uninstall --all`"
+    if src.get("plugin"):
+        return f"in Claude Code, ask the skill {src['plugin']} to run its uninstall --all (from the plugin's own folder)"
+    return f"`python3 -I {TOOL_COPY} uninstall --all`, if that copy is still there"
 
 
 PUBLIC_TMP = ("/tmp", "/var/tmp", "/dev/shm")  # the places any user can write outside its home
@@ -5878,6 +5894,12 @@ def last_line(out: str) -> str:
     return next((x.strip() for x in reversed(said(out).splitlines()) if x.strip()), "")
 
 
+def answer_or_words(out: str) -> str:
+    """R168 (owner 4:36 PM ET 11-24, words lost): a program's answer for a line the person reads; where it gave none
+    on standard output, "not read" with its own last line (its refusal is on standard error), never "not read" alone."""
+    return out.strip() or ("not read: " + (last_line(out)[:160] or "nothing"))
+
+
 def first_words(rc: int, out: str) -> str:
     return f"systemctl answered code {rc}: " + (last_line(out)[:160] or "nothing")
 
@@ -5896,10 +5918,10 @@ def slice_running_units(host: Host) -> tuple[list[str] | None, str]:
         return None, f"systemd's units of ours could not be listed ({first_words(rc, out)})"
     for u in sorted({x.split()[0] for x in out.splitlines() if x.strip() and not x.startswith("0 ")} - {SLICE} - inside):
         rc, got = host.run(systemctl("show", u, "-p", "Slice"))
-        said = [x[len("Slice="):].strip() for x in got.splitlines() if x.startswith("Slice=")]
-        if rc != 0 or not said:
+        named = [x[len("Slice="):].strip() for x in got.splitlines() if x.startswith("Slice=")]
+        if rc != 0 or not named:
             return None, f"which slice {u} is in could not be read ({first_words(rc, got)})"
-        if said[0] == SLICE:
+        if named[0] == SLICE:
             inside.add(u)
     running = []
     for u in sorted(inside):
@@ -6146,7 +6168,7 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
                 rep.stayed["state"] = left  # R136 (rule 8): the person's, named in the census with why
         if delete_record:
             delete_record_if_typed(host, rep)
-        remove_copy(host, rep)  # R167 (answer 6): the copy the person runs uninstall from goes last
+        remove_copy(host, rep, kept_skill_from(data))  # R167 (answer 6): the copy the person runs uninstall from goes last
         # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
         census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()),
                skill_folder=kept_skill_from(data), packages={k: data.get(k) for k in (

@@ -58,7 +58,7 @@ Folders, and who can write them:
 | `resume` | `systemctl enable` | no | no | nothing |
 | `reregister` | `(argv)` | no: `systemctl enable`, `start` | no | nothing |
 | `doctor_one` | `stat` | no | no: the hooks (root's) and the runner user's home entry. The credential files are read as the runner user (R128) | nothing |
-| `root_test` | `chosen` | no | no: `test -e` on root's own paths only. A path in the runner user's home is read as the runner user (R128) | nothing |
+| `root_test` | `chosen` | no | no: `sh -c` with the tool's own fixed script, `if test -e "$1"; then echo "minions-test: there"; else echo "minions-test: not there"; fi`, the path given as its argument (never in the script), on root's own paths only; the answer is that printed mark, never sudo's exit or words. A path in the runner user's home is read as the runner user (R128) | nothing |
 | `remove_service` | `systemctl disable` | no | no | nothing |
 | `remove_service` | `rm` | no | no: the unit and drop-in in `/etc/systemd/system`. The unit name, when read from the runner's `.service` file, is read as the runner user and must match `actions.runner.*.service` with no `/` | nothing |
 | `remove_service` | `systemctl daemon-reload` | no | no | nothing |
