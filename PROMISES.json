@@ -2280,7 +2280,7 @@
   {
    "id": "R164",
    "seen": "2026-11-24, family rule 7: the stop, need-you and next-step lines the tool prints are read by tests, but not every step in them has been taken by a test exactly as printed; the login step and `look` again (R160) and the step after a removal from Claude Code (R161) are taken as printed in the proofs before 0.1.0.",
-   "promise": "Every stop, need-you and next-step line the tool prints is counted; each step in them is taken by a test exactly as printed, and the README says the count and which steps are not yet taken.",
+   "promise": "Every stop, need-you and next-step line the tool prints is counted; each step in them is taken by a test exactly as printed, and the README says the count and which steps are not yet taken. Each stop and each \"run it again\" line not covered by R174 (setup's later steps, move, status, doctor, the start of a runner) is also taken as printed twice in the world that made it, with nothing changed between (family rule 7, THE SAME STOP MUST NOT COME BACK): the second run ends differently, or the line names in its own words what must change first.",
    "codon": "G7.18",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
