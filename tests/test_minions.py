@@ -4411,6 +4411,7 @@ class G8Limit(unittest.TestCase):
         # drain's wait ends at once with a `waiting` line instead of polling into the limit.
         host, clock = g5_host(worker=True)
         gh = StatusGH(busy=True)
+        gh.host = host  # the stand-in reads the limit by this test's clock, never the real one (it failed after 23:59Z)
         gh.limited_until = M.parse_stamp("2026-11-23T23:59:00Z")
         gh.why = M.limit_words(gh.limited_until)
         code, lines = run_cmd(M.drain, REPO, host=host, gh=gh)
