@@ -61,6 +61,11 @@ the cap (row R94).
   login. Every GitHub call of the tool is read that way; no answer to a call sent without a login is read as
   anything, and the watch and `status` say each reason by its kind: no login, a repository not there for this
   login, or no answer (row R160).
+- Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
+  path of Claude Code's own list of plugins and the plugin's name, never its version folder, and the tool says the
+  skill was removed from Claude Code only when that list was read and names it nowhere: an update of the plugin says
+  nothing, and a list that is not there is said as not read. A test reads everything setup writes for such a path
+  (row R161).
 - `setup` and `uninstall` are yours to run, in your own terminal: each first shows you what you must read before
   anything changes (setup: eleven lines, twelve on a laptop, one sentence each) and goes on only when you press
   Enter. Run where nobody can press a key, as in an agent's shell, they change nothing and print the exact line for

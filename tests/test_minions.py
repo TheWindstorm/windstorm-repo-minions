@@ -900,33 +900,67 @@ class G2(unittest.TestCase):
     def test_G6_12_the_runner_says_the_skill_was_removed_and_the_way_off(self):
         # The family's rule 8 (2026-11-23, 12:56 PM ET): a runner is what the person set up, so it goes on after
         # Claude Code's own `plugin uninstall`, and its own report says so, with the one command that takes it off.
+        # R161 (rule 29 (e), 2026-11-24): a plugin is "removed" only when Claude Code's own list was read and names
+        # it nowhere; an update (a new version folder, the old one marked, later gone) says nothing.
         host, sha = doctor_world()
-        root = M.load_state(host)["skill_folder"]
-        self.assertEqual(root, ROOT)  # where setup ran from: the skill's folder, not the copy
+        self.assertEqual(M.load_state(host)["skill_from"], {"clone": ROOT})  # setup ran from a clone: its folder
+        self.assertNotIn("skill_folder", M.load_state(host))
         status = lambda: run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))[1]
-        host.dirs[root] = []
-        self.assertFalse(any("skill's folder" in x for x in status()))  # there: nothing to say
         way_off = f"`python3 -I {M.TOOL_COPY} uninstall --all`"
-        host.files[os.path.join(root, ".orphaned_at")] = "1795455000000"
+        host.dirs[ROOT] = []
+        self.assertFalse(any("skill" in x and "uninstall --all" in x for x in status()))  # there: nothing to say
+        del host.dirs[ROOT]
         line = next(x for x in status() if "skill's folder" in x)
-        self.assertTrue(line.startswith("warn ") and "is marked by Claude Code as removed" in line, line)
+        self.assertTrue(line.startswith(f"warn the skill's folder ({ROOT}) is gone"), line)
         self.assertIn("go on taking your repository's jobs", line)
         self.assertIn(way_off, line)
-        del host.files[os.path.join(root, ".orphaned_at")]
-        del host.dirs[root]
-        line = next(x for x in status() if "skill's folder" in x)
-        self.assertIn("is gone", line)
-        self.assertIn(way_off, line)
-        # The watch says it in its own log, once, when it changes.
-        for _ in range(2):
+        for _ in range(2):  # the watch says it in its own log, once, when it changes
             M.watch(host=host, gh=setup_gh(sha), out=io.StringIO())
         with open(os.path.join(host.state_dir(), "journal.log")) as f:
             self.assertEqual(sum("skill's folder" in x and "is gone" in x for x in f), 1)
-        # Could not be read is a third answer (rule 6), never "gone".
-        host.there = lambda path: None
+        there = host.there
+        host.there = lambda path: None  # could not be read is a third answer (rule 6), never "gone"
         line = next(x for x in status() if "skill's folder" in x)
         self.assertIn("could not be read", line)
         self.assertNotIn("is gone", line)
+        host.there = there
+        # From Claude Code's plugin cache: the list and the name are kept, never the version folder.
+        base = "/home/you/.claude"
+        old = f"{base}/plugins/cache/the-catalog/repo-minions/0.1.0"
+        lst = f"{base}/plugins/installed_plugins.json"
+        self.assertEqual(M.skill_from(f"{old}/scripts/minions.py"), {"plugin": "repo-minions@the-catalog", "list": lst})
+        d = M.load_state(host)
+        d["skill_from"] = M.skill_from(f"{old}/scripts/minions.py")
+        M.save_state(host, d)
+        lines_now = lambda: [x for x in status() if "repo-minions@the-catalog" in x]
+        def listed(version, folder):
+            host.files[lst] = json.dumps({"version": 2, "plugins": {"repo-minions@the-catalog": [
+                {"scope": "user", "installPath": folder, "version": version}]}})
+        # no list there (a record carried to another computer): could not be read, never "names it nowhere"
+        self.assertTrue(lines_now() and all("could not be read" in x and "nowhere" not in x for x in lines_now()),
+                        lines_now())
+        host.files[lst] = "{not json"
+        self.assertIn("could not be read", lines_now()[0])
+        listed("0.1.0", old)
+        host.dirs[old] = []
+        self.assertEqual(lines_now(), [])  # installed: nothing to say
+        # an update: the row moved to the new version, the old folder marked, then the old folder gone: nothing said
+        new = f"{base}/plugins/cache/the-catalog/repo-minions/0.1.1"
+        listed("0.1.1", new)
+        host.files[f"{old}/.orphaned_at"] = "1795455000000"
+        self.assertEqual(lines_now(), [])
+        del host.dirs[old]
+        del host.files[f"{old}/.orphaned_at"]
+        self.assertEqual(lines_now(), [])
+        self.assertFalse(any("removed" in x or "is gone" in x for x in status()))
+        # an uninstall: the list read, no row for it: the line, with the way off
+        host.files[lst] = json.dumps({"version": 2, "plugins": {}})
+        line = lines_now()[0]
+        self.assertTrue(line.startswith(f"warn Claude Code's own list of plugins ({lst}) names "
+                                        "repo-minions@the-catalog nowhere"), line)
+        self.assertIn("go on taking your repository's jobs", line)
+        self.assertIn(way_off, line)
+        self.assertNotIn("/plugins/cache/", line)
 
     def test_G4_10_doctor_and_status_name_an_older_copy_running_the_watch(self):
         # Found 2026-11-23 (row R101): after the plugin updates, the watch runs the copy setup installed until setup
@@ -4089,26 +4123,67 @@ class G6(unittest.TestCase):
     def test_G6_13_the_census_names_the_folder_the_skill_was_downloaded_into(self):
         # Seen 2026-11-23 (run J, row R117): the census said nothing of the clone, and the agent filled the silence
         # by offering to delete it. After `uninstall --all` the census names it: there and whose, gone, or not known.
+        # R161 (rule 29 (e)): a plugin is named by its name and what Claude Code's own list says, never a version path.
         clone = "/home/person/windstorm-repo-minions"
-        plugin = "/home/person/.claude/plugins/cache/the-windstorm/repo-minions/0.1.0"
-        for root, there, said in ((clone, True, f"ok census: the folder this skill was downloaded into: {clone}, still "
-                                                "there; it is yours to keep or delete, and this tool does not touch it"),
-                                  (clone, False, f"ok census: the folder this skill was downloaded into ({clone}): gone"),
-                                  (plugin, True, "it is Claude Code's plugin folder, and Claude Code's own `plugin "
-                                                 "uninstall` takes it"),
-                                  (None, None, "not known on this computer")):
+        lst = "/home/you/.claude/plugins/installed_plugins.json"
+        plugin = {"plugin": "repo-minions@the-catalog", "list": lst}
+        row = json.dumps({"version": 2, "plugins": {"repo-minions@the-catalog": [{"version": "0.1.1"}]}})
+        for src, files, there, said in (
+                ({"clone": clone}, {}, True, f"ok census: the folder this skill was downloaded into: {clone}, still "
+                                             "there; it is yours to keep or delete, and this tool does not touch it"),
+                ({"clone": clone}, {}, False, f"ok census: the folder this skill was downloaded into ({clone}): gone"),
+                (plugin, {lst: row}, None, "ok census: the skill repo-minions@the-catalog: still installed in Claude "
+                                           "Code (its own list names it); Claude Code's own `plugin uninstall` takes it"),
+                (plugin, {lst: json.dumps({"version": 2, "plugins": {}})}, None,
+                 "ok census: the skill repo-minions@the-catalog: Claude Code's own list names it nowhere"),
+                (plugin, {}, None, "warn census: whether the skill repo-minions@the-catalog is still installed in "
+                                   f"Claude Code: not read (its own list, {lst}, could not be read)"),
+                ({}, {}, None, "not known on this computer")):
             gh, world, host = remove_setup()
-            if root:
-                d = M.load_state(host)
-                d["skill_folder"] = root
-                M.save_state(host, d)
-                if there:
-                    host.dirs[root] = ["skills"]
+            d = M.load_state(host)
+            d["skill_from"] = src
+            d.pop("skill_folder", None)
+            M.save_state(host, d)
+            host.files.update(files)
+            if there:
+                host.dirs[clone] = ["skills"]
             code, lines = run_uninstall(gh, host, everything=True)
-            line = next(x for x in lines if "census: the folder this skill was downloaded into" in x)
+            line = next(x for x in lines if "census: the folder this skill" in x or "census: the skill " in x
+                        or "census: whether the skill" in x)
             self.assertIn(said, line)
+            self.assertNotIn("/plugins/cache/", line)
             self.assertTrue(lines[-1].startswith("ok census: your record"), lines[-2:])  # the record stays last
             self.assertNotIn("rm ", line)  # no delete command is printed for it
+
+    def test_G6_26_nothing_setup_writes_names_a_plugin_cache_version_folder(self):
+        # R161 (family rule 29 (a), 2026-11-24: AN ANSWER TO (a) IS THE TEST'S OUTCOME, NEVER A READING). The skill
+        # copied into a made-up plugins/cache/<catalog>/<plugin>/<version>/ folder, setup run from there; every
+        # value of every record and every file setup wrote is read, byte by byte, for that folder's path, and for
+        # folders another updater owns (rule 29 (f) (iii): Xcode's, the command line tools', Homebrew's Cellar).
+        base = tempfile.mkdtemp(dir=TMP)
+        version = os.path.join(base, "plugins", "cache", "the-catalog", "repo-minions", "0.1.0")
+        os.makedirs(os.path.join(version, "scripts"))
+        planted = os.path.join(version, "scripts", "minions.py")
+        shutil.copyfile(M.__file__, planted)
+        host, sha = setup_host()
+        fresh_look(host)
+        with mock.patch.object(M, "__file__", planted):
+            code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        # what setup wrote: every file (the tool's own copy aside: it is this program), every text given to a root
+        # write on its standard input, and every file in the tool's state folder on disk
+        written = [(f"file {k}", v) for k, v in host.files.items() if k != M.TOOL_COPY]
+        written += [("stdin of " + " ".join(a), i) for a, i in host.fed if i]
+        for root, _, names in os.walk(host.state_dir()):
+            for n in names:
+                with open(os.path.join(root, n), "rb") as f:
+                    written.append((f"kept {n}", f.read().decode("utf-8", "replace")))
+        self.assertTrue(any(w.startswith("stdin of sudo -n tee /etc/systemd/system/") for w, _ in written), written)
+        refused = (version, "/plugins/cache/", "Xcode.app/Contents/Developer", "CommandLineTools/usr/bin", "/Cellar/")
+        hits = [(w, r) for w, text in written for r in refused if r in str(text)]
+        self.assertEqual(hits, [])
+        self.assertEqual(M.load_state(host)["skill_from"],
+                         {"plugin": "repo-minions@the-catalog", "list": os.path.join(base, "plugins", "installed_plugins.json")})
 
     def test_G6_3_uninstall_ends_with_a_census(self):
         gh, world, host = remove_setup()

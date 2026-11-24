@@ -2178,6 +2178,20 @@
    "issue": null,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R161",
+   "seen": "2026-11-24, read in the code for family rule 29 (a) and walked with the code before this row in a test: run from Claude Code's plugin cache, setup kept the plugin's version folder in its record; after an update of the plugin (a new version folder, the old one marked by Claude Code, later taken away) status and the watch's journal would have said the skill was removed from Claude Code, and the uninstall census printed the version folder's path.",
+   "promise": "Run from the plugin, setup keeps the path of Claude Code's own list of plugins and the plugin's name, never a version folder (from a clone, the clone's folder); the skill is said removed from Claude Code only when that list was read and names it nowhere, never from a folder's absence or mark, and a list that is not there or cannot be read is said as not read; the census names the plugin and what the list says. A test reads every record value and every file setup writes for a cache version folder's path, and for Xcode's, the command line tools' and Homebrew's Cellar folders.",
+   "codon": "G6.26",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_26_nothing_setup_writes_names_a_plugin_cache_version_folder",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

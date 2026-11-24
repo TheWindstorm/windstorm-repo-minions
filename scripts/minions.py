@@ -3554,26 +3554,74 @@ def copy_version_line(host: Host) -> tuple[str, str]:
                        "with this one to put its copy back"))
 
 
+PLUGIN_CACHE = "/plugins/cache/"
+
+
+def skill_from(src: str) -> dict:
+    """R161 (rule 29 (a), (e)): where the skill that ran setup came from, as setup keeps it. From inside Claude Code's
+    plugin cache: the path of Claude Code's own list of plugins and the plugin's name in it, never the version
+    folder (an update moves the plugin to a new one and the old one is taken away later). From a clone: its folder."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(src)))
+    if PLUGIN_CACHE in root + "/":
+        base, rest = (root + "/").split(PLUGIN_CACHE, 1)
+        parts = [x for x in rest.split("/") if x]
+        return {"plugin": f"{parts[1]}@{parts[0]}", "list": os.path.join(base, "plugins", "installed_plugins.json")} \
+            if len(parts) >= 2 else {}
+    return {"clone": root}
+
+
+def kept_skill_from(data: dict) -> dict:
+    """R161: what setup kept; a record that kept a folder (written before R161) is read the same way."""
+    if data.get("skill_from") is not None:
+        return data["skill_from"] or {}
+    old = data.get("skill_folder")
+    return skill_from(os.path.join(old, "scripts", "minions.py")) if old else {}
+
+
+def plugin_listed(host: Host, path: str, name: str) -> bool | None:
+    """R161 (rule 29 (e), rule 6): whether Claude Code's own list names the plugin. None when the list is not there or
+    could not be read as Claude Code writes it: never "names it nowhere" (a record carried to another computer names
+    a list that computer never had)."""
+    text = host.read(path)
+    if text is None:
+        return None
+    try:
+        d = json.loads(text)
+    except ValueError:
+        return None
+    plugins = d.get("plugins") if isinstance(d, dict) else None
+    return name in plugins if isinstance(plugins, dict) else None
+
+
 def skill_folder_line(host: Host, data: dict) -> tuple[str, str] | None:
-    """G6.12 (R107, rule 8): the runner is what the person set up, so it goes on after Claude Code's own
-    `plugin uninstall`; status says the skill is gone and names the one command that takes the runner off. None while
-    the skill's folder is there. Three answers (rule 6): there, gone or marked removed, could not be read."""
-    root = data.get("skill_folder")
+    """G6.12 (R107, rule 8; R161, rule 29 (e)): the runner is what the person set up, so it goes on after Claude Code's
+    own `plugin uninstall`; status says the skill is gone and names the one command that takes the runner off. None
+    while it is there. Three answers (rule 6). A plugin is "removed" only when Claude Code's own list was read and
+    names it nowhere; a version folder's absence or mark is never read (an update leaves both behind)."""
+    src = kept_skill_from(data)
+    off = f"`python3 -I {TOOL_COPY} uninstall --all`"
+    goes_on = ("this runner and its watch go on taking your repository's jobs, as you set them up. The one command "
+               f"that takes them off, in your own terminal: {off}")
+    if src.get("plugin"):
+        named = plugin_listed(host, src["list"], src["plugin"])
+        if named is None:
+            return "warn", (f"whether the skill {src['plugin']} is still installed in Claude Code could not be read "
+                            f"(its own list, {src['list']}, could not be read); if you removed it, {off} takes the "
+                            "runner off")
+        if named:
+            return None
+        return "warn", (f"Claude Code's own list of plugins ({src['list']}) names {src['plugin']} nowhere, as after "
+                        f"Claude Code's own `plugin uninstall`: {goes_on}")
+    root = src.get("clone")
     if not root:
         return None
     there = host.there(root)
-    marked = None if there is None else (False if there is False else
-                                         (host.there(os.path.join(root, ".orphaned_at")) or
-                                          host.there(os.path.join(os.path.dirname(root), ".orphaned_at"))))
-    if there is None or (there and marked is None):
+    if there is None:
         return "warn", (f"whether the skill's folder ({root}) is still there could not be read; if you removed the "
-                        f"skill, `python3 -I {TOOL_COPY} uninstall --all` takes the runner off")
-    if there and not marked:
+                        f"skill, {off} takes the runner off")
+    if there:
         return None
-    what = "is gone" if there is False else "is marked by Claude Code as removed"
-    return "warn", (f"the skill's folder ({root}) {what}, as after Claude Code's own `plugin uninstall`: this runner "
-                    "and its watch go on taking your repository's jobs, as you set them up. The one command that takes "
-                    f"them off, in your own terminal: `python3 -I {TOOL_COPY} uninstall --all`")
+    return "warn", f"the skill's folder ({root}) is gone: {goes_on}"
 
 
 def watch_heartbeat(data: dict, now: dt.datetime, slept_now: float | None = None) -> tuple[bool, str]:
@@ -4399,8 +4447,9 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
     data = load_state(host)
     data["watch"] = dict(data.get("watch") or {}, every_s=every_s)
     data["programs"] = found
-    if os.path.abspath(src) != TOOL_COPY:  # G6.12: where the skill lives, so status can say when it is gone
-        data["skill_folder"] = os.path.dirname(os.path.dirname(os.path.abspath(src)))
+    if os.path.abspath(src) != TOOL_COPY:  # G6.12, R161: where the skill came from, never a plugin's version folder
+        data["skill_from"] = skill_from(src)
+        data.pop("skill_folder", None)
     save_state(host, data)
     rep.ok(f"the watch runs every {every_s // 60} minutes as you (a system timer, read back); `status` says when it "
            f"last ran. The programs it runs by name are found where this terminal finds them (gh: {found['gh']})")
@@ -5545,7 +5594,7 @@ def remove_slice(host: Host, rep: Report) -> bool:
 
 
 def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Report,
-           state_left: bool | None = None, skill_folder: str | None = None, packages: dict | None = None) -> None:
+           state_left: bool | None = None, skill_folder: dict | None = None, packages: dict | None = None) -> None:
     """G6.3, INV6: what is left, each "none" or named. With --all every line should read none."""
     unread: list[str] = []
 
@@ -5649,10 +5698,25 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
                "--delete-record` in your own terminal")
 
 
-def skill_folder_census(host: Host, root: str | None, rep: Report) -> None:
-    """G6.13 (R117): after `uninstall --all` the census names the folder the skill was downloaded into: still there and
-    where, and whose it is to delete; or gone; or not known here. An agent fills a silence (run J: it offered to delete
-    the clone, a step the tool never printed), so nothing of the skill's is left unnamed."""
+def skill_folder_census(host: Host, src: dict | None, rep: Report) -> None:
+    """G6.13 (R117; R161, rule 29 (e)): after `uninstall --all` the census names where the skill came from and whose
+    it is: a plugin by its name and what Claude Code's own list says of it (never its version folder); a clone by its
+    folder, still there or gone; or not known here. An agent fills a silence (run J: it offered to delete the clone,
+    a step the tool never printed), so nothing of the skill's is left unnamed."""
+    src = src or {}
+    if src.get("plugin"):
+        named = plugin_listed(host, src["list"], src["plugin"])
+        if named is None:
+            rep.warn(f"census: whether the skill {src['plugin']} is still installed in Claude Code: not read (its own "
+                     f"list, {src['list']}, could not be read)")
+        elif named:
+            rep.ok(f"census: the skill {src['plugin']}: still installed in Claude Code (its own list names it); "
+                   "Claude Code's own `plugin uninstall` takes it, and this tool does not touch it")
+        else:
+            rep.ok(f"census: the skill {src['plugin']}: Claude Code's own list names it nowhere, so it is not "
+                   "installed there now")
+        return
+    root = src.get("clone")
     if not root:
         rep.warn("census: the folder this skill was downloaded into: not known on this computer (setup did not "
                  "write it down)")
@@ -5662,9 +5726,6 @@ def skill_folder_census(host: Host, root: str | None, rep: Report) -> None:
         rep.warn(f"census: the folder this skill was downloaded into ({root}): not read")
     elif not there:
         rep.ok(f"census: the folder this skill was downloaded into ({root}): gone")
-    elif "/.claude/plugins/" in root:
-        rep.ok(f"census: the folder this skill was downloaded into: {root}, still there; it is Claude Code's plugin "
-               "folder, and Claude Code's own `plugin uninstall` takes it; this tool does not touch it")
     else:
         rep.ok(f"census: the folder this skill was downloaded into: {root}, still there; it is yours to keep or "
                "delete, and this tool does not touch it")
@@ -5724,7 +5785,7 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
             delete_record_if_typed(host, rep)
         # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
         census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()),
-               skill_folder=data.get("skill_folder"), packages={k: data.get(k) for k in (
+               skill_folder=kept_skill_from(data), packages={k: data.get(k) for k in (
                    "dependency_packages", "dependency_packages_unread")})
         if rep.stayed and not rep.stopped:  # R136 (rule 8): the leave went to its end; what stayed is the person's
             rep.ok("this tool is off this computer; what stayed is yours, named above with why each stayed")
