@@ -2318,6 +2318,34 @@
    "issue": 354,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R170",
+   "seen": "2026-11-24, in the code, while R167 was built: `status` takes a pgrep that could not answer (an exit other than 0 or 1) as no job process, the reading from before R167, where `uninstall` and `drain` now say could not be read.",
+   "promise": "When the read of a job process of the runner could not answer, `status` says the computer's side could not be read, with what pgrep answered, and never says idle from it. A test fails that read and reads the line.",
+   "codon": "G5.1",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 358,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R171",
+   "seen": "2026-11-24, in the code, while R167 was built: `doctor` takes a pgrep that could not answer (an exit other than 0 or 1) as no copy of the runner running, the reading from before R167, so its one-copy check passes without a read.",
+   "promise": "When the read of the runner's copies could not answer, `doctor` names its one-copy check as not read, with what pgrep answered, and never as passed. A test fails that read and reads the line.",
+   "codon": "G4.7",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 359,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
