@@ -2203,7 +2203,7 @@
    "test": "test_G6_27_every_unit_is_read_stopped_before_anything_is_removed",
    "owner": "maintainer",
    "proven": "",
-   "issue": 0,
+   "issue": 355,
    "moved_why": "",
    "moved_by_person": ""
   }
