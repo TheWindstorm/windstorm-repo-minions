@@ -2248,6 +2248,48 @@
    "issue": null,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R162",
+   "seen": "2026-11-24, a stock Ubuntu 24.04 virtual machine with a keyring started by hand (steered): to serve unattended, the tool asks a person whose login gh keeps in the desktop's keyring to keep it instead in a plain file, and that login reaches every repository of the account, not only the one being served.",
+   "promise": "A way to serve one repository with a login that reaches only that repository, offered first at the stop, with what it can and cannot do said in the same plain words as the stop today.",
+   "codon": "G1.21",
+   "first_ship_in": "0.2.0",
+   "ship_in": "0.2.0",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R163",
+   "seen": "2026-11-24, read in the code for family rule 29 (f): setup stores the watch's python3, the folders of the programs it found in the person's PATH (by their path as found, never resolved) and the hooks' programs; a program found in a version manager's folder would be named there, and status reads none of them.",
+   "promise": "status reads each program setup stored and says by name any that is not there or cannot run; setup says in one line when a program it stores was found in a folder named by a version, which an update of that manager can take away.",
+   "codon": "G5.26",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R164",
+   "seen": "2026-11-24, family rule 7: the stop, need-you and next-step lines the tool prints are read by tests, but not every step in them has been taken by a test exactly as printed; the login step and `look` again (R160) and the step after a removal from Claude Code (R161) are taken as printed in the proofs before 0.1.0.",
+   "promise": "Every stop, need-you and next-step line the tool prints is counted; each step in them is taken by a test exactly as printed, and the README says the count and which steps are not yet taken.",
+   "codon": "G7.18",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
