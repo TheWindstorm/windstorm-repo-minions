@@ -32,7 +32,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_INV1_never_a_runner_on_a_public_repository",
-   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: unsteered, `look` of a really public repository said `stop \u2026 is public: Repo Minions never puts a runner on a repository that is not private \u2026`, exit 2, nothing changed. Steered, the same steer as row R62: the watch's one privacy read was answered public by a wrapper put in front of gh (from 03:20:34Z to 03:29:27Z UTC, and three shorter times), everything else real: the watch's first pass held the runner and took it off the repository on GitHub's side once idle, status began with a stop saying every job is refused, a real job asking for our labels was refused, and `resume --private-again` then setup brought it back. Not seen: a repository really turned public with a runner on it, which is not done, by rule.",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: unsteered, `look` of a really public repository said `stop \u2026 is public: Repo Minions never puts a runner on a repository that is not private \u2026`, exit 2, nothing changed. Steered, the same steer as row R62: the watch's one privacy read was answered public by a wrapper put in front of gh (from 03:20:34Z to 03:29:27Z UTC, and three shorter times), everything else real: the watch's first pass held the runner and took it off the repository on GitHub's side once idle, status began with a stop saying every job is refused, a real job asking for our labels was refused, and `resume --private-again` then setup brought it back. Not seen: a repository really turned public with a runner on it, which is not done, by rule. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 8,
    "moved_why": "",
    "moved_by_person": ""
@@ -186,7 +186,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_2_idle_only_when_both_sides_agree",
-   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, on the fix of row R84: during a real job, the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, from 10:15:12Z to 10:17:27Z (UTC), as a stalled process is held; the tool's files were not touched. While GitHub said offline and busy and a job process ran here, status said `warn the two sides disagree`, with both sides; idle was said only after the signal to go on (SIGCONT), once both sides agreed (`ok idle`), and the job passed. Steered: the listener's hold. Unsteered, the two sides were never caught apart (status read every 2 to 3 seconds through a job).",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, on the fix of row R84: during a real job, the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, from 10:15:12Z to 10:17:27Z (UTC), as a stalled process is held; the tool's files were not touched. While GitHub said offline and busy and a job process ran here, status said `warn the two sides disagree`, with both sides; idle was said only after the signal to go on (SIGCONT), once both sides agreed (`ok idle`), and the job passed. Steered: the listener's hold. Unsteered, the two sides were never caught apart (status read every 2 to 3 seconds through a job). Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 19,
    "moved_why": "",
    "moved_by_person": ""
@@ -228,7 +228,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G7_1_cost_words_are_read_and_dated_never_promised",
-   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once each, steered. Steer 1: the saved read's dates set back 8 days by hand; the weekly pass read GitHub's billing page again and recorded no change. Steer 2: the saved earlier text altered by hand (\"Self-hosted runners (until further notice).\") with its dates set back 8 days; the weekly pass journaled `cost rule changed GitHub's list changed since 2026-11-15T12:25:12Z`, the next `status` began with `warn GitHub's billing page changed what it says about self-hosted runners: read 2026-11-15T12:25:12Z, it said \"\u2026\"; read 2026-11-23T12:25:17Z, it says \"\u2026\". Read it yourself before relying on it: \u2026`, and the status after it did not say it again. Not seen: GitHub's page really changing.",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once each, steered. Steer 1: the saved read's dates set back 8 days by hand; the weekly pass read GitHub's billing page again and recorded no change. Steer 2: the saved earlier text altered by hand (\"Self-hosted runners (until further notice).\") with its dates set back 8 days; the weekly pass journaled `cost rule changed GitHub's list changed since 2026-11-15T12:25:12Z`, the next `status` began with `warn GitHub's billing page changed what it says about self-hosted runners: read 2026-11-15T12:25:12Z, it said \"\u2026\"; read 2026-11-23T12:25:17Z, it says \"\u2026\". Read it yourself before relying on it: \u2026`, and the status after it did not say it again. Not seen: GitHub's page really changing. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 22,
    "moved_why": "",
    "moved_by_person": ""
@@ -522,7 +522,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_14_a_job_killed_by_our_limit_is_named_as_such",
-   "proven": "2026-11-22, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word for what was seen, once: when the kernel killed a job at our memory max inside minions.slice, status said `stopped by this computer's memory limit (2.3 GB), not by your code failing`. Steered: the slice's memory high mark was lifted at runtime so the max could be reached. With the defaults (both marks) that kill was NOT seen: the same job was held at the high mark, slowed almost to a stop, for minutes; that is a fault in the defaults and has its own row.",
+   "proven": "2026-11-22, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word for what was seen, once: when the kernel killed a job at our memory max inside minions.slice, status said `stopped by this computer's memory limit (2.3 GB), not by your code failing`. Steered: the slice's memory high mark was lifted at runtime so the max could be reached. With the defaults (both marks) that kill was NOT seen: the same job was held at the high mark, slowed almost to a stop, for minutes; that is a fault in the defaults and has its own row. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 52,
    "moved_why": "",
    "moved_by_person": ""
@@ -872,7 +872,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_4_a_repository_no_longer_private_gets_no_job_here_and_our_runner_leaves_it",
-   "proven": "2026-11-22, a stock Ubuntu 24.04 machine and the private proof repository, proven by the owner's word: the watch's own `public` record, GitHub's side out of reach, a real job asking for our labels handed to the runner and refused by the hook in 5 s with no mark; then the labels and the runner taken off GitHub's side once the calls went through, GitHub answering 422 while a job ran, a job asking for our labels staying queued with no runner after the removal, and coming back by `resume --private-again` and `setup`. Steered: the watch's read of privacy, and the label and removal calls withheld for two passes; everything else real. Not seen: a repository really turning public with a runner on it, which is not done by rule.",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 machine and the private proof repository, proven by the owner's word: the watch's own `public` record, GitHub's side out of reach, a real job asking for our labels handed to the runner and refused by the hook in 5 s with no mark; then the labels and the runner taken off GitHub's side once the calls went through, GitHub answering 422 while a job ran, a job asking for our labels staying queued with no runner after the removal, and coming back by `resume --private-again` and `setup`. Steered: the watch's read of privacy, and the label and removal calls withheld for two passes; everything else real. Not seen: a repository really turning public with a runner on it, which is not done by rule. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 99,
    "moved_why": "",
    "moved_by_person": ""
@@ -956,7 +956,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_14_a_spent_api_limit_is_named_and_never_polled_into",
-   "proven": "By the owner's word, not held for the tag. Measured 2026-11-23 on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, on the fix of row R90, every GitHub call of a real watch pass counted: 2 calls a pass at rest (the repository and its runners), and each job that ended read once (the pass after 3 jobs: 5 calls; the next pass: 2); 12 passes an hour, so about 24 calls an hour at rest, as the tool says. The refusal on a spent allowance is tested against a recorded answer, not seen for real: that needs a test login of its own.",
+   "proven": "By the owner's word, not held for the tag. Measured 2026-11-23 on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, on the fix of row R90, every GitHub call of a real watch pass counted: 2 calls a pass at rest (the repository and its runners), and each job that ended read once (the pass after 3 jobs: 5 calls; the next pass: 2); 12 passes an hour, so about 24 calls an hour at rest, as the tool says. The refusal on a spent allowance is tested against a recorded answer, not seen for real: that needs a test login of its own. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 119,
    "moved_why": "",
    "moved_by_person": ""
@@ -1152,7 +1152,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure",
-   "proven": "By the owner's word, not held for the tag: the fault was met once on a real machine before the fix (2026-11-23, a stock Ubuntu 22.04.5 virtual machine: the start test said its run was left though GitHub answered 404 for it, with a 504 on a read moments later); the fix (three tries, \"left\" only when GitHub still answers with it, \"no clear answer\" otherwise) is tested and not seen on a machine, since GitHub giving no clear answer cannot be caused honestly.",
+   "proven": "By the owner's word, not held for the tag: the fault was met once on a real machine before the fix (2026-11-23, a stock Ubuntu 22.04.5 virtual machine: the start test said its run was left though GitHub answered 404 for it, with a 504 on a read moments later); the fix (three tries, \"left\" only when GitHub still answers with it, \"no clear answer\" otherwise) is tested and not seen on a machine, since GitHub giving no clear answer cannot be caused honestly. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 160,
    "moved_why": "",
    "moved_by_person": ""
@@ -1180,7 +1180,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G5_2_idle_only_when_both_sides_agree",
-   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: during a real job, the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, from 10:15:12Z to 10:17:27Z (UTC), the tool's files not touched; status said `warn the two sides disagree. GitHub says offline, busy \u2026; this computer: service active, a job process runs`, never `busy` while GitHub said offline, then `ok idle` once both sides agreed after the signal to go on (SIGCONT); the job passed. Steered: the listener's hold. Unsteered, the two sides were never caught apart.",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: during a real job, the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, from 10:15:12Z to 10:17:27Z (UTC), the tool's files not touched; status said `warn the two sides disagree. GitHub says offline, busy \u2026; this computer: service active, a job process runs`, never `busy` while GitHub said offline, then `ok idle` once both sides agreed after the signal to go on (SIGCONT); the job passed. Steered: the listener's hold. Unsteered, the two sides were never caught apart. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 166,
    "moved_why": "",
    "moved_by_person": ""
@@ -1194,7 +1194,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
-   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, with no job running, from 10:58:50Z to 11:33:17Z (UTC), as a stalled process is held; the tool's files were not touched. The watch's own pass wrote the offline record at 11:03:24Z; the person then asked for a 12-minute sleep (`systemctl suspend`) with the listener still held. 45 seconds after the wake, 13 minutes after the record and 12 of them asleep, status said only `not ready`, GitHub offline, and did not name it; once two intervals of waking time had passed it named it, with the span and its waking minutes (`22 min, 10 min of it awake`). After the listener went on (SIGCONT), status said `ok idle` and the watch's next pass ended the record. Steered: the listener's hold. Not seen unsteered; not seen on a real laptop's sleep.",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once: the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, with no job running, from 10:58:50Z to 11:33:17Z (UTC), as a stalled process is held; the tool's files were not touched. The watch's own pass wrote the offline record at 11:03:24Z; the person then asked for a 12-minute sleep (`systemctl suspend`) with the listener still held. 45 seconds after the wake, 13 minutes after the record and 12 of them asleep, status said only `not ready`, GitHub offline, and did not name it; once two intervals of waking time had passed it named it, with the span and its waking minutes (`22 min, 10 min of it awake`). After the listener went on (SIGCONT), status said `ok idle` and the watch's next pass ended the record. Steered: the listener's hold. Not seen unsteered; not seen on a real laptop's sleep. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 169,
    "moved_why": "",
    "moved_by_person": ""
@@ -1208,7 +1208,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
-   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, in the same run as row R85: the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, with no job running, from 10:58:50Z to 11:33:17Z (UTC), as a stalled process is held; the tool's files were not touched. After a 12-minute sleep and two intervals of waking time, status said `GitHub has shown it offline at every watch pass since 11:03:24Z (22 min, 10 min of it awake), and now, while its service runs here`, and no longer that GitHub had shown it offline the whole span. Steered: the listener's hold. Not seen unsteered; not seen on a real laptop.",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, in the same run as row R85: the runner's listener was held with a stop signal (SIGSTOP) sent by the person's own sudo, with no job running, from 10:58:50Z to 11:33:17Z (UTC), as a stalled process is held; the tool's files were not touched. After a 12-minute sleep and two intervals of waking time, status said `GitHub has shown it offline at every watch pass since 11:03:24Z (22 min, 10 min of it awake), and now, while its service runs here`, and no longer that GitHub had shown it offline the whole span. Steered: the listener's hold. Not seen unsteered; not seen on a real laptop. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 171,
    "moved_why": "",
    "moved_by_person": ""
@@ -1236,7 +1236,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G2_9_the_runner_is_a_boot_service_started_after_its_limits",
-   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, steered: the slice's high mark lifted by hand so the kernel would kill at the maximum. Before the fix, a real job asking for 6 GB was killed and systemd stopped the whole runner service (the job shown \"Canceled\", the runner offline, a restart 30 s later). On the fix (`OOMPolicy=continue`), the same job was killed at the maximum, the runner's service stayed active with no restart (`NRestarts 0`), and status said `warn job 'j' (run 45179805328, \u2026) was stopped by this computer's memory limit (4.7 GB), not by your code failing \u2026`.",
+   "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, proven by the owner's word, seen once, steered: the slice's high mark lifted by hand so the kernel would kill at the maximum. Before the fix, a real job asking for 6 GB was killed and systemd stopped the whole runner service (the job shown \"Canceled\", the runner offline, a restart 30 s later). On the fix (`OOMPolicy=continue`), the same job was killed at the maximum, the runner's service stayed active with no restart (`NRestarts 0`), and status said `warn job 'j' (run 45179805328, \u2026) was stopped by this computer's memory limit (4.7 GB), not by your code failing \u2026`. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 187,
    "moved_why": "",
    "moved_by_person": ""
@@ -1250,7 +1250,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G4_4_no_sleep_during_a_job",
-   "proven": "2026-11-23, stock Ubuntu 24.04.5 virtual machines and the private proof repository, by the owner's word, each half seen once and steered. The stop: during a real job the runner's service was stopped by hand; the job's hold ended with it (our hold locks 4 during the job, 2 after: the 2 left were an earlier run's, from before the fix). The next job's start: a hold left by hand as the runner user, as a start hook makes it (PIDs 6044, 6047, 6049, its pid in the hook's file); a real job then ran, and during it only its own hold was held (2 locks, PIDs 6154 and 6160), the old one gone; after the job, 0. Not seen: a hold really left behind by a fault.",
+   "proven": "2026-11-23, stock Ubuntu 24.04.5 virtual machines and the private proof repository, by the owner's word, each half seen once and steered. The stop: during a real job the runner's service was stopped by hand; the job's hold ended with it (our hold locks 4 during the job, 2 after: the 2 left were an earlier run's, from before the fix). The next job's start: a hold left by hand as the runner user, as a start hook makes it (PIDs 6044, 6047, 6049, its pid in the hook's file); a real job then ran, and during it only its own hold was held (2 locks, PIDs 6154 and 6160), the old one gone; after the job, 0. Not seen: a hold really left behind by a fault. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 188,
    "moved_why": "",
    "moved_by_person": ""
@@ -1362,7 +1362,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G1_3_look_names_missing_token_rights",
-   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine with its own gh (2.4.0) and the private proof repository, seen once, nothing steered, on the fix's commit: `look` said `ok your login has the `workflow` scope (needed to change workflow files)` where before it said it could not read the scopes. Not seen: a login with no scopes to read (tested only).",
+   "proven": "2026-11-23, a stock Ubuntu 22.04.5 virtual machine with its own gh (2.4.0) and the private proof repository, seen once, nothing steered, on the fix's commit: `look` said `ok your login has the `workflow` scope (needed to change workflow files)` where before it said it could not read the scopes. Not seen: a login with no scopes to read (tested only). Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 219,
    "moved_why": "",
    "moved_by_person": ""
@@ -1516,7 +1516,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G8_16_every_printed_command_is_registered_with_where_it_was_run_as_printed",
-   "proven": "2026-11-23: every command in PRINTED_COMMANDS has its sighting on a stock virtual machine (Ubuntu 22.04.5, Debian 12, Ubuntu 24.04.5), steered ones marked so; the release check reads none empty.",
+   "proven": "2026-11-23: every command in PRINTED_COMMANDS has its sighting on a stock virtual machine (Ubuntu 22.04.5, Debian 12, Ubuntu 24.04.5), steered ones marked so; the release check reads none empty. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 254,
    "moved_why": "",
    "moved_by_person": ""
@@ -1600,7 +1600,7 @@
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
    "test": "test_G3_7_verify_counts_a_job_on_another_computer_of_ours",
-   "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine beside a second computer of ours serving the same proof repository. Unsteered: the moved job ran here and verify said \"this computer\". Steered (the maintainer's word: the workflow put back by hand, move again, this computer's runner held, merge then verify): the job ran on the other computer and verify said \"moved: .github/workflows/ci.yml job check ran on minions-stock-noble-s (another computer of yours with this tool's runner)\", and its last line named it.",
+   "proven": "2026-11-23, run J, a stock Ubuntu 24.04.5 virtual machine beside a second computer of ours serving the same proof repository. Unsteered: the moved job ran here and verify said \"this computer\". Steered (the maintainer's word: the workflow put back by hand, move again, this computer's runner held, merge then verify): the job ran on the other computer and verify said \"moved: .github/workflows/ci.yml job check ran on minions-stock-noble-s (another computer of yours with this tool's runner)\", and its last line named it. Last checked 2026-11-24: the part not seen is taken by the maintainer's word (rule 32).",
    "issue": 272,
    "moved_why": "",
    "moved_by_person": ""
