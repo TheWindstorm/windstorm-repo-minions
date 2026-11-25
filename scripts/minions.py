@@ -409,10 +409,13 @@ class Host:
 
     def run(self, argv: list[str], timeout: int = 20) -> tuple[int, str]:
         """R168: the answer is what the program wrote on standard output; standard error is kept beside it (Out).
-        R172: in the C language, so the words read are the same whatever the person's language."""
+        R172: in the C language, so the words read are the same whatever the person's language. Rule 31 (vi), the
+        owner's 7:59 PM ET 11-24: an answer that is not UTF-8 (a file's name a job left) is read with each such byte
+        as a lone surrogate, never a traceback; plain() shows it changed where it is printed. Every subprocess.run of
+        this tool that reads an answer does the same."""
         env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144
         try:
-            p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
+            p = subprocess.run(argv, capture_output=True, text=True, errors="surrogateescape", timeout=timeout, stdin=subprocess.DEVNULL,
                                env=env)
             return p.returncode, Out(p.stdout or "", p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
@@ -422,7 +425,7 @@ class Host:
         """R160: one read only, with this run's own environment unchanged (the person's shell, its session bus too):
         where gh keeps a login the tool's own gh cannot read. Never a call whose answer the tool acts on."""
         try:
-            p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+            p = subprocess.run(argv, capture_output=True, text=True, errors="surrogateescape", timeout=timeout, stdin=subprocess.DEVNULL)
             return p.returncode, Out(p.stdout or "", p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
             return 127, Out("", str(e))
@@ -431,7 +434,7 @@ class Host:
         """Like run(), with `input` on standard input: the only way a secret reaches another program (INV2)."""
         env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144, R172
         try:
-            p = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout, env=env)
+            p = subprocess.run(argv, input=input, capture_output=True, text=True, errors="surrogateescape", timeout=timeout, env=env)
             return p.returncode, Out(p.stdout or "", p.stderr or "")
         except (OSError, subprocess.SubprocessError) as e:
             return 127, Out("", str(e))
@@ -665,7 +668,7 @@ class GitHub:
             argv += ["--input", "-"]
             stdin = json.dumps(body)
         try:
-            p = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=60,
+            p = subprocess.run(argv, input=stdin, capture_output=True, text=True, errors="surrogateescape", timeout=60,
                                env=self.host.gh_env() if getattr(self, "host", None) is not None
                                else gh_environ(os.environ, gh_config_dir(os.environ, os.path.expanduser("~"))))
             raw = p.stdout

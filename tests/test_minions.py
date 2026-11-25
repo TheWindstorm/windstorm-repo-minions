@@ -7530,6 +7530,130 @@ class Rule31(unittest.TestCase):
             self.assertEqual(len(REF.findall(lines[0])), 1, (hex(i), lines[0]))
         self.assertGreater(seen, 2000)  # Cc 65, Cf 170 or so, Cs 2048, Zl 1, Zp 1
 
+    def test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback(self):
+        # The owner's 7:59 PM ET 11-24, "not text": a file's name whose bytes are not UTF-8 (rm names one a job left in
+        # the runner's home; find prints one). Another program's answer is read with each such byte as a lone
+        # surrogate (class Cs), so it reaches plain(), which shows it changed; it never ends the tool in a traceback.
+        prog = [sys.executable, "-I", "-c", "import sys; sys.stdout.buffer.write(b'kept /home/x/a\\xffb\\n'); "
+                "sys.stderr.buffer.write(b'rm: cannot remove \\xfe\\n'); sys.exit(1)"]
+        host = M.Host()
+        for road in (host.run, host.run_own, lambda argv: host.run_in(argv, "")):
+            rc, out = road(prog)
+            self.assertEqual(rc, 1)
+            self.assertIn("\udcff", out)
+            self.assertIn("\udcfe", out.err if hasattr(out, "err") else str(out))
+            line = M.render("stop could not remove: " + M.tail(out))[0]
+            self.assertEqual(odd_in(line), [], line)
+            self.assertTrue(line.endswith(M.SHOWN_CHANGED), line)
+            line.encode("utf-8")  # printable as it is
+
+    def test_rule_31_vi_bent_values_through_every_command(self):
+        # The owner's 7:59 PM ET 11-24: a road is found by running it, not by reading the code. Every command of the
+        # tool, each in four worlds: GitHub's names bent (every name, path, title, branch, label and message GitHub
+        # answers with), other programs' answers bent (each answer's last line), every folder listing holding a bent
+        # name, all three at once, other programs' answers bent but gh's login read, and GitHub's names bent but our
+        # runner's listing (in those two, so the roads after that read run). A bent value holds a line feed, the words "sudo id", a carriage return, an
+        # escape, a backspace, DEL, NEL, U+2028, a bidi override, a lone surrogate (a byte that is not UTF-8) and NUL.
+        # Every line printed must hold none of the class, none may start with the planted words, and no command
+        # ends the tool in a traceback.
+        bent = "b\nsudo id #\r\x1b[2K\x08\x7f\x85\u2028\u202e\udcff\x00z"
+        keys = {"name", "path", "display_title", "head_branch", "workflow_name", "title", "message", "html_url",
+                "body", "login", "full_name"}
+
+        def bent_in(v):  # inside the name, after a path's last slash, so its ending (".yml") and folder still hold
+            i = v.rfind("/") + 1
+            return v[:i] + "a" + bent + v[i:]
+
+        def bend(x):
+            if isinstance(x, dict):
+                return {k: (bent_in(v) if k in keys and isinstance(v, str) and v else bend(v)) for k, v in x.items()}
+            if isinstance(x, list):
+                return [bend(v) for v in x]
+            return x
+
+        def bent_gh(gh, runners_too=True):
+            real = gh.api
+
+            def api(method, path, body=None):
+                r = real(method, path.replace("a" + bent, ""), body)
+                if not runners_too and "/actions/runners" in path:
+                    return r  # the sixth world: our runner as GitHub lists it, so the roads after it are reached
+                return r[0], bend(copy.deepcopy(r[1]))
+            gh.api = api
+            return gh
+
+        def bent_host(host, programs, files, login_too=True):
+            if programs:
+                real = host._answer
+
+                def answer(argv, input=None):
+                    r = real(argv, input)
+                    if not login_too and list(argv[:2]) == ["gh", "auth"]:
+                        return r  # the fifth world: gh's login read as it is, so the roads after it are reached
+                    if isinstance(r, tuple) and len(r) == 2 and isinstance(r[1], str) and r[1].strip():
+                        return r[0], r[1].rstrip("\n") + "a" + bent + "\n"
+                    return r
+                host._answer = answer
+            if files:
+                for name in ("listdir", "listdir_or_none"):
+                    real_ls = getattr(host, name, None)
+                    if real_ls is not None:
+                        setattr(host, name, (lambda f: lambda path, *a: (
+                            (lambda r: r if r is None else list(r) + ["n" + bent])(f(path, *a))))(real_ls))
+            return host
+
+        def worlds():
+            def look(h=None, g=None):
+                return lambda: M.look(REPO, False, host=h, gh=g, out=out)
+            yield "look", lambda: (linux_host(), StandIn(load("look-recent-runs.jsonl"))), \
+                lambda h, g, out: M.look(REPO, False, host=h, gh=g, out=out)
+            def setup_world():
+                host, sha = setup_host()
+                fresh_look(host)
+                return host, setup_gh(sha)
+            yield "setup", setup_world, lambda h, g, out: M.setup(REPO, host=h, gh=g, out=out, interactive=True)
+            yield "doctor", lambda: (lambda hs: (hs[0], setup_gh(hs[1])))(doctor_world()), \
+                lambda h, g, out: M.doctor(REPO, host=h, gh=g, out=out, interactive=False)
+            yield "move", lambda: (move_host(), MoveGH(G3.FILES)), lambda h, g, out: M.move(REPO, host=h, gh=g, out=out)
+            yield "move --verify", lambda: (move_host(), MoveGH(G3.FILES)), \
+                lambda h, g, out: M.move(REPO, verify=True, host=h, gh=g, out=out, wait_s=0, poll_s=0)
+            yield "status", lambda: (g5_host()[0], StatusGH()), lambda h, g, out: M.status(REPO, host=h, gh=g, out=out)
+            yield "watch", lambda: (g5_host()[0], StatusGH()), lambda h, g, out: M.watch(host=h, gh=g, out=out)
+            yield "drain", lambda: (g5_host()[0], DrainGH()), \
+                lambda h, g, out: M.drain(REPO, host=h, gh=g, out=out, wait_s=0, poll_s=0)
+            yield "resume", lambda: (g5_host()[0], DrainGH()), \
+                lambda h, g, out: M.resume(REPO, host=h, gh=g, out=out, interactive=True)
+            yield "uninstall", lambda: (lambda w: (w[2], w[0]))(remove_setup()), \
+                lambda h, g, out: M.uninstall(REPO, host=h, gh=g, out=out, interactive=True, wait_s=0, poll_s=0)
+            yield "uninstall --all", lambda: (lambda w: (w[2], w[0]))(remove_setup()), \
+                lambda h, g, out: M.uninstall(None, everything=True, host=h, gh=g, out=out, interactive=True,
+                                              wait_s=0, poll_s=0)
+
+        ran, shown = 0, set()
+        for name, make, run in worlds():
+            for mode in ("github", "programs", "files", "all", "programs after the login", "github after our runner"):
+                with self.subTest(command=name, bent=mode):
+                    host, gh = make()
+                    if mode in ("github", "all", "github after our runner"):
+                        bent_gh(gh, runners_too=mode != "github after our runner")
+                    bent_host(host, mode in ("programs", "all", "programs after the login"), mode in ("files", "all"),
+                              login_too=mode != "programs after the login")
+                    out = Out()
+                    code = run(host, gh, out)
+                    self.assertIsInstance(code, int)
+                    ran += 1
+                    for x in out.printed():
+                        if "sudo id" in x:
+                            shown.add((name, mode))  # a bent value reached a printed line, shown changed
+                        self.assertEqual(odd_in(x), [], (name, mode, x[:200]))
+                        self.assertFalse(x.lstrip().startswith(("sudo id", "z")), (name, mode, x[:200]))
+                        x.encode("utf-8")
+        self.assertEqual(ran, 66)
+        # The worlds reach the roads that print such a value (11 runs, of look, doctor, move, status and uninstall,
+        # when this was written); fewer means a world stopped before them and reads nothing.
+        self.assertGreaterEqual(len(shown), 11, sorted(shown))
+        self.assertEqual({n for n, _ in shown}, {"look", "doctor", "move", "status", "uninstall", "uninstall --all"})
+
     def test_rule_31_save_state_is_the_one_writer_of_the_record(self):
         # The owner's 7:43 PM ET 11-24: the fixed stored marks are safe only because save_state is the one writer of
         # minions.json. Every json.dump of the tool is inside save_state; the record's name is written in one place,
@@ -7579,7 +7703,9 @@ class ZRule31(unittest.TestCase):
     # means the tool's own words held one (its text not yet rendered), not another's value.
     CHANGED_ON_PURPOSE = ("test_rule_31_iv_names_others_chose_are_shown_changed_and_said_so_in_look_and_move",
                           "test_G6_17_with_the_user_there_its_crontab_and_at_jobs_go_before_userdel_or_the_leave_stops",
-                          "test_rule_31_a_names_with_a_line_break_or_a_terminal_escape_never_make_a_line_or_a_command")
+                          "test_rule_31_a_names_with_a_line_break_or_a_terminal_escape_never_make_a_line_or_a_command",
+                          "test_rule_31_vi_bent_values_through_every_command",
+                          "test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback")
 
     def test_rule_31_every_line_every_road_printed(self):
         bad, odd_starts, commands_seen = [], set(), 0
