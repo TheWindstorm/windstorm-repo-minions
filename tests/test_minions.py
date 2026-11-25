@@ -1410,6 +1410,11 @@ class G2(unittest.TestCase):
             self.assertEqual(code, M.EXIT_STOP, lines)
             self.assertEqual(admin_steps(host), [], "nothing is touched")
             self.assertIn(M.NOT_OURS_USER if answer[0] == 0 else "could not read whether the user", lines[-1])
+            if answer[0] == 0:
+                # never "open an issue" for a user that may be the person's own: what is true, and where that leaves them
+                self.assertNotIn("open an issue", lines[-1])
+                self.assertIn("If it is someone else's user, this version cannot run on this computer: its runner's "
+                              f"user must be named {M.RUNNER_USER}, and that name is taken here", lines[-1])
         host, sha = setup_host(runs={("getent", "passwd", "minions-runner"): (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n")})
         fresh_look(host)
         made_by_us(host)
@@ -5156,7 +5161,7 @@ class G6(unittest.TestCase):
         with open(os.path.join(ROOT, "docs", "phrases.md"), encoding="utf-8") as f:
             listed = set(re.findall(r"^\s*- phrase: `([^`]+)`", f.read(), re.M))
         own = {"could not be read"}  # doctor's own line (copy_version_line), not another program's answer
-        subj = re.compile(r"\bsaid\(|^(out|head|mode|words|entry)(\.lower\(\)|\.strip\(\))?$")
+        subj = re.compile(r"\bsaid\(|^(out|head|mode|words|entry)(\.lower\(\)|\.strip\((BLANKS)?\))?$")
         matched = set()
         for n in ast.walk(ast.parse(src)):
             if isinstance(n, ast.Compare) and len(n.ops) == 1 and isinstance(n.ops[0], (ast.In, ast.NotIn)) \
@@ -7391,6 +7396,34 @@ def outside_quotes(line):
     return re.sub(r"'[^']*'", "", line)
 
 
+def every_command():
+    """Rule 31 (vi): each of the 11 commands, as (name, make the world, run it); the bent values' and the line
+    ends' trials both run every one."""
+    yield "look", lambda: (linux_host(), StandIn(load("look-recent-runs.jsonl"))), \
+        lambda h, g, out: M.look(REPO, False, host=h, gh=g, out=out)
+    def setup_world():
+        host, sha = setup_host()
+        fresh_look(host)
+        return host, setup_gh(sha)
+    yield "setup", setup_world, lambda h, g, out: M.setup(REPO, host=h, gh=g, out=out, interactive=True)
+    yield "doctor", lambda: (lambda hs: (hs[0], setup_gh(hs[1])))(doctor_world()), \
+        lambda h, g, out: M.doctor(REPO, host=h, gh=g, out=out, interactive=False)
+    yield "move", lambda: (move_host(), MoveGH(G3.FILES)), lambda h, g, out: M.move(REPO, host=h, gh=g, out=out)
+    yield "move --verify", lambda: (move_host(), MoveGH(G3.FILES)), \
+        lambda h, g, out: M.move(REPO, verify=True, host=h, gh=g, out=out, wait_s=0, poll_s=0)
+    yield "status", lambda: (g5_host()[0], StatusGH()), lambda h, g, out: M.status(REPO, host=h, gh=g, out=out)
+    yield "watch", lambda: (g5_host()[0], StatusGH()), lambda h, g, out: M.watch(host=h, gh=g, out=out)
+    yield "drain", lambda: (g5_host()[0], DrainGH()), \
+        lambda h, g, out: M.drain(REPO, host=h, gh=g, out=out, wait_s=0, poll_s=0)
+    yield "resume", lambda: (g5_host()[0], DrainGH()), \
+        lambda h, g, out: M.resume(REPO, host=h, gh=g, out=out, interactive=True)
+    yield "uninstall", lambda: (lambda w: (w[2], w[0]))(remove_setup()), \
+        lambda h, g, out: M.uninstall(REPO, host=h, gh=g, out=out, interactive=True, wait_s=0, poll_s=0)
+    yield "uninstall --all", lambda: (lambda w: (w[2], w[0]))(remove_setup()), \
+        lambda h, g, out: M.uninstall(None, everything=True, host=h, gh=g, out=out, interactive=True,
+                                      wait_s=0, poll_s=0)
+
+
 class Rule31(unittest.TestCase):
     def test_rule_31_iv_names_others_chose_are_shown_changed_and_said_so_in_look_and_move(self):
         files = {ODD_A: ODD_A_YML, ODD_B: ODD_B_YML}
@@ -7529,6 +7562,12 @@ class Rule31(unittest.TestCase):
             self.assertIn("cannot be typed on one line", lines[0], hex(i))
             self.assertEqual(len(REF.findall(lines[0])), 1, (hex(i), lines[0]))
         self.assertGreater(seen, 2000)  # Cc 65, Cf 170 or so, Cs 2048, Zl 1, Zp 1
+        # The owner's 8:27 PM ET 11-24, point 1: Cf stays, and the fixed words are true for it: a joiner, a zero-width
+        # space and a direction isolate are neither a line break nor a terminal's act, but they cannot be seen.
+        for ch in ("\u200d", "\u200b", "\u2066"):
+            self.assertIn("or that cannot be seen", M.render(f"ok a{ch}b")[0], hex(ord(ch)))
+            self.assertIn("or that cannot be seen", M.render("ok run " + M.cmd(f"look a{ch}b"))[0], hex(ord(ch)))
+        self.assertIn("or that cannot be seen", M.MD_CHANGED)
 
     def test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback(self):
         # The owner's 7:59 PM ET 11-24, "not text": a file's name whose bytes are not UTF-8 (rm names one a job left in
@@ -7602,35 +7641,8 @@ class Rule31(unittest.TestCase):
                             (lambda r: r if r is None else list(r) + ["n" + bent])(f(path, *a))))(real_ls))
             return host
 
-        def worlds():
-            def look(h=None, g=None):
-                return lambda: M.look(REPO, False, host=h, gh=g, out=out)
-            yield "look", lambda: (linux_host(), StandIn(load("look-recent-runs.jsonl"))), \
-                lambda h, g, out: M.look(REPO, False, host=h, gh=g, out=out)
-            def setup_world():
-                host, sha = setup_host()
-                fresh_look(host)
-                return host, setup_gh(sha)
-            yield "setup", setup_world, lambda h, g, out: M.setup(REPO, host=h, gh=g, out=out, interactive=True)
-            yield "doctor", lambda: (lambda hs: (hs[0], setup_gh(hs[1])))(doctor_world()), \
-                lambda h, g, out: M.doctor(REPO, host=h, gh=g, out=out, interactive=False)
-            yield "move", lambda: (move_host(), MoveGH(G3.FILES)), lambda h, g, out: M.move(REPO, host=h, gh=g, out=out)
-            yield "move --verify", lambda: (move_host(), MoveGH(G3.FILES)), \
-                lambda h, g, out: M.move(REPO, verify=True, host=h, gh=g, out=out, wait_s=0, poll_s=0)
-            yield "status", lambda: (g5_host()[0], StatusGH()), lambda h, g, out: M.status(REPO, host=h, gh=g, out=out)
-            yield "watch", lambda: (g5_host()[0], StatusGH()), lambda h, g, out: M.watch(host=h, gh=g, out=out)
-            yield "drain", lambda: (g5_host()[0], DrainGH()), \
-                lambda h, g, out: M.drain(REPO, host=h, gh=g, out=out, wait_s=0, poll_s=0)
-            yield "resume", lambda: (g5_host()[0], DrainGH()), \
-                lambda h, g, out: M.resume(REPO, host=h, gh=g, out=out, interactive=True)
-            yield "uninstall", lambda: (lambda w: (w[2], w[0]))(remove_setup()), \
-                lambda h, g, out: M.uninstall(REPO, host=h, gh=g, out=out, interactive=True, wait_s=0, poll_s=0)
-            yield "uninstall --all", lambda: (lambda w: (w[2], w[0]))(remove_setup()), \
-                lambda h, g, out: M.uninstall(None, everything=True, host=h, gh=g, out=out, interactive=True,
-                                              wait_s=0, poll_s=0)
-
         ran, shown = 0, set()
-        for name, make, run in worlds():
+        for name, make, run in every_command():
             for mode in ("github", "programs", "files", "all", "programs after the login", "github after our runner"):
                 with self.subTest(command=name, bent=mode):
                     host, gh = make()
@@ -7650,9 +7662,162 @@ class Rule31(unittest.TestCase):
                         x.encode("utf-8")
         self.assertEqual(ran, 66)
         # The worlds reach the roads that print such a value (11 runs, of look, doctor, move, status and uninstall,
-        # when this was written); fewer means a world stopped before them and reads nothing.
+        # when this was written; setup too since a line ends at a line feed: gh's login answer is read as one line,
+        # so setup reaches its later roads); fewer means a world stopped before them and reads nothing.
         self.assertGreaterEqual(len(shown), 11, sorted(shown))
-        self.assertEqual({n for n, _ in shown}, {"look", "doctor", "move", "status", "uninstall", "uninstall --all"})
+        self.assertEqual({n for n, _ in shown},
+                         {"look", "setup", "doctor", "move", "status", "uninstall", "uninstall --all"})
+
+    # Rule 31 (vi), "a line ends at a line feed" (the owner's 8:26 PM ET 11-24). Two markers of one length, each
+    # shown changed the same way (plain() makes every slot ?): LE0 holds U+0001 in its 8 slots, where no reader
+    # breaks a line; LE1 holds, in the same slots, the characters str.splitlines() and str.split() break at and a
+    # line feed does not: VT, FF, FS, GS, RS, NEL, U+2028, U+2029.
+    LE0 = "aPQ\x01R\x01S\x01T\x01U\x01W\x01X\x01Y\x01z"
+    LE1 = "aPQ\x0bR\x0cS\x1cT\x1dU\x1eW\x85X Y z"
+    LE_WHERE = ("github", "programs", "files", "file contents", "all", "programs after the login",
+                "github after our runner")
+
+    def test_rule_31_vi_a_line_ends_at_a_line_feed_every_command_reads_one_item_as_one(self):
+        # Every command, in seven worlds: the marker planted in GitHub's names (and as a comment line in each
+        # workflow file's content), in other programs' answers, in folder listings, in the content of every file
+        # the tool reads that is not JSON, all of them, and the two "after" worlds of the bent values' test. Each
+        # command runs twice on the same computer and GitHub: the second reads what the first left (the record,
+        # the journal, a branch). With every value read to a line feed, LE1's run prints the same lines as LE0's,
+        # sends GitHub the same writes, and writes the same files; an item read as two (a ghost group, a cut
+        # answer) makes them differ. A second LE0 run is the control: the runs are steady.
+        V0, V1 = self.LE0, self.LE1
+        self.assertEqual(M.plain(V0)[0], M.plain(V1)[0])
+        self.assertEqual((len(V0.split("\n")), len(V1.split("\n")), len(V1.splitlines()), len(V1.split())), (1, 1, 9, 9))
+        keys = {"name", "path", "display_title", "head_branch", "workflow_name", "title", "message", "html_url",
+                "body", "login", "full_name"}
+
+        def bend(x, V):
+            if isinstance(x, dict):
+                out = {}
+                for k, v in x.items():
+                    if k == "content" and isinstance(v, str):  # a workflow file: one comment line more
+                        out[k] = M.base64.b64encode(("# " + V + "\n").encode() + M.base64.b64decode(v)).decode()
+                    elif k in keys and isinstance(v, str) and v:
+                        i = v.rfind("/") + 1
+                        out[k] = v[:i] + V + v[i:]
+                    else:
+                        out[k] = bend(v, V)
+                return out
+            return [bend(v, V) for v in x] if isinstance(x, list) else x
+
+        def plant(host, gh, V, where):
+            if "github" in where:
+                real = gh.api
+
+                def api(method, path, body=None):
+                    r = real(method, path.replace(V, ""), body)
+                    if where == "github after our runner" and "/actions/runners" in path:
+                        return r
+                    return r[0], bend(copy.deepcopy(r[1]), V)
+                gh.api = api
+            if where in ("programs", "programs after the login", "all"):
+                real_a = host._answer
+
+                def answer(argv, input=None):
+                    r = real_a(argv, input)
+                    if where == "programs after the login" and list(argv[:2]) == ["gh", "auth"]:
+                        return r
+                    if isinstance(r, tuple) and len(r) == 2 and isinstance(r[1], str) and r[1].strip():
+                        return r[0], r[1].rstrip("\n") + V + "\n"
+                    return r
+                host._answer = answer
+            if where in ("files", "all"):
+                for name in ("listdir", "listdir_or_none"):
+                    setattr(host, name, (lambda f: lambda path, *a: (
+                        (lambda r: r if r is None else list(r) + ["n" + V])(f(path, *a))))(getattr(host, name)))
+            if where in ("file contents", "all"):
+                real_r = host.read
+
+                def read(path):
+                    t = real_r(path)
+                    if not isinstance(t, str) or not t.strip():
+                        return t
+                    try:
+                        json.loads(t)
+                        return t
+                    except ValueError:
+                        return t.rstrip("\n") + V + ("\n" if t.endswith("\n") else "")
+                host.read = read
+
+        def steady(v):  # names a run makes at random (a branch's, a temporary folder's), and the clock
+            if not isinstance(v, str):
+                return v
+            v = re.sub(r"/tmp/[\w.-]+", "/tmp/T", v)
+            v = re.sub(r"\btmp[a-z0-9_]{8}\b", "tmpX", v)
+            v = re.sub(r"\b\d\d:\d\d(:\d\d)?(Z| UTC)", r"HH:MM\2", v)  # the clock, where a run reads it
+            v = re.sub(r"\b1[6-9]\d{8}\b", "EPOCH", v)  # the clock as seconds (the watch's seen mark)
+            return re.sub(r"minions-([a-z-]+)-[0-9a-f]{8}", r"minions-\1-X", v)
+
+        def same(text, V):  # V's own forms, raw or as json.dumps writes them either way, made V0's
+            for a, b in ((V, V0), (json.dumps(V)[1:-1], json.dumps(V0)[1:-1]),
+                         (json.dumps(V, ensure_ascii=False)[1:-1], json.dumps(V0, ensure_ascii=False)[1:-1])):
+                text = text.replace(a, b)
+            return text
+
+        def one(make, run, V, where):
+            host, gh = make()
+            plant(host, gh, V, where)
+            before, seen = dict(host.files), []
+            for n in (1, 2):
+                out = Out()
+                seen.append(("exit", n, run(host, gh, out)))
+                seen += [("line", n, x) for x in out.printed()]
+            seen += [("github", m, p, None if b is None else same(json.dumps(b, sort_keys=True, ensure_ascii=False), V))
+                     for m, p, b in getattr(gh, "writes", [])]
+            for k in sorted(host.files):
+                v = host.files[k]
+                if before.get(k) != v and isinstance(v, str):
+                    seen.append(("file", k, same(v, V)))
+                    # (2): a file the tool writes holds none of the three raw
+                    self.assertFalse([c for c in "\x85  " if c in v], (k, where))
+            return [tuple(steady(v) for v in x) for x in seen]
+
+        runs, reached = 0, set()
+        for name, make, run in every_command():
+            for where in self.LE_WHERE:
+                with self.subTest(command=name, planted=where):
+                    runs += 1
+                    a, a2, b = one(make, run, V0, where), one(make, run, V0, where), one(make, run, V1, where)
+                    self.assertEqual(a, a2, "the control: two runs with LE0 are the same")
+                    if any(M.plain(V0)[0] in str(x) for x in a):
+                        reached.add(name)
+                    self.assertEqual([x for x in b if x not in a][:6], [], (name, where, "only with LE1"))
+                    self.assertEqual([x for x in a if x not in b][:6], [], (name, where, "only with LE0"))
+                    self.assertEqual(len(a), len(b))
+        self.assertEqual(runs, 77)
+        # the marker reached what is compared in these commands when this was written; fewer means a world
+        # stopped before the roads that read it
+        self.assertEqual(reached, {"look", "setup", "doctor", "move", "status", "uninstall", "uninstall --all"})
+
+    def test_rule_31_vi_a_line_ends_at_a_line_feed_on_the_way_in(self):
+        # The owner's 8:30 PM ET 11-24: Python's text mode turns a lone carriage return into a line feed before any
+        # split (subprocess with text=True, open() by default). A real program's answer and a real file, each
+        # holding a CR and the rest of the class, reach the tool as written: read as bytes, then decoded.
+        raw = b"a\rb\x0bc\x0cd\x1ce\x1df\x1eg\xc2\x85h\xe2\x80\xa8i\xe2\x80\xa9j\xffk\r\n"
+        want = raw.decode("utf-8", "surrogateescape")
+        prog = [sys.executable, "-I", "-c",
+                f"import sys; sys.stdout.buffer.write({raw!r}); sys.stderr.buffer.write({raw!r})"]
+        host = M.Host()
+        for road in ("run", "run_own", "run_in"):
+            rc, out = getattr(host, road)(prog, *([""] if road == "run_in" else []))
+            self.assertEqual((rc, str(out), out.err), (0, want, want), road)
+            self.assertEqual(M.lines_of(out), [want[:-1]], road)
+            self.assertEqual(len(M.tail(out, 9).split(" / ")), 2, road)  # one line on each stream
+        with tempfile.NamedTemporaryFile("wb", dir=TMP, delete=False) as f:
+            f.write(raw)
+        self.assertEqual(host.read(f.name), raw.decode("utf-8", "replace"))
+        self.assertEqual(M.lines_of(host.read(f.name)), [raw.decode("utf-8", "replace")[:-1]])
+        # the words of a line: at a space, a tab or a line feed only
+        self.assertEqual(M.words_of(" g1 " + self.LE1 + "\tg2\n"), ["g1", self.LE1, "g2"])
+        self.assertEqual(M.words_of("600 r " + self.LE1 + " x", 2), ["600", "r", self.LE1 + " x"])
+        self.assertEqual(M.last_line("x\n" + self.LE1 + "\n"), self.LE1)
+        self.assertEqual(M.lines_of("a\n\nb\n"), ["a", "", "b"])
+        self.assertEqual(M.lines_of(""), [])
 
     NOT_TEXT_CHILD = r"""
 import base64, os, sys, tempfile
@@ -7753,22 +7918,37 @@ for name, make, run in runs:
         # move for every file, with a step that could not help ("run the same command again"), and uninstall's
         # put-back skipped such a moved file and then said no workflow still asks for our runner. A file that is not
         # text is named in plain words, never taken for nothing there, and the work goes on with the others.
+        # The owner's 8:38 PM ET 11-24 (d), planted: a file whose content GitHub's answer does not carry (a file over
+        # 1 MB: "encoding": "none", "content": "") was "no job read" in look, unnamed in move and verify, and the
+        # put-back said no workflow still asks for our runner (rule 6). Both kinds go every road the same way.
+        kinds = (({"content": M.base64.b64encode(b"name: x\xff\non: [push]\n").decode()}, M.NOT_TEXT_IS,
+                  "Make the file UTF-8 again on GitHub"),
+                 ({"size": 2_000_000, "encoding": "none", "content": ""}, M.NOT_GIVEN_IS,
+                  "Make the file smaller than 1 MB on GitHub"))
+        for answer, said_is, step in kinds:
+            with self.subTest(said_is):
+                self.workflow_file_unread(answer, said_is, step)
+        # a file GitHub says is empty is one with no jobs, as before
+        self.assertEqual(M.workflow_text({"size": 0, "encoding": "base64", "content": ""}), ("", ""))
+
+    def workflow_file_unread(self, answer, said_is, step):
         def not_text(gh, name):
             real = gh.api
 
             def api(method, path, body=None):
                 if method == "GET" and path.split("?")[0].endswith(f"/contents/.github/workflows/{name}"):
                     gh.calls.append((method, path))
-                    return 200, {"content": M.base64.b64encode(b"name: x\xff\non: [push]\n").decode()}
+                    return 200, dict(answer)
                 return real(method, path, body)
             gh.api = api
             return gh
-        said = f"its content is not text (it is not UTF-8), so this tool neither reads nor changes it"
+        said = f"{said_is}, so this tool neither reads nor changes it"
         # look: named, with why
         gh = not_text(MoveGH({".github/workflows/ci.yml": CI_YML, ".github/workflows/ff.yml": ""}), "ff.yml")
         out = Out()
         M.look(REPO, False, host=linux_host(), gh=gh, out=out)
         self.assertIn(f"warn .github/workflows/ff.yml: {said}", out.printed())
+        self.assertFalse([x for x in out.printed() if "ff.yml: no job read" in x], out.printed())
         # move: named, and the other file still moves
         host = move_host()
         gh = not_text(MoveGH({".github/workflows/ci.yml": CI_YML, ".github/workflows/ff.yml": ""}), "ff.yml")
@@ -7786,8 +7966,8 @@ for name, make, run in runs:
                      "ci.yml")
         code, lines = run_move(g, h, verify=True)
         self.assertEqual(code, M.EXIT_STOP, lines)
-        x = next(x for x in lines if ".github/workflows/ci.yml" in x and M.NOT_TEXT_IS + " now" in x)
-        self.assertIn("Make the file UTF-8 again on GitHub", x)
+        x = next(x for x in lines if ".github/workflows/ci.yml" in x and said_is + " now" in x)
+        self.assertIn(step, x)
         self.assertFalse([x for x in lines if x.startswith("ok moved")], lines)
         # uninstall's put-back: the moved file that is not text now is named, with the step left, never "no workflow
         # still asks for our runner"
@@ -7795,10 +7975,11 @@ for name, make, run in runs:
         not_text(gh, "ci.yml")
         code, lines = run_uninstall(gh, host, repo=None, everything=True)
         self.assertFalse([x for x in lines if "still asks for our runner" in x], lines)
-        x = next(x for x in lines if ".github/workflows/ci.yml" in x and M.NOT_TEXT_IS + " now" in x)
+        x = next(x for x in lines if ".github/workflows/ci.yml" in x and said_is + " now" in x)
         self.assertIn("put its runs-on line back by hand", x)
         self.assertIn("runs-on: ubuntu-latest", x)
         self.assertEqual(gh.blobs(), [])
+        self.assertFalse([x for x in lines if "no job read" in x], lines)
 
     def test_rule_31_save_state_is_the_one_writer_of_the_record(self):
         # The owner's 7:43 PM ET 11-24: the fixed stored marks are safe only because save_state is the one writer of
@@ -7852,7 +8033,8 @@ class ZRule31(unittest.TestCase):
                           "test_rule_31_a_names_with_a_line_break_or_a_terminal_escape_never_make_a_line_or_a_command",
                           "test_rule_31_vi_bent_values_through_every_command",
                           "test_rule_31_vi_not_text_on_the_way_in_with_and_without_a_language",
-                          "test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback")
+                          "test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback",
+                          "test_rule_31_vi_a_line_ends_at_a_line_feed_every_command_reads_one_item_as_one")
 
     def test_rule_31_every_line_every_road_printed(self):
         bad, odd_starts, commands_seen = [], set(), 0

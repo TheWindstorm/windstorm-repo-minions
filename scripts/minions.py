@@ -106,21 +106,40 @@ ZERO_JOB_WORDS = ("GitHub did not start the run; this is the account's or reposi
 
 _ORDINAL = ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth")
 SHOWN_CHANGED = ("(shown changed: a value in this line that this tool did not write held a backtick, a dollar sign "
-                 "before a parenthesis, a tab, or a character a line breaks on or a terminal acts on, printed here "
-                 "as ', $ (, a space or ?)")
+                 "before a parenthesis, a tab, or a character a line breaks on or a terminal acts on, or that cannot "
+                 "be seen, printed here as ', $ (, a space or ?)")
 # Rule 31 (vi): the class, by Unicode category: control characters (C0 and C1 with line feed, carriage return, ESC,
 # backspace and DEL; tab too, printed as a space), format characters (the bidi overrides that make a terminal show a
-# line in another order, among them), lone surrogates (which cannot even be printed), and U+2028 and U+2029.
+# line in another order, and joiners and zero-width spaces, which cannot be seen: the owner's 8:27 PM ET 11-24, Cf
+# stays), lone surrogates (which cannot even be printed), and U+2028 and U+2029.
 ODD_CATEGORIES = ("Cc", "Cf", "Cs", "Zl", "Zp")
 NOT_TYPABLE = ("a command not given here, because a value it must carry holds a character a line breaks on or a "
-               "terminal acts on, so it cannot be typed on one line (shown changed: {}); that value is to be renamed "
-               "to one without such a character first")
+               "terminal acts on, or that cannot be seen, so it cannot be typed on one line (shown changed: {}); that "
+               "value is to be renamed to one without such a character first")
 
 
 # Rule 31 (vi), "not text, on the way in" (the owner's 8:07 PM ET 11-24): a workflow file whose content is not UTF-8
 # is named in these words by every road that reads one, never taken for no file, and the others go on.
 NOT_TEXT_IS = "its content is not text (it is not UTF-8)"
 NOT_TEXT = NOT_TEXT_IS + ", so this tool neither reads nor changes it"
+# Rule 6, the owner's 8:38 PM ET 11-24 (d): GitHub's contents answer carries no content for a file over 1 MB
+# ("encoding": "none"); its empty text is not a file with no jobs. Named as a file that is not text is, each road in
+# its own words, with its own step.
+NOT_GIVEN_IS = "GitHub did not give its content in its answer (it does not, for a file over 1 MB)"
+UNREAD_STEP = {NOT_TEXT_IS: "Make the file UTF-8 again on GitHub", NOT_GIVEN_IS: "Make the file smaller than 1 MB on GitHub"}
+
+
+def workflow_text(fd: object) -> tuple[str | None, str]:
+    """A workflow file's text from GitHub's contents answer, or None and why it is not read (rule 6: an empty
+    answer is not an empty file unless GitHub says the file is empty)."""
+    fd = fd if isinstance(fd, dict) else {}
+    if fd.get("encoding") == "none" or ("content" not in fd and fd.get("size")) or \
+            (not fd.get("content") and (fd.get("size") or 0) > 0):
+        return None, NOT_GIVEN_IS
+    try:
+        return base64.b64decode(fd.get("content", "")).decode("utf-8"), ""
+    except (ValueError, UnicodeDecodeError):
+        return None, NOT_TEXT_IS
 
 
 def odd(text: str) -> bool:
@@ -140,6 +159,40 @@ def plain(text: str) -> tuple[str, bool]:
     out = text.replace("`", "'").replace("$(", "$ (").replace("\t", " ")
     out = "".join("?" if unicodedata.category(c) in ODD_CATEGORIES else c for c in out)  # rule 31 (vi)
     return out, out != text
+
+
+# Rule 31 (vi), "a line ends at a line feed" (the owner's 8:26 PM ET 11-24): str.splitlines() also breaks at CR, VT,
+# FF, FS, GS, RS, NEL, U+2028 and U+2029, and str.split() and str.strip() with no argument take those as blanks. So a
+# value of others read by those is two items, or loses its end. Another program's answer and a file others write are
+# read by lines_of() and words_of(): a line ends at a line feed only, a word at a space, a tab or a line feed only. (A CR
+# comes as written: the answers are read as bytes, files with newline="".)
+BLANKS = " \t\n"  # a line feed at the end of a whole answer is a blank; inside a line there is none
+
+
+def lines_of(text: str) -> list[str]:
+    """Rule 31 (vi): another program's answer, or a file others write, as its lines, cut at a line feed only."""
+    t = str(text)
+    return (t[:-1] if t.endswith("\n") else t).split("\n") if t else []
+
+
+def words_of(text: str, most: int = -1) -> list[str]:
+    """Rule 31 (vi): the words of a value of others, split at a space, a tab or a line feed only (`most` splits at
+    most, the rest kept whole, as str.split's maxsplit)."""
+    return re.split(r"[ \t\n]+", str(text).strip(" \t\n"), maxsplit=max(most, 0)) if str(text).strip(" \t\n") else []
+
+
+def as_read(value: str | None) -> str:
+    """Rule 31 (vi): a value of others, quoted as read, for render() to show changed where it must (never repr(),
+    whose escapes are neither the value nor said to be changed); "not read" where there was none."""
+    return "not read" if value is None else f"'{value}'"
+
+
+def yaml_lines(text: str, keepends: bool = False) -> list[str]:
+    """Rule 31 (vi): a workflow file's lines as YAML 1.2 breaks them, at LF, CR and CRLF only (NEL, U+2028 and U+2029
+    are characters inside a YAML line, not its end); with `keepends`, each with its own break, so joined they are
+    the file again."""
+    got = re.findall(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z", text)
+    return got if keepends else [re.sub(r"(?:\r\n|\r|\n)\Z", "", x) for x in got]
 
 
 def render(text: str) -> list[str]:
@@ -387,6 +440,15 @@ class Out(str):
         return o
 
 
+def answer_of(p: subprocess.CompletedProcess) -> "Out":
+    """Rule 31 (vi): a program's two streams, read as bytes and decoded here, so a carriage return comes as the
+    program wrote it (text mode makes a lone CR a line feed before any split) and a byte that is not UTF-8 comes as a
+    lone surrogate, shown changed where it is printed."""
+    def text(b: bytes | str | None) -> str:  # str only where a test's stand-in for subprocess.run answers in text
+        return b if isinstance(b, str) else (b or b"").decode("utf-8", "surrogateescape")
+    return Out(text(p.stdout), text(p.stderr))
+
+
 def said(out: str) -> str:
     """R168: both streams of a run (standard output, then standard error): for words shown to the person, and for an
     answer a program gives on standard error (named at each use). A plain string is itself."""
@@ -421,9 +483,8 @@ class Host:
         this tool that reads an answer does the same."""
         env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144
         try:
-            p = subprocess.run(argv, capture_output=True, text=True, errors="surrogateescape", timeout=timeout, stdin=subprocess.DEVNULL,
-                               env=env)
-            return p.returncode, Out(p.stdout or "", p.stderr or "")
+            p = subprocess.run(argv, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+            return p.returncode, answer_of(p)
         except (OSError, subprocess.SubprocessError) as e:
             return 127, Out("", str(e))
 
@@ -431,8 +492,8 @@ class Host:
         """R160: one read only, with this run's own environment unchanged (the person's shell, its session bus too):
         where gh keeps a login the tool's own gh cannot read. Never a call whose answer the tool acts on."""
         try:
-            p = subprocess.run(argv, capture_output=True, text=True, errors="surrogateescape", timeout=timeout, stdin=subprocess.DEVNULL)
-            return p.returncode, Out(p.stdout or "", p.stderr or "")
+            p = subprocess.run(argv, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
+            return p.returncode, answer_of(p)
         except (OSError, subprocess.SubprocessError) as e:
             return 127, Out("", str(e))
 
@@ -440,14 +501,15 @@ class Host:
         """Like run(), with `input` on standard input: the only way a secret reaches another program (INV2)."""
         env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144, R172
         try:
-            p = subprocess.run(argv, input=input, capture_output=True, text=True, errors="surrogateescape", timeout=timeout, env=env)
-            return p.returncode, Out(p.stdout or "", p.stderr or "")
+            p = subprocess.run(argv, input=None if input is None else input.encode("utf-8", "surrogateescape"),
+                               capture_output=True, timeout=timeout, env=env)
+            return p.returncode, answer_of(p)
         except (OSError, subprocess.SubprocessError) as e:
             return 127, Out("", str(e))
 
     def read(self, path: str) -> str | None:
         try:
-            with open(path, encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace", newline="") as f:  # rule 31 (vi): a CR as written
                 return f.read()
         except OSError:
             return None
@@ -745,7 +807,7 @@ def parse_include(raw: str) -> tuple[int, object]:
         status = int(m.group(1))
     parts = re.split(r"\r?\n\r?\n", raw, maxsplit=1)
     body = parts[1] if len(parts) == 2 else ""
-    body = body.strip()
+    body = body.strip(BLANKS)
     if not body:
         return status, None
     try:
@@ -825,9 +887,9 @@ PRINTED_COMMANDS = {
 def os_release_id(host: Host) -> str:
     text = host.read("/etc/os-release") or ""
     ids = []
-    for line in text.splitlines():
+    for line in lines_of(text):
         if line.startswith(("ID=", "ID_LIKE=")):
-            ids += line.split("=", 1)[1].strip().strip('"').split()
+            ids += words_of(line.split("=", 1)[1].strip(BLANKS).strip('"'))
     for i in ids:
         if i in ("debian", "ubuntu"):
             return "debian"
@@ -874,9 +936,9 @@ def login_read(host: Host) -> tuple[str, str | None, str]:
     if not status and rc == 4:
         return "no", None, "gh has no saved login for github.com"
     # gh's own lines about logging in, out or refreshing are not passed on: this answer is "could not ask", not "no"
-    words = [x.strip() for x in said(out).splitlines()  # R168: words shown, gh's standard error too
-             if x.strip() and not re.search(r"gh auth|log ?in|log ?out|refresh", x, re.I)]
-    return "unread", None, (f"HTTP {status}: " if status else "") + (" / ".join(words[-2:]) or f"gh exit {rc}, no words")
+    said_ = [x.strip(BLANKS) for x in lines_of(said(out))  # R168: words shown, gh's standard error too
+             if x.strip(BLANKS) and not re.search(r"gh auth|log ?in|log ?out|refresh", x, re.I)]
+    return "unread", None, (f"HTTP {status}: " if status else "") + (" / ".join(said_[-2:]) or f"gh exit {rc}, no words")
 
 
 NO_LOGIN = "could not read your GitHub login"
@@ -890,15 +952,15 @@ def login_kept(host: Host) -> tuple[str, str]:
     whether one line came back is read. gh older than 2.17 has no `auth token` and keeps a login only in its file or
     the shell (a keyring came in 2.26), so there its file is read for whether a token line is there."""
     rc, out = host.run(["gh", "auth", "token", "--hostname", "github.com"])
-    lines = [x.strip() for x in out.splitlines() if x.strip()]
-    if rc == 0 and len(lines) == 1 and re.fullmatch(r"\S+", lines[0]):
+    got = [x.strip(BLANKS) for x in lines_of(out) if x.strip(BLANKS)]
+    if rc == 0 and len(got) == 1 and re.fullmatch(r"[^ \t]+", got[0]):
         return "yes", ""
     if re.search(r"no oauth token found", said(out), re.I):  # R168: gh's refusal words are on its standard error
         return "no", (f"{NO_LOGIN}: gh has none for github.com that it can read when nobody is logged in (a login "
                       "kept only in a keyring, or only in a shell's GH_TOKEN, cannot be read then)")
     if re.search(r'unknown command "token"', said(out)):
         return hosts_file_login(host)
-    words = [x for x in lines if not TOKEN_SHAPE.search(x)]
+    words = [x for x in got if not TOKEN_SHAPE.search(x)]
     if rc == 127:  # Host.run: gh not found with this PATH, or it could not be run at all
         return "unread", ("the GitHub CLI (gh) could not be found or run with this PATH, so it could not be asked "
                           "for its login: " + (" / ".join(words[-1:]) or "no words"))
@@ -914,9 +976,9 @@ def hosts_file_login(host: Host) -> tuple[str, str]:
     if text is None:
         return "unread", f"gh could not be asked whether it has a login for github.com, and {path} could not be read"
     here = False
-    for line in text.splitlines():
+    for line in lines_of(text):
         if line and not line[0].isspace():
-            here = line.split(":", 1)[0].strip().strip("'\"") == "github.com"
+            here = line.split(":", 1)[0].strip(BLANKS).strip("'\"") == "github.com"
         elif here and re.match(r"\s+oauth_token:\s*\S", line):
             return "yes", ""
     return "no", f"{NO_LOGIN}: {path} holds no login for github.com"
@@ -928,7 +990,7 @@ def login_where(host: Host) -> tuple[str, str]:
     rc, out = host.run_own(["gh", "auth", "status", "--hostname", "github.com"])
     out = said(out)  # R168, on purpose: gh 2.4.0 and 2.23.0 print `auth status` on standard error, newer gh on output
     m = re.search(r"Token scopes:\s*(.+)", out)
-    scopes = ", ".join(re.findall(r"'([^']+)'", m.group(1)) or [x.strip() for x in m.group(1).split(",") if x.strip()]) \
+    scopes = ", ".join(re.findall(r"'([^']+)'", m.group(1)) or [x.strip(BLANKS) for x in m.group(1).split(",") if x.strip(BLANKS)]) \
         if m else ""
     env = re.search(r"\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)", out)
     if "(keyring)" in out:
@@ -1020,7 +1082,7 @@ def check_gh_road(host: Host, rep: Report, repo: str | None = None) -> bool:
              if moved else "")
     rep.ok(f"GitHub CLI installed and logged in: this tool acts {who}{where}")
     if found:
-        rep.warn(unused.strip())
+        rep.warn(unused.strip(BLANKS))
     return True
 
 
@@ -1109,9 +1171,9 @@ def token_scopes(host: Host) -> set[str] | None:
         h = re.search(r"^X-Oauth-Scopes:[ \t]*(.*?)\r?$", head, re.M | re.I)
         if not h:
             return None
-        return {x.strip() for x in h.group(1).split(",") if x.strip()}
+        return {x.strip(BLANKS) for x in h.group(1).split(",") if x.strip(BLANKS)}
     # R79: newer gh quotes each scope ('repo', 'workflow'); older gh (2.23 on Debian 12) prints them bare.
-    return set(re.findall(r"'([^']+)'", m.group(1))) or {x.strip() for x in m.group(1).split(",") if x.strip()}
+    return set(re.findall(r"'([^']+)'", m.group(1))) or {x.strip(BLANKS) for x in m.group(1).split(",") if x.strip(BLANKS)}
 
 
 # ------------------------------------------------------------------------------------------------------------ G1.4
@@ -1324,7 +1386,7 @@ def check_secrets(gh: GitHub, repo: str, owner_kind: str | None, rep: Report) ->
 
 def parse_meminfo(text: str) -> dict[str, int]:
     out = {}
-    for line in text.splitlines():
+    for line in lines_of(text):
         m = re.match(r"(\w+):\s+(\d+) kB", line)
         if m:
             out[m.group(1)] = int(m.group(2)) * 1024
@@ -1350,9 +1412,9 @@ def survey(host: Host, rep: Report) -> dict:
             rep.warn(no_systemd_words("setup stops before it changes anything."))
     elif s["system"] == "Darwin":
         rc, out = host.run(["sw_vers", "-productVersion"])
-        s["os"] = f"macOS {out.strip()}" if rc == 0 else "macOS"
+        s["os"] = f"macOS {out.strip(BLANKS)}" if rc == 0 else "macOS"
         rc, out = host.run(["sysctl", "-n", "hw.memsize"])
-        s["mem"] = int(out.strip()) if rc == 0 and out.strip().isdigit() else None
+        s["mem"] = int(out.strip(BLANKS)) if rc == 0 and out.strip(BLANKS).isdigit() else None
         s["mem_avail"] = None
         rc, out = host.run(["sysctl", "-n", "vm.swapusage"])
         m = re.search(r"used = ([\d.]+)M", out) if rc == 0 else None
@@ -1416,7 +1478,7 @@ def virtual_disk(host: Host, block: str) -> bool:
         if v and VIRTUAL_VENDORS.search(v):
             return True
     rc, out = host.run(["systemd-detect-virt", "--vm"])
-    return rc == 0 and out.strip() not in ("", "none")
+    return rc == 0 and out.strip(BLANKS) not in ("", "none")
 
 
 def disk_kind(host: Host, path: str) -> str:
@@ -1435,10 +1497,10 @@ def disk_kind(host: Host, path: str) -> str:
             continue
         seen.add(d)
         rot = host.read(f"{d}/queue/rotational")
-        if rot is not None and rot.strip() in ("0", "1"):
+        if rot is not None and rot.strip(BLANKS) in ("0", "1"):
             if virtual_disk(host, d):
                 return VIRTUAL_DISK
-            return "spinning disk" if rot.strip() == "1" else "SSD"
+            return "spinning disk" if rot.strip(BLANKS) == "1" else "SSD"
         slaves = host.listdir(f"{d}/slaves")
         todo += [host.realpath(f"/sys/class/block/{x}") for x in slaves]
         parent = os.path.dirname(d)
@@ -1454,7 +1516,7 @@ def has_battery(host: Host) -> bool | None:
     if host.system() != "Linux":
         return None
     for name in host.listdir("/sys/class/power_supply"):
-        if (host.read(f"/sys/class/power_supply/{name}/type") or "").strip() == "Battery":
+        if (host.read(f"/sys/class/power_supply/{name}/type") or "").strip(BLANKS) == "Battery":
             return True
     return False
 
@@ -1469,7 +1531,7 @@ def sleep_delay(host: Host) -> int | None:
     if host.system() != "Linux":
         return None
     rc, out = host.run(LOGIND_DELAY)
-    m = re.fullmatch(r"t (\d+)", out.strip()) if rc == 0 else None
+    m = re.fullmatch(r"t (\d+)", out.strip(BLANKS)) if rc == 0 else None
     return int(m.group(1)) // 1_000_000 if m else None
 
 
@@ -1488,11 +1550,11 @@ def power_source(host: Host) -> str | None:
         return None
     battery, outside = False, False
     for name in host.listdir("/sys/class/power_supply"):
-        kind = (host.read(f"/sys/class/power_supply/{name}/type") or "").strip()
+        kind = (host.read(f"/sys/class/power_supply/{name}/type") or "").strip(BLANKS)
         if kind == "Battery":
             battery = True
         elif kind in ("Mains", "USB", "USB_C", "USB_PD") and \
-                (host.read(f"/sys/class/power_supply/{name}/online") or "").strip() == "1":
+                (host.read(f"/sys/class/power_supply/{name}/online") or "").strip(BLANKS) == "1":
             outside = True
     return "battery" if battery and not outside else "mains"
 
@@ -1505,8 +1567,8 @@ def has_lid(host: Host) -> bool | None:
 
 
 def default_route_iface(route_text: str) -> str | None:
-    for line in route_text.splitlines()[1:]:
-        f = line.split()
+    for line in lines_of(route_text)[1:]:
+        f = words_of(line)
         if len(f) > 2 and f[1] == "00000000":
             return f[0]
     return None
@@ -1531,7 +1593,7 @@ def sleep_setting(host: Host) -> str | None:
         return "off (never sleeps by itself)" if m.group(1) == "0" else f"after {m.group(1)} min idle"
     if host.system() == "Linux" and host.which("systemctl"):
         # R167 (rule 30, ONE CALL, ONE UNIT): each target read by a call of its own
-        states = [(host.run(systemctl("is-enabled", t))[1].split() or [""])[0] for t in ("sleep.target", "suspend.target")]
+        states = [(words_of(host.run(systemctl("is-enabled", t))[1]) or [""])[0] for t in ("sleep.target", "suspend.target")]
         if all(x == "masked" for x in states):
             return "off (sleep and suspend masked)"
         if any(states):
@@ -1548,8 +1610,8 @@ UPKEEP_PORTS = {22: "remote login", 53: "name service", 67: "address service", 6
 def listening_ports(tcp_text: str) -> set[int]:
     """Ports in LISTEN state (0A) on an address other than loopback, from /proc/net/tcp or tcp6."""
     ports = set()
-    for line in tcp_text.splitlines()[1:]:
-        f = line.split()
+    for line in lines_of(tcp_text)[1:]:
+        f = words_of(line)
         if len(f) < 4 or f[3] != "0A":
             continue
         addr, port = f[1].rsplit(":", 1)
@@ -1575,7 +1637,7 @@ def what_lives_here(host: Host, rep: Report, show_names: bool = False) -> dict:
     elif host.system() == "Darwin":
         rc, text = host.run(["netstat", "-an", "-p", "tcp"])
         if rc == 0:
-            for line in text.splitlines():
+            for line in lines_of(text):
                 m = re.match(r"tcp\S*\s+\d+\s+\d+\s+(\S+)\.(\d+)\s+\S+\s+LISTEN", line)
                 if m and not m.group(1).startswith(("127.", "::1")):
                     out["ports"].add(int(m.group(2)))
@@ -1585,28 +1647,28 @@ def what_lives_here(host: Host, rep: Report, show_names: bool = False) -> dict:
             if rc != 0:
                 rep.warn(f"{tool} is installed but its containers could not be listed from this account")
             elif tool == "podman":
-                out["containers"] += [f"{x} (podman, yours)" for x in text.split()]
+                out["containers"] += [f"{x} (podman, yours)" for x in words_of(text)]
             else:
                 # docker's service is shared by every account allowed to use it: counted, not named
-                out["shared_containers"] += len(text.split())
+                out["shared_containers"] += len(words_of(text))
     if host.system() == "Linux" and host.which("systemctl"):
         rc, text = host.run(systemctl("list-units", "--all", "--plain", "--no-legend",
                                      "actions.runner.*"))
         if rc == 0:
             me = host.user()
-            for unit in [x.split()[0] for x in text.splitlines() if x.strip()]:
+            for unit in [words_of(x)[0] for x in lines_of(text) if x.strip(BLANKS)]:
                 if unit in ours:
                     out["ours"].append(unit)
                     continue
                 urc, owner = host.run(systemctl("show", "-p", "User", "--value", unit))
-                if urc == 0 and owner.strip() == me:
+                if urc == 0 and owner.strip(BLANKS) == me:
                     out["runners"].append(unit)
                 else:
                     out["others_runners"] += 1
     elif host.system() == "Darwin":
         rc, text = host.run(["launchctl", "list"])
         if rc == 0:
-            out["runners"] = [x.split()[-1] for x in text.splitlines() if "actions.runner." in x]
+            out["runners"] = [words_of(x)[-1] for x in lines_of(text) if "actions.runner." in x]
     ports = sorted(out["ports"])
     # R75: the computer's own upkeep (remote login and the like) is normal on every Linux machine: an ok line that
     # says what it is, so an agent does not turn it into a question for the person; any other port stays a warn.
@@ -1666,14 +1728,14 @@ def strip_comment(s: str) -> str:
             break
         else:
             out.append(ch)
-    return "".join(out).rstrip()
+    return "".join(out).rstrip(BLANKS)
 
 
 def parse_labels(value: str) -> list[str]:
-    v = value.strip()
+    v = value.strip(BLANKS)
     if v.startswith("[") and v.endswith("]"):
         v = v[1:-1]
-        return [x.strip().strip("'\"") for x in v.split(",") if x.strip()]
+        return [x.strip(BLANKS).strip("'\"") for x in v.split(",") if x.strip(BLANKS)]
     return [v.strip("'\"")] if v else []
 
 
@@ -1693,7 +1755,7 @@ def read_workflow(text: str) -> list[dict]:
     lines they sit on, setup actions, sudo, container and services, its name, environment, the secrets it names and
     the steps that publish. Not a YAML parser: anything it cannot follow is reported as not read."""
     jobs: list[dict] = []
-    lines = text.splitlines()
+    lines = yaml_lines(text)
     in_jobs = False
     job_indent = None
     job = None
@@ -1703,10 +1765,10 @@ def read_workflow(text: str) -> list[dict]:
         line = strip_comment(raw)
         at = i
         i += 1
-        if not line.strip():
+        if not line.strip(BLANKS):
             continue
         indent = len(line) - len(line.lstrip(" "))
-        body = line.strip()
+        body = line.strip(BLANKS)
         if indent == 0:
             in_jobs = body == "jobs:"
             job = None
@@ -1735,16 +1797,16 @@ def read_workflow(text: str) -> list[dict]:
             job["environment"] = True
         m = re.match(r"^name:\s*(.+)$", body)
         if top and m:
-            job["name"] = m.group(1).strip().strip("'\"")
+            job["name"] = m.group(1).strip(BLANKS).strip("'\"")
         m = re.match(r"^runs-on:\s*(.*)$", body)
         if top and m:
-            val = m.group(1).strip()
+            val = m.group(1).strip(BLANKS)
             if val == "":
                 labels = []
                 while i < len(lines):
-                    nxt = strip_comment(lines[i]).strip()
+                    nxt = strip_comment(lines[i]).strip(BLANKS)
                     if nxt.startswith("- "):
-                        labels.append(nxt[2:].strip().strip("'\""))
+                        labels.append(nxt[2:].strip(BLANKS).strip("'\""))
                         i += 1
                     else:
                         break
@@ -1771,7 +1833,7 @@ def read_triggers(text: str) -> dict:
     """The workflow's `on:` events, and whether a push of a tag starts it (G3.3)."""
     events: set[str] = set()
     tag_push = False
-    lines = text.splitlines()
+    lines = yaml_lines(text)
     i = 0
     while i < len(lines):
         line = strip_comment(lines[i])
@@ -1779,7 +1841,7 @@ def read_triggers(text: str) -> dict:
         m = re.match(r"^(?:on|\"on\"|'on'|true):\s*(.*)$", line)
         if not m:
             continue
-        val = m.group(1).strip()
+        val = m.group(1).strip(BLANKS)
         if val:
             events |= set(parse_labels(val))
             break
@@ -1787,20 +1849,20 @@ def read_triggers(text: str) -> dict:
         current = None
         while i < len(lines):
             sub = strip_comment(lines[i])
-            if sub.strip() and len(sub) - len(sub.lstrip(" ")) == 0:
+            if sub.strip(BLANKS) and len(sub) - len(sub.lstrip(" ")) == 0:
                 break
             i += 1
-            if not sub.strip():
+            if not sub.strip(BLANKS):
                 continue
             ind = len(sub) - len(sub.lstrip(" "))
-            body = sub.strip()
+            body = sub.strip(BLANKS)
             if ev_indent is None:
                 ev_indent = ind
             if ind == ev_indent:
                 if body.startswith("- "):
-                    events.add(body[2:].strip().strip("'\""))
+                    events.add(body[2:].strip(BLANKS).strip("'\""))
                     continue
-                current = body.split(":", 1)[0].strip().strip("'\"")
+                current = body.split(":", 1)[0].strip(BLANKS).strip("'\"")
                 events.add(current)
             elif current == "push" and re.match(r"^tags(?:-ignore)?:", body):
                 tag_push = True
@@ -1854,7 +1916,8 @@ def look_job_line(path: str, triggers: dict, job: dict, survey_: dict, repo: str
         if odd(which):  # rule 31 (vi): no command can name it on one line; renaming it is the step that is left
             return "warn", (f"publishes or deploys ({words}): it is left as it is, and moves only with your word for "
                             f"this job; the name of its {'workflow file' if odd(os.path.basename(path)) else 'job'} "
-                            f"({which}) holds a character a line breaks on or a terminal acts on, so no command can "
+                            f"({which}) holds a character a line breaks on or a terminal acts on, or that cannot be "
+                            f"seen, so no command can "
                             f"name it and it cannot be typed on one line: rename the "
                             f"{'file' if odd(os.path.basename(path)) else 'job'} on GitHub to a name without it, then "
                             f"run {C0}look {repo}{C1} again")
@@ -1876,12 +1939,9 @@ def check_workflows(gh: GitHub, repo: str, survey_: dict, rep: Report) -> list[d
         if not f.get("name", "").endswith((".yml", ".yaml")):
             continue
         fs, fd = gh.api("GET", f"repos/{repo}/contents/{f['path']}")
-        try:
-            text = base64.b64decode((fd or {}).get("content", "")).decode("utf-8")
-        except (ValueError, UnicodeDecodeError):
-            text = None
+        text, why = workflow_text(fd)
         if fs == 200 and text is None:
-            rep.warn(f"{f['path']}: {NOT_TEXT}")
+            rep.warn(f"{f['path']}: {why}, so this tool neither reads nor changes it")
             continue
         if fs != 200:
             rep.warn(f"{f['path']}: could not read (GitHub answered HTTP {fs})")
@@ -1903,7 +1963,7 @@ def read_cost_rule(page: str) -> list[str] | None:
     """The items of GitHub's list of uses that do not reduce the included usage, or None when it is not found."""
     text = page.split("__NEXT_DATA__")[0]
     text = html.unescape(re.sub(r"<[^>]+>", "\n", text))
-    lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines()]
+    lines = [re.sub(r"\s+", " ", x).strip() for x in lines_of(text)]  # a page's words for a quote, not items
     lines = [x for x in lines if x]
     try:
         i = lines.index(COST_LIST_HEAD)
@@ -1911,7 +1971,7 @@ def read_cost_rule(page: str) -> list[str] | None:
         return None
     items, cur = [], ""
     for x in lines[i + 1:i + 12]:
-        cur = (cur + " " + x).strip() if cur else x
+        cur = (cur + " " + x).strip(BLANKS) if cur else x
         if cur.endswith("."):
             items.append(cur.replace(" .", "."))
             cur = ""
@@ -2043,7 +2103,7 @@ def last_journal_step(host: Host) -> str:
     """The journal's last step, for a stop line when the tool fails or is interrupted (G8.3)."""
     try:
         with open(os.path.join(host.state_dir(), "journal.log"), encoding="utf-8") as f:
-            lines = [x.strip() for x in f if x.strip()]
+            lines = [x.strip(BLANKS) for x in f if x.strip(BLANKS)]
     except OSError:
         return "none written yet"
     if not lines:
@@ -2059,7 +2119,7 @@ def journal(host: Host, step: str, detail: str = "") -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8") as f:
         line, changed = plain(_COMMAND.sub(lambda m: m.group(1), f"{step} {detail}"))  # rule 31: a log line too
-        f.write(f"{host.now().strftime('%Y-%m-%dT%H:%M:%SZ')} {line}".rstrip() + (" " + SHOWN_CHANGED if changed
+        f.write(f"{host.now().strftime('%Y-%m-%dT%H:%M:%SZ')} {line}".rstrip(BLANKS) + (" " + SHOWN_CHANGED if changed
                                                                                    else "") + "\n")
 
 
@@ -2229,7 +2289,7 @@ def unit_named_by_runner(host: Host, folder: str, runner_name: str | None) -> st
         named = unit_name(folder, runner_name) if runner_name else ""
         return named if named and root_test(host, unit_path(named)) is not False else ""
     rc, named = as_runner(host, ["cat", f"{folder}/.service"])  # R128: as the runner user
-    return named.strip() if rc == 0 and re.fullmatch(UNIT_RE, named.strip()) else ""
+    return named.strip(BLANKS) if rc == 0 and re.fullmatch(UNIT_RE, named.strip(BLANKS)) else ""
 
 
 def unit_text(folder: str, unit: str) -> str:
@@ -2286,8 +2346,8 @@ def mask(text: str, secret: str | None) -> str:
 
 def tail(text: str, n: int = 3) -> str:
     """The last lines a run wrote, for words shown to the person: both streams (R168, said)."""
-    lines = [x.strip() for x in said(text).splitlines() if x.strip()]
-    return " / ".join(lines[-n:])
+    got = [x.strip(BLANKS) for x in lines_of(said(text)) if x.strip(BLANKS)]
+    return " / ".join(got[-n:])
 
 
 def check_fresh_look(host: Host, repo: str, rep: Report) -> dict | None:
@@ -2373,16 +2433,16 @@ def runner_user_state(host: Host) -> tuple[str, str]:
     "no such user" are on the list of phrases, not seen on a Mac yet."""
     if host.system() == "Darwin":
         rc, out = host.run(["id", "-u", RUNNER_USER])
-        if rc == 0 and out.strip().isdigit():
-            return "there", out.strip()
+        if rc == 0 and out.strip(BLANKS).isdigit():
+            return "there", out.strip(BLANKS)
         if rc == 1 and "no such user" in said(out).lower():  # R168: id says so on its standard error
             return "absent", ""
         return "unread", tail(out) or f"exit {rc}"
     rc, out = host.run(["getent", "passwd", RUNNER_USER])
-    fields = out.strip().split(":") if rc == 0 else []
+    fields = out.strip(BLANKS).split(":") if rc == 0 else []
     if rc == 0 and len(fields) >= 7 and fields[0] == RUNNER_USER and fields[2].isdigit():
         return "there", fields[2]
-    if rc == 2 and not out.strip():
+    if rc == 2 and not out.strip(BLANKS):
         return "absent", ""
     return "unread", tail(out) or f"getent answered code {rc}"
 
@@ -2406,8 +2466,8 @@ def mounts_inside(host: Host, folder: str) -> list[str]:
     The mount table is read as you (/proc/self/mountinfo, field 5 is the mount point, made for programs)."""
     text = host.read("/proc/self/mountinfo") or ""
     out = []
-    for line in text.splitlines():
-        f = line.split()
+    for line in lines_of(text):
+        f = words_of(line)
         if len(f) > 4:
             where = f[4].replace("\\040", " ")
             if where.startswith(folder.rstrip("/") + "/"):
@@ -2499,12 +2559,12 @@ def left_schedules(host: Host) -> tuple[list[tuple[str, str]], list[str]]:
             unread.append(f"the at jobs in {at} (find answered code {rc})")
         else:
             jobs, odd = {}, 0
-            for line in out.splitlines():
-                f = line.split()
+            for line in lines_of(out):
+                f = words_of(line)
                 m = AT_FILE.match(f[0]) if len(f) == 2 and f[1].isdigit() else None
                 if m:
                     jobs.setdefault(int(m.group(1), 16), f[1])
-                elif line.strip():
+                elif line.strip(BLANKS):
                     odd += 1
             if odd:
                 unread.append(f"{odd} file(s) in {at} whose owner has no user and whose name is not at's own form")
@@ -2538,7 +2598,9 @@ def schedules_stayed(found: list[tuple[str, str]], unread: list[str]) -> str:
 NOT_OURS_USER = (f"a user named {RUNNER_USER} is already on this computer, and this tool did not make it (its record "
                  "here says so): nothing is touched. This tool never takes over, or removes, a user it did not make. If "
                  f"you know it is left from an earlier copy of this tool, your next step: remove it yourself first (sudo "
-                 f"userdel -r {RUNNER_USER}); then run the same command again; if not, open an issue")
+                 f"userdel -r {RUNNER_USER}); then run the same command again. If it is someone else's user, this "
+                 f"version cannot run on this computer: its runner's user must be named {RUNNER_USER}, and that name "
+                 "is taken here")
 
 
 def runner_user_is_ours_or_absent(host: Host, rep: Report) -> bool:
@@ -2615,7 +2677,7 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
     else:
         rep.ok(f"the user {RUNNER_USER} is there already (made by this tool, as its record here says)")
     rc, out = host.run(["id", "-nG", RUNNER_USER])
-    groups = set(out.split()) if rc == 0 else set()
+    groups = set(words_of(out)) if rc == 0 else set()
     extra = groups - {RUNNER_USER}
     if rc != 0 or extra & ADMIN_LIKE_GROUPS or extra:
         rep.stop(f"{RUNNER_USER} is in other groups ({', '.join(sorted(extra)) or answer_or_words(out)}): a runner user must be "
@@ -2625,7 +2687,7 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
     journal(host, "chmod", f"0750 {home}")
     sudo(host, ["chmod", "0750", home])
     rc, out = sudo(host, ["stat", "-c", "%a", home])
-    if rc != 0 or out.strip() != "750":
+    if rc != 0 or out.strip(BLANKS) != "750":
         rep.stop(f"the runner's home {home} is not closed to others (mode {answer_or_words(out)}). Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rep.ok(f"{RUNNER_USER}: in its own group only, no admin rights, its home closed to others (750)")
@@ -2725,7 +2787,7 @@ ROOTS_COPY_RE = r"/tmp/minions-download\.[A-Za-z0-9]{8}"
 
 def unpack_from_roots_copy(host: Host, rel: dict, tmp: str, folder: str, rep: Report) -> bool:
     rc, made = sudo(host, ["mktemp", "-d", "/tmp/minions-download.XXXXXXXX"])
-    d = made.strip()
+    d = made.strip(BLANKS)
     if rc != 0 or not re.fullmatch(ROOTS_COPY_RE, d):
         rep.stop(f"could not make a folder of root's own for the download ({tail(made)}): nothing unpacked. Settle what "
                  "it says, then run the same command again")
@@ -2768,7 +2830,7 @@ def package_list(host: Host) -> set[str] | None:
             rc, out = host.run(argv, timeout=120)
             if rc != 0:
                 return None
-            return {x.split()[1] for x in out.splitlines() if len(x.split()) == 2 and x.split()[0] == "installed"}
+            return {words_of(x)[1] for x in lines_of(out) if len(words_of(x)) == 2 and words_of(x)[0] == "installed"}
     return None
 
 
@@ -2847,7 +2909,7 @@ def lock_credentials(host: Host, folder: str, rep: Report) -> bool:
     journal(host, "chmod", "0600 credential files")
     as_runner(host, ["chmod", "0600"] + files)  # R128: the runner's own files, as the runner user (rule 28)
     rc, out = as_runner(host, ["stat", "-c", "%a %U %n"] + files)
-    rows = [x.split(None, 2) for x in out.splitlines() if x.strip()]
+    rows = [words_of(x, 2) for x in lines_of(out) if x.strip(BLANKS)]
     if rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
         rep.stop(f"the runner's credential files are not its own only: {tail(out, 3)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
@@ -2868,9 +2930,9 @@ def swap_cap_read(host: Host) -> tuple[str, str]:
         return "unread", (f"could not read whether jobs are kept out of swap: {SWAP_MAX_FILE} is not there (this "
                           "computer does not count swap for each group of processes, or the slice is not running). "
                           + after)
-    if v.strip() == "0":
+    if v.strip(BLANKS) == "0":
         return "kept", "jobs are kept out of this computer's swap, read back from the running slice"
-    return "not kept", (f"this computer did not keep jobs out of swap: the running slice reads {v.strip()} for its swap "
+    return "not kept", (f"this computer did not keep jobs out of swap: the running slice reads {v.strip(BLANKS)} for its swap "
                         "cap, not 0. " + after)
 
 
@@ -2894,12 +2956,12 @@ def change_limits(host: Host, repo: str, known: dict, lim: dict, rep: Report) ->
     sudo(host, systemctl("daemon-reload"))
     rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh",
                                  "-p", "MemorySwapMax"))
-    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    got = dict(x.split("=", 1) for x in lines_of(out) if "=" in x)
     want = {"CPUQuotaPerSecUSec": f"{lim['cores']}s", "MemoryMax": str(lim["MemoryMax"]),
             "MemoryHigh": str(lim["MemoryHigh"])}
     if "MemorySwapMax" in lim:
         want["MemorySwapMax"] = str(lim["MemorySwapMax"])
-    off = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
+    off = [f"{k}={as_read(got.get(k))}" for k, v in want.items() if got.get(k) != v]
     if off:
         rep.stop(f"{SLICE} was written but systemd reads {', '.join(off)}: the new limits are not in force. Run the "
                  "same command again; doctor says what differs")
@@ -2957,10 +3019,10 @@ def install_service(host: Host, folder: str, unit: str, survey_: dict, rep: Repo
             return None
     rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
                                   "-p", "Wants", "-p", "UnitFileState", "-p", "User", "-p", "OOMPolicy"))
-    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    got = dict(x.split("=", 1) for x in lines_of(out) if "=" in x)
     want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
             "User": RUNNER_USER, "OOMPolicy": "continue"}
-    bad = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
+    bad = [f"{k}={as_read(got.get(k))}" for k, v in want.items() if got.get(k) != v]
     if "network-online.target" not in got.get("Wants", ""):
         bad.append("Wants has no network-online.target")
     if bad:
@@ -2981,7 +3043,7 @@ def both_sides(gh: GitHub, host: Host, repo: str, name: str, unit: str, labels: 
         s, d = gh.api("GET", f"repos/{repo}/actions/runners?per_page=100")
         mine = [r for r in ((d or {}).get("runners", []) if s == 200 else []) if r.get("name") == name]
         rc, active = host.run(systemctl("is-active", unit))
-        active = answer_or_words(active) if rc != 0 and not active.strip() else active.strip()
+        active = answer_or_words(active) if rc != 0 and not active.strip(BLANKS) else active.strip(BLANKS)
         if mine:
             r = mine[0]
             got = sorted(x.get("name") for x in r.get("labels", []))
@@ -3320,7 +3382,7 @@ def keep_jobs_record(host: Host, records: str, rep: Report) -> str | bool:
     text, why = None, "whether it is there could not be read"
     if there:
         rc, kind = as_runner(host, ["stat", "-c", "%F", path])
-        kind = kind.strip()
+        kind = kind.strip(BLANKS)
         if rc == 0 and kind not in ("regular file", "regular empty file"):
             rep.warn(f"{path} is a {kind}, not the file this tool's job hooks write: it is not followed or copied to "
                      "your record, and is deleted with its folder")
@@ -3383,7 +3445,7 @@ def delete_record_if_typed(host: Host, rep: Report) -> None:
                  "there and type delete when it asks; until then it is kept", blocks=False)
         return
     word = host.ask(f"Type delete to delete your record of what this tool did ({d}), or press Enter to keep it: ")
-    if word.strip() != "delete":
+    if word.strip(BLANKS) != "delete":
         rep.ok(f"your record ({d}) is kept, as you chose")
         return
     left = host.delete_record() or []
@@ -3556,7 +3618,7 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
     sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", HOOKS_ROOT, d])
     # G5.7, G5.14: the jobs' records, written by the runner, read by you (nothing secret in them).
     rc, grp_ = host.run(["id", "-gn"])
-    group = grp_.strip() if rc == 0 and grp_.strip() else host.user()
+    group = grp_.strip(BLANKS) if rc == 0 and grp_.strip(BLANKS) else host.user()
     sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", RECORDS_ROOT])
     sudo(host, ["install", "-d", "-o", RUNNER_USER, "-g", group, "-m", "2750", records_dir_of(folder)])
     # G5.15: where the watch, as you, writes when it last read the repository private; the runner reads it.
@@ -3570,7 +3632,7 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
             return False
     rc, env = as_runner(host, ["cat", f"{folder}/.env"])  # R128: read as the runner user, never followed by root
     # R143: the locale every job gets is the tool's (C.UTF-8), never one that came from a person's shell
-    keep = [x for x in (env.splitlines() if rc == 0 else [])
+    keep = [x for x in (lines_of(env) if rc == 0 else [])
             if not x.startswith(("ACTIONS_RUNNER_HOOK_JOB_", "LANG=", "LANGUAGE=", "LC_"))]
     keep = ["LANG=C.UTF-8"] + keep
     keep += [f"ACTIONS_RUNNER_HOOK_JOB_STARTED={d}/job-started.sh", f"ACTIONS_RUNNER_HOOK_JOB_COMPLETED={d}/job-completed.sh"]
@@ -3579,7 +3641,7 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
         rep.stop(f"could not name the job hooks in {folder}/.env: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rc, out = sudo(host, ["stat", "-c", "%a %U", f"{d}/job-started.sh", f"{d}/job-completed.sh"])
-    if rc != 0 or [x.strip() for x in out.splitlines() if x.strip()] != ["755 root", "755 root"]:
+    if rc != 0 or [x.strip(BLANKS) for x in lines_of(out) if x.strip(BLANKS)] != ["755 root", "755 root"]:
         rep.stop(f"the job hooks are not root's and read-only to the runner: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     rep.ok("after each job its work folder is emptied, and during a job this computer does not fall asleep by "
@@ -3602,7 +3664,7 @@ def check_disk_floor(free: int | None, rep: Report, what: str) -> bool:
 def runner_version(host: Host, folder: str, rep: Report) -> str | None:
     """G4.5: the runner's own self-update stays on (setup never passes --disableupdate); its version is read."""
     rc, out = as_runner(host, [f"{folder}/bin/Runner.Listener", "--version"])
-    v = out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else None
+    v = lines_of(out.strip(" \t\n"))[-1].strip(BLANKS) if rc == 0 and out.strip(" \t\n") else None
     if v and re.fullmatch(r"\d+\.\d+\.\d+", v):
         rep.ok(f"runner version {v}; GitHub's own self-update stays on")
         return v
@@ -3631,7 +3693,7 @@ def pgrep_read(host: Host, argv: list[str]) -> list[str]:
     """R167: pgrep's three answers: exit 0 is the list, exit 1 is none, anything else could not be read (raised)."""
     rc, out = host.run(argv)
     if rc == 0:
-        return [x for x in out.split() if x.isdigit()]
+        return [x for x in words_of(out) if x.isdigit()]
     if rc == 1:
         return []
     first = last_line(out)
@@ -3728,7 +3790,7 @@ def _stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool)
                                                               f"end them by their PIDs ({C0}sudo kill {pids}{C1}); then run "
                                                               "the same command again"))
         return False
-    word = active.strip().splitlines()[0].strip() if active.strip() else ""
+    word = lines_of(active.strip(" \t\n"))[0].strip(BLANKS) if active.strip(" \t\n") else ""
     if word in RUNNING_WORDS:  # R167 (rule 30): "stopped" only from a stopped word, as seen after real stops
         rep.stop(f"the runner's service reads {word} after its stop, though no process of it is left: it is not "
                  "called stopped, and nothing will start it again. " + unit_next(unit, ("running", word), "run the same command again"))
@@ -3744,7 +3806,7 @@ def _stop_runner(host: Host, unit: str, folder: str, rep: Report, drained: bool)
 def start_runner(host: Host, unit: str, folder: str, rep: Report) -> bool:
     """G4.7: started only when no process of this runner is left, so two copies never run."""
     rc, active = host.run(systemctl("is-active", unit))
-    if active.strip() == "active":
+    if active.strip(BLANKS) == "active":
         return True
     try:
         left = runner_pids(host, folder)
@@ -3976,7 +4038,7 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
         rep.stop(f"this computer runs on battery, so the runner stays held (the default for a laptop): plug it in "
                  f"and the hold lifts by itself, or {C0}resume {repo} --on-battery-too{C1} to take jobs on battery")
         return rep.code()
-    if host.run(systemctl("is-active", mine["unit"]))[1].strip() != "active" and not admin():
+    if host.run(systemctl("is-active", mine["unit"]))[1].strip(BLANKS) != "active" and not admin():
         return rep.code()
     if not start_runner(host, mine["unit"], mine["folder"], rep):
         return rep.code()
@@ -4063,14 +4125,14 @@ def minutes(seconds: float) -> str:
 
 
 def boot_id(host: Host) -> str:
-    return (host.read("/proc/sys/kernel/random/boot_id") or "").strip()
+    return (host.read("/proc/sys/kernel/random/boot_id") or "").strip(BLANKS)
 
 
 def survey_words(data: dict, repo: str) -> str:
     """G5.1: the minion's OS and architecture from its own survey, never from GitHub's list (`unknown` there)."""
     s = ((data.get("looks") or {}).get(repo) or {}).get("survey") or {}
     os_ = s.get("os") or s.get("system") or "OS not surveyed"
-    return f"{os_} {s.get('machine') or ''}".strip() + " (from this computer's own survey)"
+    return f"{os_} {s.get('machine') or ''}".strip(BLANKS) + " (from this computer's own survey)"
 
 
 def computer_side(host: Host, mine: dict) -> tuple[str, list[int], dt.datetime]:
@@ -4401,7 +4463,7 @@ def last_job_line(host: Host, repo: str, mine: dict, now: dt.datetime) -> tuple[
     text = host.read(path)
     if text is None and host.there(path) is not False:  # no admin rights: the watch runs this too
         return "warn", f"when GitHub last handed a job of {repo} to this runner could not be read here ({path})"
-    starts = [x.split(" ", 5) for x in (text or "").splitlines() if x.startswith("start ")]
+    starts = [x.split(" ", 5) for x in lines_of(text or "") if x.startswith("start ")]
     starts = [x for x in starts if len(x) == 6 and x[1].isdigit()]
     if not starts:
         return "ok", (f"GitHub has not handed this runner a job of {repo} yet. A job GitHub does not hand over (a "
@@ -4415,7 +4477,7 @@ def last_job_line(host: Host, repo: str, mine: dict, now: dt.datetime) -> tuple[
 def read_records(host: Host, folder: str) -> list[dict]:
     """The job hooks' lines (G5.7, G5.14): each start, with its end if the computer saw one."""
     jobs: list[dict] = []
-    for line in (host.read(records_dir_of(folder) + "/jobs.log") or "").splitlines()[-4 * RECORDS_KEPT:]:
+    for line in lines_of(host.read(records_dir_of(folder) + "/jobs.log") or "")[-4 * RECORDS_KEPT:]:
         parts = line.split(" ", 5)
         if len(parts) < 6 or parts[0] not in ("start", "end", "refused-public", "refused-stale") or \
                 not parts[1].isdigit():
@@ -4449,16 +4511,16 @@ def computer_record(host: Host, unit: str) -> dict:
     slept, and the slice's kill count now."""
     rc, out = host.run(systemctl("show", unit, "-p", "ActiveEnterTimestamp", "-p", "InactiveEnterTimestamp",
                                  "--timestamp=unix"))
-    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x) if rc == 0 else {}
+    got = dict(x.split("=", 1) for x in lines_of(out) if "=" in x) if rc == 0 else {}
     m = re.search(r"^btime (\d+)$", host.read("/proc/stat") or "", re.M)
     rc, out = host.run(journalctl("-u", "systemd-suspend.service", "-o", "short-unix", "--since", "-3d"))
-    sleeps = [int(float(x.split()[0])) for x in (out.splitlines() if rc == 0 else [])
+    sleeps = [int(float(words_of(x)[0])) for x in (lines_of(out) if rc == 0 else [])
               if re.search(SLEEP_ENTERED, x) and re.match(r"^\d+(\.\d+)?\s", x)]
     oom = re.search(r"^oom_kill (\d+)$", host.read(MEMORY_EVENTS) or "", re.M)
     # systemd keeps only the LAST start and stop times (seen: a reboot replaced the record of an earlier stop), so
     # every stop of the runner's unit is also read from its journal.
     rc, out = host.run(journalctl("-u", unit, "-o", "short-unix", "--since", "-3d"))
-    stops = [int(float(entry.split()[0])) for entry in (out.splitlines() if rc == 0 else [])
+    stops = [int(float(words_of(entry)[0])) for entry in (lines_of(out) if rc == 0 else [])
              if re.match(r"^\d+(\.\d+)?\s", entry)
              and re.search(r"Stopping |Stopped |Failed with result|Deactivated", entry)]
     for k in ("ActiveEnterTimestamp", "InactiveEnterTimestamp"):
@@ -4611,7 +4673,7 @@ def our_leftover_holds(host: Host, pids: list[str]) -> list[str]:
         return [x for x in (host.read(f"/proc/{pid}/cmdline") or "").split("\0") if x]
     def ppid(pid: str) -> str:
         st = host.read(f"/proc/{pid}/stat") or ""
-        rest = st.rsplit(")", 1)[-1].split()
+        rest = words_of(st.rsplit(")", 1)[-1])
         return rest[1] if len(rest) > 1 else ""
     inhibitors = {p for p in pids if (a := argv(p)) and os.path.basename(a[0]) == "systemd-inhibit"
                   and "--who=Windstorm Repo Minions" in a}
@@ -4771,7 +4833,7 @@ def memory_held_pass(host: Host, mine: dict, data: dict) -> None:
         if full:
             held = float(full.group(1)) >= HELD_FULL_PCT
         else:
-            cur, top = (host.read(MEMORY_CURRENT) or "").strip(), (host.read(MEMORY_HIGH) or "").strip()
+            cur, top = (host.read(MEMORY_CURRENT) or "").strip(BLANKS), (host.read(MEMORY_HIGH) or "").strip(BLANKS)
             held = cur.isdigit() and top.isdigit() and int(cur) >= 0.95 * int(top)
     if held:
         h = mine.get("memory_held") or {"since": stamp(host.now()), "passes": 0}
@@ -4821,7 +4883,7 @@ def offline_while_running(host: Host, mine: dict, r: dict, data: dict) -> None:
     """G11.4 (R74): since when GitHub has shown our runner offline while its service runs here with no job process.
     The watch only writes it down (it has no admin rights and restarts nothing); `status` names it first."""
     rc, active = host.run(systemctl("is-active", mine.get("unit") or "none"))
-    stuck = (r.get("status") != "online" and active.strip() == "active"
+    stuck = (r.get("status") != "online" and active.strip(BLANKS) == "active"
              and not pids_or_unread(host, mine.get("folder") or "", "Runner.Worker"))
     if stuck and not mine.get("offline_since"):
         mine["offline_since"] = stamp(host.now())
@@ -5036,7 +5098,7 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
         journal(host, " ".join(argv))
         sudo(host, argv)
     rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
-    if active.strip() != "active":
+    if active.strip(BLANKS) != "active":
         rep.stop(f"the watch's timer is not active ({answer_or_words(active)}). Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     data = load_state(host)
@@ -5056,7 +5118,7 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
     sudo(host, systemctl("start", f"{WATCH_UNIT}.service"))
     w = load_state(host).get("watch") or {}
     b = (w.get("blind") or {}).get(repo)
-    seen = (host.read(seen_path(load_state(host)["runners"][repo]["folder"])) or "").strip()
+    seen = (host.read(seen_path(load_state(host)["runners"][repo]["folder"])) or "").strip(BLANKS)
     if w.get("pass") in (None, before):
         rep.stop(f"the watch's first pass wrote nothing: read {C0}journalctl -u {WATCH_UNIT}.service{C1}")
         return False
@@ -5171,7 +5233,7 @@ def plan_job(path: str, triggers: dict, job: dict, system: str, machine: str, ou
 
 def edit_runs_on(text: str, edits: list[tuple[tuple[int, int], list[str]]]) -> str:
     """Change only the runs-on lines, by line: indent, trailing comment and every other line stay as they were."""
-    lines = text.splitlines(keepends=True)
+    lines = yaml_lines(text, True)
     for (start, end), labels in sorted(edits, reverse=True):
         raw = lines[start]
         nl = raw[len(raw.rstrip("\r\n")):]
@@ -5186,9 +5248,10 @@ def edit_runs_on(text: str, edits: list[tuple[tuple[int, int], list[str]]]) -> s
 
 
 def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report,
-                        not_text: list[str] | None = None) -> list[tuple[str, str]] | None:
-    """The workflow files and their text. A file GitHub would not give is a stop; one whose content is not text is
-    left out and added to not_text, for the caller to name in its own words (rule 31 (vi)), and the others go on."""
+                        not_text: dict[str, str] | None = None) -> list[tuple[str, str]] | None:
+    """The workflow files and their text. A file GitHub would not give is a stop; one whose content is not text, or
+    whose content GitHub's answer does not carry (rule 6), is left out and put in not_text with why (NOT_TEXT_IS or
+    NOT_GIVEN_IS), for the caller to name in its own words (rule 31 (vi)), and the others go on."""
     q = f"?ref={ref}" if ref else ""
     s, d = gh.api("GET", f"repos/{repo}/contents/.github/workflows{q}")
     if s == 404:
@@ -5201,13 +5264,10 @@ def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report,
         if not f.get("name", "").endswith((".yml", ".yaml")):
             continue
         fs, fd = gh.api("GET", f"repos/{repo}/contents/{f['path']}{q}")
-        try:
-            text = base64.b64decode((fd or {}).get("content", "")).decode("utf-8")
-        except (ValueError, UnicodeDecodeError):
-            text = None
+        text, why = workflow_text(fd)
         if fs == 200 and text is None:
             if not_text is not None:
-                not_text.append(f["path"])
+                not_text[f["path"]] = why
             continue
         if fs != 200:
             rep.stop(f"{f['path']}: could not read it (GitHub answered HTTP {fs}); nothing is changed. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
@@ -5316,7 +5376,7 @@ def pr_body(moved: list, left: list, publish: list, here: list, first: list[str]
 
 
 MD_CHANGED = ("(shown changed: a name in this line that this tool did not write held a character a line breaks on "
-              "or a terminal acts on, printed here as ?)")
+              "or a terminal acts on, or that cannot be seen, printed here as ?)")
 
 
 def md_line(line: str) -> str:
@@ -5355,12 +5415,12 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     if not base:
         rep.stop(f"could not read {repo} (HTTP {s}). " + (github_next(s, repo, gh=gh) if spent(gh, s) else "Run the same command again; if it stops here again, GitHub's answer named here is the reason"))
         return rep.code()
-    not_text: list[str] = []
+    not_text: dict[str, str] = {}
     files = read_workflow_files(gh, repo, None, rep, not_text)
     if files is None:
         return rep.code()
-    for path in not_text:
-        rep.warn(f"{path}: {NOT_TEXT}; it stays as it is")
+    for path, why in sorted(not_text.items()):
+        rep.warn(f"{path}: {why}, so this tool neither reads nor changes it; it stays as it is")
     survey_ = entry.get("survey") or {}
     system, machine = survey_.get("system") or host.system(), survey_.get("machine") or host.machine()
     inc = set(include or [])
@@ -5376,7 +5436,7 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
                 edits.append((job["runs_on_at"], labels))
                 start, end = job["runs_on_at"]
                 plan.setdefault(path, []).append({"id": job["id"], "name": job["name"] or job["id"],
-                                                  "runs_on": "".join(text.splitlines(keepends=True)[start:end])})
+                                                  "runs_on": "".join(yaml_lines(text, True)[start:end])})
             (rep.ok if kind in ("move", "here") else rep.warn)(
                 f"{path} job {job['id']}: " + {"move": "moves, ", "left": "stays: ", "publish": "stays, it "
                                                 "publishes or deploys: ", "here": ""}[kind] + words)
@@ -5426,7 +5486,7 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
         return
     merged_at = pr["merged_at"]
     rep.ok(f"pull request #{mv['pr']} was merged at {merged_at}")
-    not_text: list[str] = []
+    not_text: dict[str, str] = {}
     read = read_workflow_files(gh, repo, mv.get("base"), rep, not_text)
     if read is None:
         return
@@ -5436,8 +5496,8 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
     listed: dict | None = None
     for path, wanted_jobs in sorted(mv["files"].items()):
         if path in not_text:
-            rep.stop(f"{path}: {NOT_TEXT_IS} now, so whether its moved jobs ran on a computer of yours cannot be read, "
-                     f"and they are not called moved. Make the file UTF-8 again on GitHub, then run "
+            rep.stop(f"{path}: {not_text[path]} now, so whether its moved jobs ran on a computer of yours cannot be "
+                     f"read, and they are not called moved. {UNREAD_STEP[not_text[path]]}, then run "
                      f"{C0}move {repo} --verify{C1} again")
             all_ok = False
             continue
@@ -5608,7 +5668,7 @@ def root_test(host: Host, path: str) -> bool | None:
 
 def marked_answer(rc: int, out: str) -> bool | None:
     """R167: the marked test's own answer: there, not there, or None (no mark, both, or an exit other than 0)."""
-    marks = {x.strip() for x in out.splitlines()} & {TEST_THERE, TEST_NOT_THERE}
+    marks = {x.strip(BLANKS) for x in lines_of(out)} & {TEST_THERE, TEST_NOT_THERE}
     if rc != 0 or len(marks) != 1:
         return None
     return TEST_THERE in marks
@@ -5653,7 +5713,7 @@ def unit_read(host: Host, unit: str) -> tuple[str, str]:
     never made reads LoadState=loaded). So a slice is gone when it is inactive with no file and no drop-in loaded."""
     rc, out = host.run(systemctl("show", unit, "-p", "LoadState", "-p", "ActiveState", "-p", "FragmentPath",
                                  "-p", "DropInPaths"))
-    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    got = dict(x.split("=", 1) for x in lines_of(out) if "=" in x)
     if rc != 0 or not got.get("ActiveState") or not got.get("LoadState"):
         first = last_line(out)
         return "unread", f"systemctl answered code {rc}: " + (first[:160] or "nothing")
@@ -5743,7 +5803,7 @@ def remove_service(host: Host, mine: dict, rep: Report, again: str = "uninstall"
             unit = unit_named_by_runner(host, folder, mine.get("name"))
         else:
             rc, named = as_runner(host, ["cat", f"{folder}/.service"])
-            unit = named.strip() if rc == 0 else ""
+            unit = named.strip(BLANKS) if rc == 0 else ""
     if unit and not re.fullmatch(UNIT_RE, unit):
         rep.stop(f"the runner's unit name {unit!r} is not one this tool writes: nothing is removed. Check the "
                  "runner's .service file (a job can change it), then run the same command again")
@@ -5934,7 +5994,7 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
     for rp in [r for r in repos if r not in cut]:
         broken += doctor_one(gh, host, rp, data["runners"][rp], rep)
     rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
-    if active.strip() == "active":
+    if active.strip(BLANKS) == "active":
         rep.ok("the watch's timer is active")
     else:
         rep.warn(f"the watch's timer is {answer_or_words(active)}: setup again puts it back")
@@ -5963,7 +6023,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
 
     # G2.2: the runner's user has no admin rights and its home is closed.
     rc, groups = host.run(["id", "-nG", RUNNER_USER])
-    extra = sorted(set(groups.split()) - {RUNNER_USER}) if rc == 0 else None
+    extra = sorted(set(words_of(groups)) - {RUNNER_USER}) if rc == 0 else None
     if extra is None:
         bad("runner user", f"the user {RUNNER_USER} is not there: {again}")
     elif extra:
@@ -5975,8 +6035,8 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     if rc != 0:
         rep.warn(f"{repo}: the mode of /home/{RUNNER_USER}: not read" + (  # R168: stat's own refusal, its words
             "" if "a password is required" in said(mode) else f": {last_line(mode)[:160] or 'nothing'}"))
-    elif mode.strip() not in ("750", "700"):
-        bad("runner home", f"/home/{RUNNER_USER} is open to others (mode {mode.strip()}): "
+    elif mode.strip(BLANKS) not in ("750", "700"):
+        bad("runner home", f"/home/{RUNNER_USER} is open to others (mode {mode.strip(BLANKS)}): "
                            f"{C0}sudo chmod 750 /home/{RUNNER_USER}{C1}")
     # G2.4: its own folder and work folder.
     for path in (folder, f"{folder}/_work"):
@@ -5988,7 +6048,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     # G2.8: the credential files are the runner's own, 600.
     files = [f"{folder}/.credentials", f"{folder}/.runner", f"{folder}/.credentials_rsaparams"]
     rc, out = as_runner(host, ["stat", "-c", "%a %U %n"] + files)  # R128: read as the runner user
-    rows = [x.split(None, 2) for x in out.splitlines() if x.strip()]
+    rows = [words_of(x, 2) for x in lines_of(out) if x.strip(BLANKS)]
     if "a password is required" in said(out):  # R168: sudo's refusal is on its standard error
         rep.warn(f"{repo}: the credential files: not read")
     elif rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
@@ -5999,10 +6059,10 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     # G2.9, G4.2: the boot service as written, in our slice, and the slice's limits.
     rc, out = host.run(systemctl("show", unit, "-p", "Slice", "-p", "Nice", "-p", "CPUWeight", "-p", "Restart",
                                   "-p", "Wants", "-p", "UnitFileState", "-p", "User", "-p", "OOMPolicy"))
-    got = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    got = dict(x.split("=", 1) for x in lines_of(out) if "=" in x)
     want = {"Slice": SLICE, "Nice": "10", "CPUWeight": "50", "Restart": "on-failure", "UnitFileState": "enabled",
             "User": RUNNER_USER, "OOMPolicy": "continue"}
-    off = [f"{k}={got.get(k)!r}" for k, v in want.items() if got.get(k) != v]
+    off = [f"{k}={as_read(got.get(k))}" for k, v in want.items() if got.get(k) != v]
     if "network-online.target" not in got.get("Wants", ""):
         off.append("Wants has no network-online.target")
     if off:
@@ -6013,12 +6073,12 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     lim = mine.get("limits") or {}
     rc, out = host.run(systemctl("show", SLICE, "-p", "CPUQuotaPerSecUSec", "-p", "MemoryMax", "-p", "MemoryHigh",
                                  "-p", "MemorySwapMax"))
-    sl = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    sl = dict(x.split("=", 1) for x in lines_of(out) if "=" in x)
     want_l = {"CPUQuotaPerSecUSec": f"{lim.get('cores')}s", "MemoryHigh": str(lim.get("MemoryHigh")),
               "MemoryMax": str(lim.get("MemoryMax"))}
     if "MemorySwapMax" in lim:  # set up before 0.1.0's no-swap default: not recorded, so not compared
         want_l["MemorySwapMax"] = str(lim["MemorySwapMax"])
-    off = [f"{k}={sl.get(k)!r}" for k, v in want_l.items() if sl.get(k) != v]
+    off = [f"{k}={as_read(sl.get(k))}" for k, v in want_l.items() if sl.get(k) != v]
     if lim.get("swap_kept"):  # R94: kept at setup, so a change since is a promise not kept
         kind, line = swap_cap_read(host)
         if kind != "kept":
@@ -6040,7 +6100,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     rc, out = sudo(host, ["stat", "-c", "%a %U", f"{d}/job-started.sh", f"{d}/job-completed.sh"])
     if "a password is required" in said(out):  # R168: sudo's refusal is on its standard error
         rep.warn(f"{repo}: the job hooks: not read")
-    elif rc != 0 or [x.strip() for x in out.splitlines() if x.strip()] != ["755 root", "755 root"]:
+    elif rc != 0 or [x.strip(BLANKS) for x in lines_of(out) if x.strip(BLANKS)] != ["755 root", "755 root"]:
         bad("job hooks", f"the job hooks are not root's and read-only to the runner ({tail(out)}): {again}")
     else:
         rep.ok(f"{repo}: the job hooks are root's and read-only to the runner")
@@ -6102,7 +6162,7 @@ def restore_runs_on(text: str, job_id: str, original: str) -> str | None:
         if not any(x == "minions" or x.startswith("minions-") for x in labels):
             return None
         start, end = job["runs_on_at"]
-        lines = text.splitlines(keepends=True)
+        lines = yaml_lines(text, True)
         lines[start:end] = [original if original.endswith("\n") else original + "\n"]
         return "".join(lines)
     return None
@@ -6116,7 +6176,7 @@ def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None
         return
     s, d = gh.api("GET", f"repos/{repo}")
     base = (d or {}).get("default_branch") if s == 200 else mv.get("base")
-    not_text: list[str] = []
+    not_text: dict[str, str] = {}
     read = read_workflow_files(gh, repo, None, rep, not_text)
     if read is None:
         return
@@ -6124,8 +6184,8 @@ def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None
     changed, back, unknown = {}, [], []
     for path, jobs in sorted((mv.get("files") or {}).items()):
         if path in not_text:
-            before = "; ".join(f"job {j['id']}: {j['runs_on'].strip()}" for j in jobs if j.get("runs_on")) or "not recorded"
-            rep.warn(f"{path}: {NOT_TEXT_IS} now, so this tool does not put its moved runs-on line back: put its "
+            before = "; ".join(f"job {j['id']}: {j['runs_on'].strip(BLANKS)}" for j in jobs if j.get("runs_on")) or "not recorded"
+            rep.warn(f"{path}: {not_text[path]} now, so this tool does not put its moved runs-on line back: put its "
                      f"runs-on line back by hand (before move it was, {before})")
             continue
         text = changed.get(path, files.get(path))
@@ -6139,7 +6199,7 @@ def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None
             if new is not None:
                 text = new
                 changed[path] = new
-                back.append(f"- `{path}` job `{j['id']}`: `{j['runs_on'].strip()}`")
+                back.append(f"- `{path}` job `{j['id']}`: `{j['runs_on'].strip(BLANKS)}`")
     if unknown:
         rep.warn(f"the line before move was not recorded for {', '.join(unknown)}: put it back by hand")
     if not changed:
@@ -6331,14 +6391,14 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
                 left.append(f"its crontab ({tail(out) or 'still listed'})")
         if host.which("atq"):
             rc, out = sudo(host, ["atq"])
-            jobs = [x.split()[0] for x in out.splitlines() if x.split() and x.split()[-1] == RUNNER_USER]
+            jobs = [words_of(x)[0] for x in lines_of(out) if words_of(x) and words_of(x)[-1] == RUNNER_USER]
             if rc != 0:  # R167: an answer that is not atq's list is not "no at job"
                 left.append(f"its at jobs (could not be read: atq answered code {rc}: {tail(out) or 'nothing'})")
             elif jobs:
                 journal(host, "at jobs off", f"{RUNNER_USER}: {', '.join(jobs)}")
                 sudo(host, ["atrm", *jobs])
                 rc, out = sudo(host, ["atq"])
-                still = [x.split()[0] for x in out.splitlines() if x.split() and x.split()[-1] == RUNNER_USER]
+                still = [words_of(x)[0] for x in lines_of(out) if words_of(x) and words_of(x)[-1] == RUNNER_USER]
                 if rc != 0:
                     left.append(f"its at jobs {', '.join(jobs)} (whether they are off could not be read: atq "
                                 f"answered code {rc}: {tail(out) or 'nothing'})")
@@ -6353,7 +6413,7 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         journal(host, "delete", f"what {RUNNER_USER} owns in {', '.join(PUBLIC_TMP)} (as {RUNNER_USER})")
         as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-delete"])
         rc, out = as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-print"])
-        files = [x for x in out.splitlines() if x.startswith(PUBLIC_TMP)]
+        files = [x for x in lines_of(out) if x.startswith(PUBLIC_TMP)]
         # R167: find exits 1 when a folder it may not enter was met (systemd's private folders in /tmp, on any stock
         # system), and still lists the rest; any other exit is not a list
         if rc not in (0, 1):
@@ -6430,7 +6490,7 @@ def end_runner_users_processes(host: Host, rep: Report) -> bool:
             return False
         rep.ok(f"a job's sleep hold left behind by a stopped service ({', '.join(ours)}) is ended")
     if left:
-        what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
+        what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip(BLANKS)})" for x in left)
         journal(host, "end", f"processes of {RUNNER_USER} left by its jobs: {what}")
         for _ in range(3):
             as_runner(host, ["kill", "-KILL", "-1"])
@@ -6446,7 +6506,7 @@ def end_runner_users_processes(host: Host, rep: Report) -> bool:
             if not left:
                 break
         if left:
-            what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip()})" for x in left)
+            what = ", ".join(f"{x} ({(host.read(f'/proc/{x}/comm') or '?').strip(BLANKS)})" for x in left)
             rep.stop(f"processes of {RUNNER_USER} still run after being ended with SIGKILL: {what}. The user is not "
                      "deleted. " + came_back("its processes", "a process that outlives SIGKILL is waiting on a disk or the "
                                              "network, and most end within a minute", "the disk or the network share "
@@ -6459,13 +6519,13 @@ def end_runner_users_processes(host: Host, rep: Report) -> bool:
 def last_line(out: str) -> str:
     """R168: the line shown for a refusal: the program's own last line, both streams read (a warning written before
     the command ran, as sudo's, comes first and is not the one shown)."""
-    return next((x.strip() for x in reversed(said(out).splitlines()) if x.strip()), "")
+    return next((x.strip(BLANKS) for x in reversed(lines_of(said(out))) if x.strip(BLANKS)), "")
 
 
 def answer_or_words(out: str) -> str:
     """R168 (owner 4:36 PM ET 11-24, words lost): a program's answer for a line the person reads; where it gave none
     on standard output, "not read" with its own last line (its refusal is on standard error), never "not read" alone."""
-    return out.strip() or ("not read: " + (last_line(out)[:160] or "nothing"))
+    return out.strip(BLANKS) or ("not read: " + (last_line(out)[:160] or "nothing"))
 
 
 def first_words(rc: int, out: str) -> str:
@@ -6480,13 +6540,13 @@ def slice_running_units(host: Host) -> tuple[list[str] | None, str]:
     rc, out = host.run(systemctl("show", SLICE, "-p", "SliceOf"))
     if rc != 0:
         return None, f"the units in {SLICE} could not be read ({first_words(rc, out)})"
-    inside = {u for x in out.splitlines() if x.startswith("SliceOf=") for u in x[len("SliceOf="):].split()}
+    inside = {u for x in lines_of(out) if x.startswith("SliceOf=") for u in words_of(x[len("SliceOf="):])}
     rc, out = host.run(systemctl("list-units", "--all", "--plain", "--no-legend", "actions.runner.*", "minions*"))
     if rc != 0:
         return None, f"systemd's units of ours could not be listed ({first_words(rc, out)})"
-    for u in sorted({x.split()[0] for x in out.splitlines() if x.strip() and not x.startswith("0 ")} - {SLICE} - inside):
+    for u in sorted({words_of(x)[0] for x in lines_of(out) if x.strip(BLANKS) and not x.startswith("0 ")} - {SLICE} - inside):
         rc, got = host.run(systemctl("show", u, "-p", "Slice"))
-        named = [x[len("Slice="):].strip() for x in got.splitlines() if x.startswith("Slice=")]
+        named = [x[len("Slice="):].strip(BLANKS) for x in lines_of(got) if x.startswith("Slice=")]
         if rc != 0 or not named:
             return None, f"which slice {u} is in could not be read ({first_words(rc, got)})"
         if named[0] == SLICE:
@@ -6572,7 +6632,7 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
             unread.append(path)
         return bool(t)
     rc, out = host.run(systemctl("list-units", "--all", "--plain", "--no-legend", "actions.runner.*", "minions*"))
-    units = sorted({x.split()[0] for x in out.splitlines() if x.strip() and not x.startswith("0 ")}) if rc == 0 else []
+    units = sorted({words_of(x)[0] for x in lines_of(out) if x.strip(BLANKS) and not x.startswith("0 ")}) if rc == 0 else []
     if rc != 0:  # R167: a list systemd did not give is not "none"
         rep.warn(f"census: systemd's units of ours: not read (systemctl answered code {rc}: {tail(out) or 'nothing'})")
     mark = len(unread)
@@ -6585,9 +6645,9 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     named, yours, others = [], 0, 0
     for u in (u for u in units if u.startswith("actions.runner.")):
         urc, who = host.run(systemctl("show", "-p", "User", "--value", u))
-        if urc == 0 and who.strip() == RUNNER_USER:
+        if urc == 0 and who.strip(BLANKS) == RUNNER_USER:
             named.append(u)
-        elif urc == 0 and who.strip() == host.user():
+        elif urc == 0 and who.strip(BLANKS) == host.user():
             yours += 1
         else:
             others += 1
