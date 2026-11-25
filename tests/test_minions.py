@@ -2323,6 +2323,30 @@ class G3(unittest.TestCase):
         self.assertIn("the name of its job (rel.yml:pu`b)", M.include_unnamable(".github/workflows/rel.yml", "pu`b", "look"))
         page_line = M.md_job(".github/workflows/rel.yml", "pu`b", "words")
         self.assertEqual(page_line, f"- `.github/workflows/rel.yml` job `pu'b`: words {M.SHOWN_CHANGED}")
+        # The page's other lists, through a real move (the maintainer's ruling on R198, 2026-11-25): a planted name
+        # stays inside its own span, shown changed with the note, in "Moved", in "Left as they are (they cannot run
+        # on this computer)" and in "Already on your computer", as it does under "they publish or deploy" above.
+        three = ("name: three\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make\n"
+                 "  mac:\n    runs-on: macos-latest\n    steps:\n      - run: sw_vers\n"
+                 "  mine:\n    runs-on: [minions]\n    steps:\n      - run: make\n")
+        for name, shown in (("th`ree.yml", "th'ree.yml"), ("th$(x).yml", "th$ (x).yml")):
+            gh = MoveGH({".github/workflows/ci.yml": CI_YML, f".github/workflows/{name}": three})
+            code, lines = run_move(gh, move_host())
+            self.assertEqual(code, M.EXIT_NEED, lines)
+            body = pr_body_of(gh)
+            for heading, job in (("## Moved", "build"),
+                                 ("## Left as they are (they cannot run on this computer)", "mac"),
+                                 ("## Already on your computer", "mine")):
+                part = body.split(heading + "\n")[1].split("\n## ")[0]
+                found = [x for x in part.splitlines() if f" job `{job}`" in x and x.startswith("- `.github/workflows/th")]
+                self.assertEqual(len(found), 1, (heading, part))
+                (line,) = found
+                head = line.split(": ", 1)[0]
+                self.assertEqual(head, f"- `.github/workflows/{shown}` job `{job}`", (heading, line))
+                self.assertEqual(head.count("`"), 4, (heading, line))  # the file and the job: two spans, whole
+                self.assertTrue(line.endswith(M.SHOWN_CHANGED), (heading, line))
+            self.assertNotIn("$(", body)
+            self.assertNotIn(name, body)
 
     def test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write(self):
         # Row R197 (read in the code by the maintainer, 2026-11-25): a word of --include-job that matched no job was
