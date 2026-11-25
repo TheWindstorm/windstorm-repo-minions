@@ -1419,7 +1419,7 @@
    "ship_in": "0.1.0",
    "test": "test_G4_10_doctor_and_status_name_an_older_copy_running_the_watch",
    "proven": "2026-11-23, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, steered, proven by the owner's word: each side made older by hand. The clone's VERSION edited up (0.0.1) while the watch's copy stayed 0.0.0: status and doctor said `the watch runs version 0.0.0 of the tool, and this is 0.0.1: the watch runs the older code. `setup <owner/repo>` again puts this version's copy in place`, doctor stopped naming the copy; setup put 0.0.1 in place (`the runner, its service, its limits and a running job were not touched`), read back. Then the clone put back to 0.0.0 while the copy was 0.0.1: status said `this tool is the older one. Run the newer tool, or `setup <owner/repo>` with this one to put its copy back`; setup put 0.0.0 back; doctor read every promise kept.",
-   "proof_owed": "each side really older, unsteered: the 0.1.1 candidate set up over a released 0.1.0 on a stock virtual machine, then doctor and status read (the owner's 7:45 PM ET 11-24: emptied at 0.1.1's own sitting)",
+   "proof_owed": "each side really older, unsteered: the 0.1.1 candidate set up over a released 0.1.0 on a stock virtual machine, then doctor and status read (the owner, 2026-11-24: emptied at 0.1.1's own sitting)",
    "issue": 230,
    "moved_why": "",
    "moved_by_person": ""
