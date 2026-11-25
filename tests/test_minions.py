@@ -8303,6 +8303,83 @@ print(json.dumps(out))
             self.assertEqual(out["seen"], [], out)
             self.assertEqual(out["through a handle"], "counted", out)  # made through a handle into the made home
             self.assertFalse(os.path.exists(out["guard_tmp"]), (out, r.stderr[-2000:]))  # its own folder, at exit
+        # THE SUITE'S OWN ROAD (the maintainer's trial on a98393f: started from another folder of the home the suite
+        # failed 10 and errored 10, every reach inside tempfile.TemporaryDirectory's cleanup, which keeps the rmtree
+        # tempfile took from shutil when first imported): a real test file, run by unittest from a folder inside a
+        # made home, cleans up as the suite does; it reads Ran, OK, and nothing left in its own temporary folder.
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            home = os.path.realpath(os.path.join(d, "made-home"))
+            for sub in ("made-home/sub", "child", "tmp"):
+                os.makedirs(os.path.join(d, sub))
+            with open(os.path.join(d, "child", "test_child.py"), "w") as f:
+                f.write(f"""import os, shutil, sys, tempfile, threading, unittest
+sys.path.insert(0, {tests!r})
+import machine_guard as g
+g.REAL_HOME, g.ALLOWED = {home!r}, ()
+
+
+def tree(d):
+    os.makedirs(os.path.join(d, "a", "b"))
+    open(os.path.join(d, "a", "b", "f"), "w").close()
+
+
+class Cleanups(unittest.TestCase):
+    def test_with(self):
+        with tempfile.TemporaryDirectory() as d:
+            tree(d)
+        self.assertFalse(os.path.exists(d))
+
+    def test_cleanup(self):
+        t = tempfile.TemporaryDirectory()
+        tree(t.name)
+        t.cleanup()
+        self.assertFalse(os.path.exists(t.name))
+
+    def test_rmtree(self):
+        d = tempfile.mkdtemp()
+        tree(d)
+        shutil.rmtree(d)
+        self.assertFalse(os.path.exists(d))
+
+    def test_a_second_thread_is_judged_by_the_folder(self):
+        got, real = {{}}, g._real_rmtree
+        def other():
+            with g.expect():
+                try:
+                    open("x", "w")
+                    got["open"] = "not counted"
+                except g.MachineReached:
+                    got["open"] = "counted"
+        def during(path, *a, **k):  # while this thread deletes a tree, another opens a plain name in the made home
+            t = threading.Thread(target=other)
+            t.start()
+            t.join()
+            return real(path, *a, **k)
+        g._real_rmtree = during
+        try:
+            d = tempfile.mkdtemp()
+            tree(d)
+            shutil.rmtree(d)
+        finally:
+            g._real_rmtree = real
+        self.assertEqual(got["open"], "counted")
+
+    def test_a_road_the_guard_does_not_follow_is_counted(self):
+        d = tempfile.mkdtemp()
+        tree(d)
+        with g.expect() as seen:
+            with self.assertRaises(g.MachineReached):
+                g._real_rmtree(d)  # shutil's own rmtree, kept by a name the guard did not wrap
+        self.assertIn("a road the guard does not follow", seen[0])
+        shutil.rmtree(d)
+""")
+            r = subprocess.run([sys.executable, "-I", "-B", "-m", "unittest", "discover", "-s",
+                                os.path.join(d, "child"), "-p", "test_child.py"], capture_output=True, text=True,
+                               timeout=120, cwd=os.path.join(home, "sub"), env=dict(os.environ, TMPDIR=os.path.join(d, "tmp")))
+            self.assertEqual(r.returncode, 0, r.stderr[-3000:])
+            self.assertIn("Ran 5 tests", r.stderr)
+            self.assertEqual(r.stderr.rstrip().splitlines()[-1], "OK", r.stderr[-3000:])
+            self.assertEqual(os.listdir(os.path.join(d, "tmp")), [], r.stderr[-3000:])  # the guard's folder too
         # a plain relative open from a folder inside the made home is still counted (the guard is not loosened)
         with tempfile.TemporaryDirectory(dir=TMP) as d:
             home = os.path.realpath(os.path.join(d, "made-home"))

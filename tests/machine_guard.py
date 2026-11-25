@@ -40,6 +40,7 @@ import shutil
 import site
 import sys
 import tempfile
+import threading
 import unittest
 
 FORBIDDEN = frozenset({
@@ -109,23 +110,40 @@ def _fd_path(fd):
 # handle; Python's "open" event carries no handle, so such a name is judged as below the tree's own top (rmtree
 # follows no link), never as below the current folder. A name an event gives with its handle (os.remove, os.rmdir,
 # os.mkdir, ...) is judged by where that handle points. A plain relative name is still judged by the current folder.
-_RM_TOPS: list = []
+# Each thread keeps its own tops (a second thread's plain open is judged by the folder, not by another's tree).
+# The roads to rmtree are shutil's own name and tempfile's copy of it (Python 3.12: "_rmtree = _shutil.rmtree", taken
+# when tempfile was first imported, so TemporaryDirectory's cleanup never looked up shutil.rmtree; the maintainer's
+# trial, 2026-11-25). Any rmtree reached by another road raises its "shutil.rmtree" event with no top of ours: counted,
+# never judged against the current folder. Not seen by the hook: an open through a handle (os.open with dir_fd; the
+# "open" event carries no handle).
+_RM = threading.local()
 _real_rmtree = shutil.rmtree
+
+
+def _rm_tops():
+    if not hasattr(_RM, "tops"):
+        _RM.tops, _RM.armed = [], 0
+    return _RM.tops
 
 
 def _rmtree(path, *a, **k):
     top = os.fsdecode(path) if isinstance(path, (str, bytes)) else None
     if top is not None and not os.path.isabs(top):
         top = os.path.join(_fd_path(k.get("dir_fd")) or os.getcwd(), top)
-    _RM_TOPS.append(os.path.realpath(top) if top else None)
+    tops = _rm_tops()
+    tops.append(os.path.realpath(top) if top else None)
+    _RM.armed += 1  # the next "shutil.rmtree" event of this thread is this call's own
     try:
         return _real_rmtree(path, *a, **k)
     finally:
-        _RM_TOPS.pop()
+        _RM.armed = 0
+        tops.pop()
 
 
 _rmtree.avoids_symlink_attacks = getattr(_real_rmtree, "avoids_symlink_attacks", False)
 shutil.rmtree = _rmtree
+if getattr(tempfile, "_rmtree", None) is _real_rmtree:
+    tempfile._rmtree = _rmtree
 _TMP = tempfile.mkdtemp(prefix="minions-guard-")
 atexit.register(lambda: shutil.rmtree(_TMP, True))  # looked up at exit: the rmtree above
 BIN = os.path.join(_TMP, "bin")
@@ -216,7 +234,8 @@ def _in_home(p, dir_fd=None):
     if not isinstance(p, str) or not p:
         return None
     if not os.path.isabs(p):  # R183: relative to the handle it came with, else to rmtree's top, else to the folder
-        base = _fd_path(dir_fd) or (_RM_TOPS[-1] if _RM_TOPS and _RM_TOPS[-1] else None) or os.getcwd()
+        tops = _rm_tops()
+        base = _fd_path(dir_fd) or (tops[-1] if tops and tops[-1] else None) or os.getcwd()
         p = os.path.join(base, p)
     p = os.path.realpath(p)
     if p != REAL_HOME and not p.startswith(REAL_HOME + os.sep):
@@ -284,9 +303,14 @@ def _hook(event, args):
             what = _child(args[0], args[1], args[2] if len(args) > 2 else None)
         elif event == "os.system":
             what = _child(None, str(args[0]), None)
+        elif event == "shutil.rmtree" and not (_rm_tops() is not None and _RM.armed):
+            what = (f"shutil.rmtree reached by a road the guard does not follow ({args[0]!r}): the names it opens "
+                    "would be judged by the current folder; give machine_guard that road (row R183)")
         elif event in ("open", "os.listdir", "os.scandir", "os.mkdir", "os.remove", "os.rmdir", "os.rename",
                        "os.replace", "os.chmod", "os.chown", "os.symlink", "os.link", "shutil.rmtree", "os.truncate",
                        "os.utime"):
+            if event == "shutil.rmtree":
+                _RM.armed = 0  # this call's own event, seen: a nested rmtree must come through a wrapper again
             at = _DIR_FD_AT.get(event)
             p = _in_home(args[0], args[at] if at is not None and len(args) > at else None) if args else None
             if p:
