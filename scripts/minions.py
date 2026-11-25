@@ -5926,7 +5926,7 @@ def give_rights_back(host: Host, starts: list[str]) -> None:
                      "chmod", "u+rwx", "{}", ";"])
 
 
-HANDED_ONLY = {"handed", "public_handed", "public_unlisted", "public_listed", "home_not_handed"}
+HANDED_ONLY = {"handed", "public_handed", "public_unlisted", "public_listed", "home_not_handed", "public_gone"}
 # R136: what root was handed is not, alone, what stayed for not being ours (the runner user's own kept records,
 # handed so no number without a user owns them)
 LEFT_BEHIND = "left-behind.txt"  # R136: in the person's record, the whole list of what stayed at each uninstall
@@ -6931,6 +6931,30 @@ def public_held(host: Host, listed: list[str]) -> tuple[list[tuple[str, str]], l
     return sorted(why.items()), [p_ for p_ in listed if p_ not in why], ""
 
 
+# R136 (the owner's decision, 2026-11-25): find's own line for a thing it had just read in its parent's list and that
+# was no longer there when it came to it, as GNU find 4.9.0 prints it: the name it was called by, the path in the
+# quotes of its language setting (curly in the tool's C.UTF-8, R172; straight in plain C, which a sudo may hand it),
+# then the words of that error, which end the line. A line feed in a name is printed as backslash-n, so one error is
+# one line. Seen (vm/run64, 2026-11-25): with -ignore_readdir_race, a FOLDER another program deleted still gives this
+# line and code 1 (50 of 300 walks), every walk's list exact; findutils mended it after 4.10.0 (bug #45930).
+FIND_GONE = re.compile(r"find: (?:‘(.*)’|'(.*)'): No such file or directory")
+
+
+def gone_only(err: str, tops: list[str]) -> int:
+    """R136: how many things of other programs find met gone while root's walk ran, when EVERY line find wrote is its
+    own line for such a thing below one of the walked tops (anchored at both ends); 0 when find wrote no line of its
+    own or any line is another (Permission denied, another language, a top itself not there). A line of sudo's own
+    ("sudo: ...", R167/R168: a warning is not part of the answer) is passed over and never counted as find's. The
+    path in a line is only matched: nothing is deleted, handed or looked up from it."""
+    lines = [x for x in lines_of(err) if x and not x.startswith("sudo: ")]
+    for x in lines:
+        m = FIND_GONE.fullmatch(x)
+        p = m and (m.group(1) if m.group(1) is not None else m.group(2))
+        if not p or not p.startswith(tuple(t + "/" for t in tops)):
+            return 0
+    return len(lines)
+
+
 def hand_to_root(host: Host, uid: str, rep: Report) -> list[str]:
     """R136 (condition 4; the owner's items 2, 5 and fault 3, 2026-11-25): before userdel, so nothing that stays is left
     owned by the runner user's number, which a later account could be given, each such thing is handed to root. Below
@@ -6978,9 +7002,13 @@ def hand_to_root(host: Host, uid: str, rep: Report) -> list[str]:
         gave = [x for x in nul_items(out) if x.startswith(tuple(t + "/" for t in tops_))]
         rc2, still = sudo(host, ["find", *tops_, "-ignore_readdir_race", "-xdev", "-uid", uid, "-print0"])
         left = [x for x in nul_items(still) if x.startswith(tuple(t + "/" for t in tops_))]
-        if rc2 != 0:
-            # find's own words name the path it could not read (one a program gone before find reads it is no error,
-            # -ignore_readdir_race; not seen: a mount in /tmp that root itself may not enter, a FUSE one of another user)
+        # R136 (the owner's decision): code 1 with only find's own "not there" lines below a walked top is root's
+        # answer "no" for those things, not "could not be read": the walk's list is taken as read, and said. Not
+        # caught by any road: a thing moved while the walk runs is missed with no line ("what the walk met").
+        gone = gone_only(getattr(still, "err", ""), tops_) if rc2 == 1 else 0
+        if rc2 != 0 and not gone:
+            # find's own words name the path it could not read (not seen: a mount in /tmp that root itself may not
+            # enter, a FUSE one of another user; a sudo that hands find another language stops here too)
             failed.append(f"whether its things in {', '.join(tops_)} are handed to root could not be read (find "
                           f"answered code {rc2}: {tail(said(still).replace(chr(0), chr(10))) or 'nothing'})")
         elif left:
@@ -6992,6 +7020,8 @@ def hand_to_root(host: Host, uid: str, rep: Report) -> list[str]:
             listed = set(rep.stayed.get("public_listed") or [])
             rep.stayed["public_handed"] = gave
             rep.stayed["public_unlisted"] = [x for x in gave if x not in listed]
+            if gone:
+                rep.stayed["public_gone"] = gone
     if handed:
         rep.stayed["handed"] = handed
     return failed
@@ -7311,6 +7341,10 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
                      if unlisted else "")
                   if gave else "nothing of the runner user's number was left there to hand to root (root's walk, "
                   "read back)"))
+    if rep.stayed.get("public_gone"):  # R136 (the owner's decision): a walk passed over on find's "not there" lines, said
+        n = rep.stayed["public_gone"]
+        rep.ok(f"census: in {PUBLIC_KEY}: {plural(n, 'thing')} of other programs went away while root's walk ran "
+               f"(find said {'it was' if n == 1 else 'each was'} no longer there); the walk's list is taken as read")
     if not (public or gave) and PUBLIC_KEY in earlier:  # R136 (fault 2): said again from the record; root reads nothing there to say it
         stamp, what = earlier[PUBLIC_KEY]
         more = f" and {len(what) - LEFT_ON_SCREEN} more" if len(what) > LEFT_ON_SCREEN else ""

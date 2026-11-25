@@ -245,7 +245,7 @@ class FakeHost(M.Host):
         is-enabled print whatever their exit; and a warning line on standard error at EVERY command."""
         w = getattr(self, "sudo_warning", "")
         if w and argv[:1] in (["sudo"], ("sudo",)):
-            out = w + out
+            out = M.Out(out, w + out.err) if isinstance(out, getattr(M, "Out", ())) else w + out  # sudo's: standard error
         if os.environ.get("MINIONS_TEST_STREAMS") != "1" or isinstance(out, getattr(M, "Out", ())):
             return rc, out
         a = list(argv)
@@ -3801,6 +3801,9 @@ class World:
         # -ignore_readdir_race), and a place there root itself may not enter (`root_closed`: a FUSE mount of another
         # user's answers root "Permission denied"; not seen on a real machine, named)
         self.vanish, self.root_closed = set(), set()
+        # find's line as the real 4.9.0 writes it (the owner's trial and vm/run64, 2026-11-25): the path in curly quotes
+        # in the tool's C.UTF-8, in straight quotes in plain C; a FOLDER gone still gives its line WITH the option
+        self.quotes, self.gone_words = ("\u2018", "\u2019"), "No such file or directory"
 
     def owner_of(self, path):
         if path in self.owner:
@@ -3831,14 +3834,15 @@ class World:
 
     def raced(self, a):
         """find's answer for what vanished under its walk: ([its lines], code)."""
-        lines, code = [], 0
+        lines, code, (q0, q1) = [], 0, self.quotes
         for p in sorted(self.vanish):
-            self.paths.discard(p)
-            if "-ignore_readdir_race" not in a:
-                lines.append(f"find: '{p}': No such file or directory\n")
+            folder = self.is_dir(p)  # seen on 4.9.0: the option covers a file gone, never a folder gone
+            self.paths -= {p, *self.under(p)}
+            if folder or "-ignore_readdir_race" not in a:
+                lines.append(f"find: {q0}{p}{q1}: {self.gone_words}\n")
                 code = 1
         for p in sorted(self.root_closed):  # `vanish` stays: the other program goes on, so every walk meets it
-            lines.append(f"find: '{p}': Permission denied\n")
+            lines.append(f"find: {q0}{p}{q1}: Permission denied\n")
             code = 1
         return lines, code
 
@@ -3963,7 +3967,8 @@ class World:
         if ("-print" in a or "-print0" in a) and starts == list(tops):
             self.order.append("find -print in /tmp")
             said_, raced = self.raced(a) if self.vanish else ([], 0)
-            return shut or raced, "".join(p_ + end for p_ in walk() if self.owner_of(p_) == R) + "".join(said_)
+            listed = "".join(p_ + end for p_ in walk() if self.owner_of(p_) == R)
+            return shut or raced, (M.Out(listed, "".join(said_)) if said_ else listed)  # find's lines: standard error
         if "-maxdepth" in a and a[-1] in ("%u\t%p\n", "%u\t%p\\0"):
             return 0, "".join(f"{self.owner_of(x)}\t{x}{end}" for x in starts if x in self.paths)
         if "-mindepth" in a:
@@ -4077,7 +4082,7 @@ class World:
                     self.owner[p] = "root"
             if any(s_.startswith("/tmp") for s_ in starts) and (self.vanish or self.root_closed):
                 said_, code = self.raced(a)
-                return code, "".join(p + end for p in found) + "".join(said_)
+                return code, M.Out("".join(p + end for p in found), "".join(said_))  # find's lines: standard error
             if "-printf" in a:
                 return 0, "".join(f"{self.kind_of(p)}\t{p}{end}" for p in found)
             return 0, "".join(p + end for p in found)
@@ -5115,17 +5120,59 @@ class G6(unittest.TestCase):
             self.assertFalse(world.user, held)
             races = [a for a in host.ran if a[2:3] == ("find",) and "/tmp" in a and ("-uid" in a or "-print0" in a)]
             self.assertTrue(races and all("-ignore_readdir_race" in a for a in races), races)
-        # Every other error of the walk still stops before userdel, and the stop names the path find named (a place in
-        # /tmp root itself may not enter: a FUSE mount of another user's; not seen on a real machine, named).
-        gh, world, host = remove_setup(moved=False)
-        world.root_closed.add("/tmp/fuse-mount")
-        code, lines = run_uninstall(gh, host, repo=None, everything=True)
-        self.assertEqual(code, M.EXIT_STOP, lines)
-        stop = [x for x in lines if x.startswith("stop ")]
-        self.assertTrue(stop and "the user minions-runner is not deleted" in stop[0] and "'/tmp/fuse-mount': Permission "
-                        "denied" in stop[0] and "run the same command again" in stop[0], lines)
-        self.assertTrue(world.user)
-        self.assertNotIn("userdel", world.order)
+        # The owner's decision (2026-11-25; seen on vm/run64: WITH the option a FOLDER another program deleted still
+        # gave find's "not there" line and code 1, 50 of 300 walks, every list exact): at root's read-back, code 1 with
+        # only such lines below a walked top is taken as read and said with its count; in the tool's C.UTF-8 (curly
+        # quotes) and in plain C (straight), with sudo's own warning beside it (R167: not part of the answer).
+        WARN_LINE = "sudo: unable to resolve host box-1: Name or service not known\n"  # R167
+        for quotes, warning in ((("‘", "’"), ""), (("'", "'"), ""), (("‘", "’"), WARN_LINE)):
+            gh, world, host = remove_setup(moved=False)
+            world.quotes, host.sudo_warning = quotes, warning
+            world.paths |= {"/tmp/other-cache", "/tmp/other-cache/tmp.7", "/tmp/other-cache/tmp.7/f"}
+            world.owner.update({p_: "person" for p_ in world.paths if p_.startswith("/tmp/other-cache")})
+            world.dirs |= {"/tmp/other-cache", "/tmp/other-cache/tmp.7"}
+            world.vanish.add("/tmp/other-cache/tmp.7")
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_OK, (quotes, warning, lines))
+            self.assertFalse([x for x in lines if x.startswith("stop ") or "could not be read" in x], lines)
+            self.assertFalse(world.user, quotes)
+            self.assertIn("ok census: in /tmp, /var/tmp, /dev/shm: 1 thing of other programs went away while root's walk "
+                          "ran (find said it was no longer there); the walk's list is taken as read", lines)
+        # Anything else stops as before, with find's words and the one next step: a place root may not enter (a FUSE
+        # mount of another user's; not seen on a real machine, named), beside a folder gone too, or with the words
+        # "No such file or directory" in its own name; and find's line in another language (named, not built).
+        for closed, words in (("/tmp/fuse-mount", None), ("/tmp/No such file or directory", None),
+                              (None, "Datei oder Verzeichnis nicht gefunden")):
+            gh, world, host = remove_setup(moved=False)
+            world.paths |= {"/tmp/other-cache", "/tmp/other-cache/tmp.7"}
+            world.dirs |= {"/tmp/other-cache", "/tmp/other-cache/tmp.7"}
+            world.vanish.add("/tmp/other-cache/tmp.7")
+            if closed:
+                world.root_closed.add(closed)
+            if words:
+                world.gone_words = words
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_STOP, (closed, words, lines))
+            stop = [x for x in lines if x.startswith("stop ")]
+            named = f"‘{closed}’: Permission denied" if closed else f"‘/tmp/other-cache/tmp.7’: {words}"
+            self.assertTrue(stop and "the user minions-runner is not deleted" in stop[0] and named in stop[0]
+                            and "run the same command again" in stop[0], (named, lines))
+            self.assertTrue(world.user)
+            self.assertNotIn("userdel", world.order)
+        # The rule's own reading, line by line: anchored at both ends, below a walked top, find's own lines only.
+        tops, gone = ["/tmp", "/var/tmp", "/dev/shm"], "find: ‘/tmp/a/b’: No such file or directory\n"
+        for err, n in (("", 0), (WARN_LINE, 0), (gone, 1), (gone * 2, 2), (WARN_LINE + gone, 1),
+                       ("find: '/var/tmp/x\\n y': No such file or directory\n", 1),
+                       ("/usr/bin/find: ‘/tmp/a’: No such file or directory\n", 0),
+                       ("find: ‘/tmp’: No such file or directory\n", 0),
+                       ("find: ‘/tmpx/a’: No such file or directory\n", 0),
+                       ("find: ‘/home/user/a’: No such file or directory\n", 0),
+                       ("find: ‘/tmp/a'", 0), ("find: ‘/tmp/a': No such file or directory\n", 0),
+                       (gone + "find: ‘/tmp/c’: Permission denied\n", 0),
+                       ("find: ‘/tmp/a’: No such file or directory’: Permission denied\n", 0),
+                       ("find: ‘/tmp/a’: No such file or directory.\n", 0),
+                       ("x find: ‘/tmp/a’: No such file or directory\n", 0)):
+            self.assertEqual(M.gone_only(err, tops), n, err)
 
     def test_G6_19_a_name_read_from_the_state_or_journal_is_checked_before_a_delete(self):
         # R136 (the owner's ruling 2026-11-25, item 4): a runner folder's name read from the state or from a journal
