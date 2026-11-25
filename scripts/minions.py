@@ -117,6 +117,12 @@ NOT_TYPABLE = ("a command not given here, because a value it must carry holds a 
                "to one without such a character first")
 
 
+# Rule 31 (vi), "not text, on the way in" (the owner's 8:07 PM ET 11-24): a workflow file whose content is not UTF-8
+# is named in these words by every road that reads one, never taken for no file, and the others go on.
+NOT_TEXT_IS = "its content is not text (it is not UTF-8)"
+NOT_TEXT = NOT_TEXT_IS + ", so this tool neither reads nor changes it"
+
+
 def odd(text: str) -> bool:
     """Rule 31 (vi): True when the text holds a character of ODD_CATEGORIES."""
     return any(unicodedata.category(c) in ODD_CATEGORIES for c in text)
@@ -1874,8 +1880,11 @@ def check_workflows(gh: GitHub, repo: str, survey_: dict, rep: Report) -> list[d
             text = base64.b64decode((fd or {}).get("content", "")).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             text = None
-        if fs != 200 or text is None:
-            rep.warn(f"{f['path']}: could not read")
+        if fs == 200 and text is None:
+            rep.warn(f"{f['path']}: {NOT_TEXT}")
+            continue
+        if fs != 200:
+            rep.warn(f"{f['path']}: could not read (GitHub answered HTTP {fs})")
             continue
         jobs = read_workflow(text)
         if not jobs:
@@ -5176,7 +5185,10 @@ def edit_runs_on(text: str, edits: list[tuple[tuple[int, int], list[str]]]) -> s
     return "".join(lines)
 
 
-def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report) -> list[tuple[str, str]] | None:
+def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report,
+                        not_text: list[str] | None = None) -> list[tuple[str, str]] | None:
+    """The workflow files and their text. A file GitHub would not give is a stop; one whose content is not text is
+    left out and added to not_text, for the caller to name in its own words (rule 31 (vi)), and the others go on."""
     q = f"?ref={ref}" if ref else ""
     s, d = gh.api("GET", f"repos/{repo}/contents/.github/workflows{q}")
     if s == 404:
@@ -5193,9 +5205,12 @@ def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report) -> 
             text = base64.b64decode((fd or {}).get("content", "")).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             text = None
-        if fs != 200 or text is None:
-            why = f"GitHub answered HTTP {fs}" if fs != 200 else "its content could not be read as text"
-            rep.stop(f"{f['path']}: could not read it ({why}); nothing is changed. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
+        if fs == 200 and text is None:
+            if not_text is not None:
+                not_text.append(f["path"])
+            continue
+        if fs != 200:
+            rep.stop(f"{f['path']}: could not read it (GitHub answered HTTP {fs}); nothing is changed. Run the same command again; if it stops here again, GitHub's answer named here is the reason")
             return None
         files.append((f["path"], text))
     return files
@@ -5340,9 +5355,12 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     if not base:
         rep.stop(f"could not read {repo} (HTTP {s}). " + (github_next(s, repo, gh=gh) if spent(gh, s) else "Run the same command again; if it stops here again, GitHub's answer named here is the reason"))
         return rep.code()
-    files = read_workflow_files(gh, repo, None, rep)
+    not_text: list[str] = []
+    files = read_workflow_files(gh, repo, None, rep, not_text)
     if files is None:
         return rep.code()
+    for path in not_text:
+        rep.warn(f"{path}: {NOT_TEXT}; it stays as it is")
     survey_ = entry.get("survey") or {}
     system, machine = survey_.get("system") or host.system(), survey_.get("machine") or host.machine()
     inc = set(include or [])
@@ -5408,11 +5426,21 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
         return
     merged_at = pr["merged_at"]
     rep.ok(f"pull request #{mv['pr']} was merged at {merged_at}")
-    files = dict(read_workflow_files(gh, repo, mv.get("base"), rep) or [])
+    not_text: list[str] = []
+    read = read_workflow_files(gh, repo, mv.get("base"), rep, not_text)
+    if read is None:
+        return
+    files = dict(read)
     all_ok = True
     elsewhere: set[str] = set()  # G3.7: other computers of ours that ran a moved job
     listed: dict | None = None
     for path, wanted_jobs in sorted(mv["files"].items()):
+        if path in not_text:
+            rep.stop(f"{path}: {NOT_TEXT_IS} now, so whether its moved jobs ran on a computer of yours cannot be read, "
+                     f"and they are not called moved. Make the file UTF-8 again on GitHub, then run "
+                     f"{C0}move {repo} --verify{C1} again")
+            all_ok = False
+            continue
         text = files.get(path, "")
         jobs_now = read_workflow(text)
         every_job_moved = {j["id"] for j in jobs_now} <= {w["id"] for w in wanted_jobs}
@@ -6088,9 +6116,18 @@ def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None
         return
     s, d = gh.api("GET", f"repos/{repo}")
     base = (d or {}).get("default_branch") if s == 200 else mv.get("base")
-    files = dict(read_workflow_files(gh, repo, None, rep) or [])
+    not_text: list[str] = []
+    read = read_workflow_files(gh, repo, None, rep, not_text)
+    if read is None:
+        return
+    files = dict(read)
     changed, back, unknown = {}, [], []
     for path, jobs in sorted((mv.get("files") or {}).items()):
+        if path in not_text:
+            before = "; ".join(f"job {j['id']}: {j['runs_on'].strip()}" for j in jobs if j.get("runs_on")) or "not recorded"
+            rep.warn(f"{path}: {NOT_TEXT_IS} now, so this tool does not put its moved runs-on line back: put its "
+                     f"runs-on line back by hand (before move it was, {before})")
+            continue
         text = changed.get(path, files.get(path))
         if text is None:
             continue
@@ -6106,7 +6143,8 @@ def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None
     if unknown:
         rep.warn(f"the line before move was not recorded for {', '.join(unknown)}: put it back by hand")
     if not changed:
-        rep.ok(f"no workflow of {repo} still asks for our runner: no pull request is needed")
+        if not any(path in not_text for path in (mv.get("files") or {})):
+            rep.ok(f"no workflow of {repo} still asks for our runner: no pull request is needed")
         return
     body = ("This pull request puts each `runs-on` line back as it was before Windstorm Repo Minions moved it, "
             "because its runner on your computer was removed. Nothing else changes. The tool that opened it never "

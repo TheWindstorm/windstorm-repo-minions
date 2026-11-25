@@ -7654,6 +7654,152 @@ class Rule31(unittest.TestCase):
         self.assertGreaterEqual(len(shown), 11, sorted(shown))
         self.assertEqual({n for n, _ in shown}, {"look", "doctor", "move", "status", "uninstall", "uninstall --all"})
 
+    NOT_TEXT_CHILD = r"""
+import base64, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import test_minions as T
+M = T.M
+real_host = M.Host()
+tmp = tempfile.mkdtemp(dir=T.TMP)
+FF = b"\xff"
+
+def through_a_real_program(text):
+    # the stand-in's words, with one byte that is not UTF-8, written by a real program and read by the tool's own run
+    data = text.rstrip("\n").encode("utf-8", "surrogateescape") + FF + b"\n"
+    rc, out = real_host.run([sys.executable, "-I", "-c", "import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1]))",
+                             data.hex()])
+    return str(out)
+
+def through_a_real_file(text, n=[0]):
+    n[0] += 1
+    path = os.path.join(tmp, "f%d" % n[0])
+    with open(path, "wb") as f:
+        f.write(text.encode("utf-8", "surrogateescape") + FF + b"\n")
+    return real_host.read(path)
+
+def planted(host, gh):
+    real_answer, real_read = host._answer, host.read
+    def answer(argv, input=None):
+        r = real_answer(argv, input)
+        if list(argv[:2]) == ["gh", "auth"]:
+            return r  # gh's login read as it is, so the roads after it run
+        if isinstance(r, tuple) and len(r) == 2 and isinstance(r[1], str) and r[1].strip():
+            return r[0], through_a_real_program(r[1])
+        return r
+    host._answer = answer
+    host.read = lambda path: (lambda r: r if not r else through_a_real_file(r))(real_read(path))
+    real_api = gh.api
+    def api(method, path, body=None):
+        if method == "GET" and path.split("?")[0].endswith("/contents/.github/workflows/ff.yml"):
+            gh.calls.append((method, path))
+            return 200, {"content": base64.b64encode(b"name: ff" + FF + b"\non: [push]\njobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n").decode()}
+        if method == "GET" and path.split("?")[0].endswith("/contents/.github/workflows"):
+            st, d = real_api(method, path, body)
+            if st == 200 and isinstance(d, list):
+                d = d + [{"name": "ff.yml", "path": ".github/workflows/ff.yml"}]
+            return st, d
+        return real_api(method, path, body)
+    gh.api = api
+    return host, gh
+
+class LookGH(T.StandIn):
+    def api(self, method, path, body=None):
+        if method == "GET" and path.split("?")[0] == "repos/%s/contents/.github/workflows" % T.REPO:
+            self.calls.append((method, path))
+            return 200, [{"name": "ci.yml", "path": ".github/workflows/ci.yml"}]
+        if method == "GET" and path.startswith("repos/%s/contents/.github/workflows/ci.yml" % T.REPO):
+            self.calls.append((method, path))
+            return 200, {"content": base64.b64encode(T.CI_YML.encode()).decode()}
+        return super().api(method, path, body)
+
+runs = [
+    ("look", lambda: (T.linux_host(), LookGH(T.load("look-recent-runs.jsonl"))),
+     lambda h, g: M.look(T.REPO, False, host=h, gh=g, out=sys.stdout)),
+    ("move", lambda: (T.move_host(), T.MoveGH(T.G3.FILES)), lambda h, g: M.move(T.REPO, host=h, gh=g, out=sys.stdout)),
+    ("status", lambda: (T.g5_host()[0], T.StatusGH()), lambda h, g: M.status(T.REPO, host=h, gh=g, out=sys.stdout)),
+    ("uninstall --all", lambda: (lambda w: (w[2], w[0]))(T.remove_setup()),
+     lambda h, g: M.uninstall(None, everything=True, host=h, gh=g, out=sys.stdout, interactive=True, wait_s=0, poll_s=0)),
+]
+for name, make, run in runs:
+    host, gh = planted(*make())
+    code = run(host, gh)
+    print("DONE %s %s" % (name, code), flush=True)
+"""
+
+    def test_rule_31_vi_not_text_on_the_way_in_with_and_without_a_language(self):
+        # The owner's 8:07 PM ET 11-24, "not text, on the way in", as a planted trial: in look, move, status and
+        # uninstall --all, every other program's answer (gh's login read aside) carries the byte 0xFF, written by a
+        # real program and read by the tool's own run; every file the tool reads is a real file holding 0xFF; one
+        # workflow file's content holds it. The lines go to a real standard output, once with LANG=en_US.UTF-8 and
+        # once with no language at all. No command ends the run; nothing printed holds the raw byte or a Python name.
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("LANG", "LC_", "PYTHONIOENCODING", "PYTHONUTF8"))}
+        for lang in ({"LANG": "en_US.UTF-8"}, {}):
+            with self.subTest(lang=lang or "none"):
+                p = subprocess.run([sys.executable, "-I", "-c", self.NOT_TEXT_CHILD, os.path.dirname(__file__)],
+                                   env=dict(env, **lang), capture_output=True, timeout=300)
+                said = p.stdout.decode("utf-8")  # strict: a raw 0xFF in a printed line fails here
+                self.assertEqual(p.returncode, 0, (lang, p.stderr.decode("utf-8", "replace")[-1500:]))
+                self.assertEqual(re.findall(r"^DONE (.+) -?\d+$", said, re.M),
+                                 ["look", "move", "status", "uninstall --all"], said[-800:])
+                for x in said.split("\n"):
+                    self.assertEqual(odd_in(x), [], (lang, x[:200]))
+                    self.assertNotRegex(x, r"Traceback|Unicode(De|En)codeError|ValueError|surrogate", (lang, x[:200]))
+                # the byte was read, and said: the workflow file named by look and by move, others' words changed
+                self.assertEqual(said.count(".github/workflows/ff.yml: " + M.NOT_TEXT), 2, said[-800:])
+                self.assertGreaterEqual(said.count(M.SHOWN_CHANGED), 2, said[-800:])
+
+    def test_rule_31_vi_a_workflow_file_that_is_not_text_is_named_and_the_others_go_on(self):
+        # The owner's 8:07 PM ET 11-24, seen in the planted trial: one workflow file whose content is not UTF-8 stopped
+        # move for every file, with a step that could not help ("run the same command again"), and uninstall's
+        # put-back skipped such a moved file and then said no workflow still asks for our runner. A file that is not
+        # text is named in plain words, never taken for nothing there, and the work goes on with the others.
+        def not_text(gh, name):
+            real = gh.api
+
+            def api(method, path, body=None):
+                if method == "GET" and path.split("?")[0].endswith(f"/contents/.github/workflows/{name}"):
+                    gh.calls.append((method, path))
+                    return 200, {"content": M.base64.b64encode(b"name: x\xff\non: [push]\n").decode()}
+                return real(method, path, body)
+            gh.api = api
+            return gh
+        said = f"its content is not text (it is not UTF-8), so this tool neither reads nor changes it"
+        # look: named, with why
+        gh = not_text(MoveGH({".github/workflows/ci.yml": CI_YML, ".github/workflows/ff.yml": ""}), "ff.yml")
+        out = Out()
+        M.look(REPO, False, host=linux_host(), gh=gh, out=out)
+        self.assertIn(f"warn .github/workflows/ff.yml: {said}", out.printed())
+        # move: named, and the other file still moves
+        host = move_host()
+        gh = not_text(MoveGH({".github/workflows/ci.yml": CI_YML, ".github/workflows/ff.yml": ""}), "ff.yml")
+        code, lines = run_move(gh, host)
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        self.assertIn(f"warn .github/workflows/ff.yml: {said}; it stays as it is", lines)
+        self.assertFalse([x for x in lines if x.startswith("stop ")], lines)
+        self.assertEqual(len(gh.blobs()), 1, "ci.yml still moves")
+        # move --verify: a moved file that is not text now is named, never called moved
+        merged = gh.blobs()[0]
+        h = move_host()
+        d = M.load_state(host)
+        M.save_state(h, d)
+        g = not_text(MoveGH({".github/workflows/ci.yml": merged}, pr_state="closed", merged_at="2026-11-22T23:00:00Z"),
+                     "ci.yml")
+        code, lines = run_move(g, h, verify=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        x = next(x for x in lines if ".github/workflows/ci.yml" in x and M.NOT_TEXT_IS + " now" in x)
+        self.assertIn("Make the file UTF-8 again on GitHub", x)
+        self.assertFalse([x for x in lines if x.startswith("ok moved")], lines)
+        # uninstall's put-back: the moved file that is not text now is named, with the step left, never "no workflow
+        # still asks for our runner"
+        gh, world, host = remove_setup()
+        not_text(gh, "ci.yml")
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertFalse([x for x in lines if "still asks for our runner" in x], lines)
+        x = next(x for x in lines if ".github/workflows/ci.yml" in x and M.NOT_TEXT_IS + " now" in x)
+        self.assertIn("put its runs-on line back by hand", x)
+        self.assertIn("runs-on: ubuntu-latest", x)
+        self.assertEqual(gh.blobs(), [])
+
     def test_rule_31_save_state_is_the_one_writer_of_the_record(self):
         # The owner's 7:43 PM ET 11-24: the fixed stored marks are safe only because save_state is the one writer of
         # minions.json. Every json.dump of the tool is inside save_state; the record's name is written in one place,
@@ -7705,6 +7851,7 @@ class ZRule31(unittest.TestCase):
                           "test_G6_17_with_the_user_there_its_crontab_and_at_jobs_go_before_userdel_or_the_leave_stops",
                           "test_rule_31_a_names_with_a_line_break_or_a_terminal_escape_never_make_a_line_or_a_command",
                           "test_rule_31_vi_bent_values_through_every_command",
+                          "test_rule_31_vi_not_text_on_the_way_in_with_and_without_a_language",
                           "test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback")
 
     def test_rule_31_every_line_every_road_printed(self):
