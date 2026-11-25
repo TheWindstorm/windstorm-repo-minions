@@ -47,7 +47,7 @@ FORBIDDEN = frozenset({
     # admin rights
     "sudo", "su", "pkexec", "doas",
     # services, timers, sessions, the init system (Linux and macOS)
-    "systemctl", "journalctl", "loginctl", "systemd-run", "systemd-inhibit", "launchctl", "pmset", "diskutil",
+    "systemctl", "busctl", "journalctl", "loginctl", "systemd-run", "systemd-inhibit", "launchctl", "pmset", "diskutil",
     # packages
     "dpkg", "dpkg-query", "apt", "apt-get", "rpm", "dnf", "yum", "zypper", "snap", "brew",
     # scheduling

@@ -2401,6 +2401,20 @@
    "issue": 379,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R190",
+   "seen": "2026-11-25, read in the code by the maintainer on family rule 31 (v) (not seen on a machine): the watch's systemd unit (minions-watch.service, its User= and Environment=\"PATH=...\" lines). Text systemd reads carries the person's login name and the folders of the programs found on the person's PATH: values the tool did not write, which only the person's own settings choose. They are written as plain text, neither escaped for systemd's grammar nor checked before the write: a PATH folder whose name holds a double quote, a percent sign, a backslash or a line feed is not carried as itself. Read again on 2026-11-25 by the maintainer on family rule 31 (v.5): the watch runs its programs by name through that PATH line, so with such a folder its programs are not found by it, and setup read back only that the watch's timer was active, never what systemd parsed.",
+   "promise": "The watch's unit carries the person's login name and PATH folders whole, as systemd's grammar takes one value (a percent sign, a backslash and a double quote each in that grammar's own form), or setup refuses before its first write, in one line that names the value and the next step; the login name is the account's own, read by its number. Setup and status read back what systemd parsed for the watch's unit and the runner's unit and say the watch is set up only when that equals what was meant; \"could not be read\" is the third answer. No line of that read-back carries a value this tool did not write: a difference names the key, the position and this tool's own word there; a setting of the person's own in such a unit is named by its name only, a warning, theirs and left; status compares with the name setup wrote, never with the terminal's; each bus call has a time limit, and on a systemd older than 240 the answer is \"could not be read\", said with why. A test plants each of these characters, a space, a dollar sign and a line feed; on a stock machine a PATH folder with each, one at a time, is walked through a real restart before the version is tagged.",
+   "codon": "G5.27",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.0",
+   "test": "test_G5_27_the_watch_unit_carries_its_values_whole_or_refuses",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 378,
+   "moved_why": "Moved into 0.1.0 by the maintainer's word, 2026-11-25: a first release never goes out with such a place.",
+   "moved_by_person": "the maintainer"
   }
  ],
  "declined": []

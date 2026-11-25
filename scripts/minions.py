@@ -26,6 +26,7 @@ import html
 import json
 import os
 import platform
+import pwd
 import re
 import secrets
 import shlex
@@ -627,6 +628,13 @@ class Host:
 
     def user(self) -> str:
         return getpass.getuser()
+
+    def account(self) -> str | None:
+        """R190: the name of the account this tool runs as, by its number (never from LOGNAME or USER)."""
+        try:
+            return pwd.getpwuid(self.uid()).pw_name
+        except KeyError:
+            return None
 
     def hostname(self) -> str:
         return platform.node().split(".")[0] or "computer"
@@ -3066,6 +3074,15 @@ def install_service(host: Host, folder: str, unit: str, survey_: dict, rep: Repo
             rep.stop(f"could not write {path}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return None
     for argv in (systemctl("daemon-reload"), systemctl("enable", unit), systemctl("start", unit)):
+        if argv == systemctl("enable", unit):  # R190: what systemd parsed of the runner's unit, before it is turned on
+            parsed, why, own = unit_as_meant(host, unit, runner_meant(folder))
+            if parsed == "differ":
+                rep.stop(unit_not_as_written("the runner's unit", unit, why, "; it was not turned on"))
+                return None
+            if own:
+                rep.warn(own_entries_line(unit, own))
+            if parsed == "unread":
+                rep.warn(f"what systemd made of the runner's unit could not be read ({why}); status reads it again")
         journal(host, " ".join(argv))
         rc, out = sudo(host, argv)
         if rc != 0:
@@ -3195,6 +3212,10 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if not check_disk_floor(now_free[0] if now_free else survey_.get("free"), rep, "no runner is set up"):
         return rep.code()
     if not check_persons_home(host, rep):
+        return rep.code()
+    why = watch_values_refused(host, path_for(resolve_programs(host, sorted(PROGRAMS))[0]))
+    if why:  # R190: setup's own refusal, before its first write and before any admin step
+        rep.stop(why)
         return rep.code()
     if not runner_user_is_ours_or_absent(host, rep):  # R129: before the person's lines and before any admin step
         return rep.code()
@@ -3360,7 +3381,7 @@ HOLD_WAIT_S = 360  # longer than one watch interval: after a boot or a wake the 
 # and its services run with exactly those folders (a system service has the system's PATH, not yours: a `gh` in
 # your own folder was not found, in silence). A test fails when the tool runs a program by name not listed here.
 PROGRAMS = {
-    "gh": "every GitHub call", "systemctl": "services and timers", "sudo": "admin steps, after one password",
+    "gh": "every GitHub call", "systemctl": "services and timers", "busctl": "what systemd parsed of a unit (R190)", "sudo": "admin steps, after one password",
     "systemd-detect-virt": "the disk kind", "pgrep": "runner processes", "kill": "a stop by exact PID",
     "useradd": "the runner's user", "userdel": "removing it", "install": "folders and the tool's copy",
     "tee": "writing root's files from standard input", "cat": "reading root's files", "chown": "ownership",
@@ -4153,6 +4174,7 @@ def lift_hold(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, tries:
 WATCH_EVERY_S = 300  # G5.3: the watch's default interval
 WATCH_UNIT = "minions-watch"
 TOOL_COPY = f"{HOOKS_ROOT}/minions.py"  # the copy the watch runs: root's, so neither the runner nor a job can change it
+WATCH_START = f"/usr/bin/python3 -I {TOOL_COPY} watch"  # R147, R190: the watch's start line, its words as written
 WAIT_WARN_S = 1800  # G5.13: a job waiting longer than this behind our hold is a `warn`, first
 GITHUB_GIVES_UP_H = 24  # GitHub cancels a job that waited this long for a runner
 
@@ -4459,6 +4481,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
     ok_, words = watch_heartbeat(data, now, host.slept_s())
     rest.append(("ok" if ok_ else "warn", words))
     rest.append(copy_version_line(host))  # G4.10: a watch running older code is said
+    for parsed in parsed_lines(host, data):  # R190: what systemd parsed, word for word
+        (first if parsed[0] == "stop" else rest).append(parsed)
     gone = skill_folder_line(host, data)  # G6.12: the skill removed, the runner goes on, said with the way off
     if gone:
         first.append(gone)
@@ -4771,6 +4795,7 @@ def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
     old = (data.get("watch") or {}).get("blind") or {}
     w = {"time": stamp(host.now()), "every_s": int((data.get("watch") or {}).get("every_s") or WATCH_EVERY_S),
          "slept_s": host.slept_s(),
+         **({"user": (data.get("watch") or {})["user"]} if (data.get("watch") or {}).get("user") else {}),  # R190
          # G5.19: each pass counted, so a pass is told from the one before it even in the same second
          "pass": int((data.get("watch") or {}).get("pass") or 0) + 1}
     if blind:  # G5.15: counted, kept with its reason, and said: a blind pass ends `failed`, never in silence
@@ -5108,6 +5133,200 @@ def lift_after_restart(gh: GitHub, host: Host, data: dict, rep: Report) -> None:
     save_state(host, data)
 
 
+# R190: a value in a systemd unit is written as systemd's grammar takes ONE value:
+# inside double quotes, with the percent sign (a specifier), the backslash and the double quote (C escapes) each in
+# that grammar's own form; a control character (a line feed among them) has no such form here and is refused.
+UNIT_USER_RE = r"[A-Za-z_][A-Za-z0-9_.-]{0,31}"
+
+
+def systemd_quoted(value: str) -> str | None:
+    """The value as one quoted word of a systemd unit's Environment= line, or None when it cannot be one."""
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in value):
+        return None
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:  # a name that is not UTF-8 (surrogate escapes): systemd would not read it as itself
+        return None
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
+
+
+def watch_values_refused(host: Host, path: str, nothing: str = "Nothing was changed, on this computer or on GitHub") -> str:
+    """R190: why the watch's unit cannot carry the person's values whole ("" when it can), said before any write,
+    as the whole stop line: what was read, that nothing was written, and the one next step."""
+    user, account = host.user(), host.account()
+    if account is None:
+        return (f"the name of this account (number {host.uid()}) could not be read from the user database, so the "
+                f"watch's User= line cannot be checked. {nothing}. Run setup again once {C0}getent passwd "
+                f"{host.uid()}{C1} answers with this account's line")
+    if user != account:
+        return (f"your login name reads {user!r} from this terminal (LOGNAME or USER), but this account is "
+                f"{account!r}: the watch would run as another account. {nothing}. Run setup again from a fresh "
+                "login, where the two are the same")
+    if not re.fullmatch(UNIT_USER_RE, user):
+        return (f"your login name {user!r} is not one that systemd's User= line takes as written. {nothing}. Run "
+                "setup from an account whose name is letters, digits, '.', '_' and '-', starting with a letter or '_'")
+    bad = [d for d in path.split(":") if d and systemd_quoted(d) is None]
+    if bad:
+        return (f"a folder on your PATH where the watch's programs are found, {bad[0]!r}, holds a character a "
+                f"systemd unit cannot carry (a line feed or another control character). {nothing}. Put those "
+                "programs on your PATH through a folder whose name has none, then run setup again")
+    return ""
+
+
+BUS = ("busctl", "--no-pager", "--json=short")  # G8.5: never a pager
+BUS_WAIT_S = 10  # each bus call: a bus that never answers ends here and is "could not be read"
+BUS_JSON_FROM = 240  # read in systemd's own NEWS ("CHANGES WITH 240": busctl's -j and --json=), not seen on a machine
+SD = "org.freedesktop.systemd1"
+
+
+def bus_unread(host: Host, why: str) -> str:
+    """R190: why the bus answer could not be read, naming a systemd older than the one whose busctl gives JSON."""
+    rc, out = host.run(systemctl("--version"))
+    m = re.match(r"systemd (\d+)", str(out)) if rc == 0 else None
+    if m and int(m.group(1)) < BUS_JSON_FROM:
+        return (f"{why}; this computer's systemd is {m.group(1)}, and its busctl gives no JSON form, which this tool "
+                f"reads from systemd {BUS_JSON_FROM} on")
+    return why
+
+
+def unit_parsed(host: Host, unit: str) -> tuple[dict | None, str]:
+    """R190: what the manager PARSED of a unit, as its own answer over its bus gives it,
+    word by word: the start line's words (ExecStart, a list of [path, words]), every Environment entry, User and
+    WorkingDirectory. Never the line `systemctl show` prints, which joins words with spaces. (None, why) when that
+    answer cannot be read."""
+    rc, out = host.run([*BUS, "call", SD, "/org/freedesktop/systemd1", f"{SD}.Manager", "LoadUnit", "s", unit],
+                       timeout=BUS_WAIT_S)
+    try:
+        obj = json.loads(str(out))["data"][0]  # R168: standard output alone
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None, bus_unread(host, f"the manager's bus gave no unit object for {unit} "
+                                      f"({answer_or_words(out) if rc else 'not its form'})")
+    got = {}
+    for prop in ("ExecStart", "Environment", "User", "WorkingDirectory"):
+        rc, out = host.run([*BUS, "get-property", SD, obj, f"{SD}.Service", prop], timeout=BUS_WAIT_S)
+        try:
+            data = json.loads(str(out))["data"]
+        except (ValueError, KeyError, TypeError):
+            return None, bus_unread(host, f"the manager's bus gave no {prop} for {unit} "
+                                          f"({answer_or_words(out) if rc else 'not its form'})")
+        if prop == "ExecStart":
+            if not isinstance(data, list) or not all(isinstance(e, list) and len(e) >= 2 for e in data):
+                return None, f"the manager's bus gave {unit}'s ExecStart in a form this tool does not know"
+            data = [[e[0], list(e[1])] for e in data]
+        got[prop] = data
+    return got, ""
+
+
+def unit_differences(got: dict, meant: dict) -> tuple[list[str], list[str]]:
+    """R190: (what differs in what this tool wrote, the person's own Environment entries by NAME). No value this tool
+    did not write is in either, as a unit can carry a person's own setting (an address that holds a password): each
+    difference names the key, the position and this tool's own word there, never what systemd holds instead."""
+    differ, own = [], []
+    for k, v in meant.items():
+        g = got.get(k)
+        if k == "ExecStart":
+            path, words = v[0]
+            if not (isinstance(g, list) and len(g) == 1):
+                differ.append(f"its start line is not one line ({len(g) if isinstance(g, list) else 0} read; this tool "
+                              "wrote one)")
+            elif g[0][0] != path:
+                differ.append(f"its start program is not the one this tool wrote ({path})")
+            elif g[0][1] != words:
+                gw = g[0][1]
+                at = next((i for i, (a, b) in enumerate(zip(gw, words)) if a != b), min(len(gw), len(words)))
+                differ.append(f"its start line differs at word {at + 1} of {len(words)} (this tool's word there: "
+                              f"{words[at]})" if at < len(words) else
+                              f"its start line has {len(gw)} words where this tool wrote {len(words)}")
+        elif k == "Environment":
+            by: dict = {}
+            for e in (g if isinstance(g, list) else []):
+                by.setdefault(e.split("=", 1)[0] if isinstance(e, str) and "=" in e else None, []).append(e)
+            mine = {e.split("=", 1)[0]: e for e in v}
+            for n, e in mine.items():
+                have = by.get(n, [])
+                if not have:
+                    differ.append(f"its {n} entry is missing")
+                elif len(have) > 1:
+                    differ.append(f"it holds {len(have)} entries for {n} where this tool wrote one")
+                elif have[0] != e:
+                    differ.append(f"its {n} entry is not the value this tool wrote")
+            own = sorted(n for n in by if n is not None and n not in mine)
+            if None in by:
+                own.append(f"{len(by[None])} entry(ies) with no name")
+        elif g != v:
+            differ.append(f"its {k} is not the one this tool wrote ({v})")
+    return differ, own
+
+
+def unit_as_meant(host: Host, unit: str, meant: dict) -> tuple[str, str, list[str]]:
+    """R190: ("equal", "", own), ("differ", what differs, own) or ("unread", why, []): the unit as the manager parsed
+    it, compared word for word with what this tool meant to write; own = the person's own entries, by name."""
+    got, why = unit_parsed(host, unit)
+    if got is None:
+        return "unread", why, []
+    differ, own = unit_differences(got, meant)
+    return ("differ", "; ".join(differ), own) if differ else ("equal", "", own)
+
+
+def unit_not_as_written(what: str, unit: str, why: str, after: str) -> str:
+    """R190: the stop when a unit is not as this tool wrote it, with the step for when the same stop comes back. It carries no value of the person's, so the line can go into an issue as it is."""
+    return (f"{what}, as systemd read it, is not what this tool wrote: {why}{after}. {C0}systemctl cat {unit}{C1} "
+            "shows every file systemd read for it: take off a setting of yours there that changes it, and run the "
+            f"same command again; if this line comes back the same, run {C0}{tool_cmd()} uninstall --all{C1} and open "
+            "an issue with this line, which carries no value of yours")
+
+
+def own_entries_line(unit: str, own: list[str]) -> str:
+    """R190: the person's own Environment entries in one of our units: named by name only, theirs, left."""
+    return (f"systemd holds in {unit}, beside what this tool wrote, setting(s) of your own for {', '.join(own)} "
+            "(named here by name only): they are yours and left as they are, and what that unit runs sees them")
+
+
+def parsed_lines(host: Host, data: dict) -> list[tuple[str, str]]:
+    """R190, for status: the watch's unit and each runner's unit as systemd parsed them, against what setup wrote.
+    Three answers: read back word for word ("ok"), not as written ("stop", with the way off), not read ("warn"); and
+    the person's own entries in them, by name ("warn")."""
+    units = []
+    if data.get("programs"):  # the name setup wrote into User=, or the account's by its number; never LOGNAME
+        user = (data.get("watch") or {}).get("user") or host.account()
+        units.append((f"{WATCH_UNIT}.service", watch_meant(user, path_for(data["programs"])) if user else None))
+    for rp, r in sorted((data.get("runners") or {}).items()):
+        if (r or {}).get("unit") and r.get("folder"):
+            units.append((r["unit"], runner_meant(r["folder"])))
+    if not units:
+        return []
+    out, unread, differ = [], [], 0
+    for unit, meant in units:
+        if meant is None:  # no name to compare User= with: the third answer, never this terminal's LOGNAME
+            unread.append(f"{unit} (the account name setup wrote is not in its record, and this account's name "
+                          "could not be read by its number)")
+            continue
+        kind, why, own = unit_as_meant(host, unit, meant)
+        if kind == "differ":
+            differ += 1
+            out.append(("stop", unit_not_as_written(unit, unit, why, "")))
+        elif kind == "unread":
+            unread.append(f"{unit} ({why})")
+        if own:
+            out.append(("warn", own_entries_line(unit, own)))
+    if unread:
+        out.append(("warn", f"what systemd made of {', '.join(unread)} could not be read, so this is not said to be as "
+                            "setup wrote it; check that busctl answers, then status again"))
+    if not differ and not unread:
+        out.append(("ok", f"the units of this tool read back word for word as systemd holds them ({len(units)})"))
+    return out
+
+
+def watch_meant(user: str, path: str) -> dict:
+    words = WATCH_START.split(" ")
+    return {"ExecStart": [[words[0], words]], "Environment": [f"PATH={path}"] if path else [], "User": user}
+
+
+def runner_meant(folder: str) -> dict:
+    return {"ExecStart": [[f"{folder}/runsvc.sh", [f"{folder}/runsvc.sh"]]], "Environment": [], "User": RUNNER_USER,
+            "WorkingDirectory": folder}
+
+
 def watch_units(user: str, every_s: int, path: str = "") -> tuple[str, str]:
     """G5.3: a system timer whose service runs as the person (User=), not a user timer: a user timer runs only while
     the person is logged in, unless lingering is turned on for their whole account, which changes more of their
@@ -5116,8 +5335,8 @@ def watch_units(user: str, every_s: int, path: str = "") -> tuple[str, str]:
            "[Unit]\nDescription=Windstorm Repo Minions watch\nWants=network-online.target\n"
            "After=network-online.target\n\n"
            f"[Service]\nType=oneshot\nUser={user}\n"
-           + (f'Environment="PATH={path}"\n' if path else "")
-           + f"ExecStart=/usr/bin/python3 -I {TOOL_COPY} watch\nNice=10\n")  # R147: -I, as every start of the tool
+           + (f"Environment={systemd_quoted('PATH=' + path)}\n" if path else "")  # R190: one value, whole
+           + f"ExecStart={WATCH_START}\nNice=10\n")  # R147: -I, as every start of the tool
     tmr = ("# Windstorm Repo Minions: the watch's schedule (G5.3).\n"
            f"[Unit]\nDescription=Windstorm Repo Minions watch, every {every_s // 60} minutes\n\n"
            f"[Timer]\nOnBootSec=2min\nOnUnitActiveSec={every_s}s\nAccuracySec=30s\n\n"
@@ -5136,6 +5355,10 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
         rep.stop("the watch needs " + ", ".join(m for m in ("gh", "systemctl", "sudo") if m in missing)
                  + ", and this terminal's PATH does not find it: nothing of the watch was written. Install it so this terminal finds it, then run the same command again")
         return False
+    why = watch_values_refused(host, path_for(found), "Nothing of the watch was written")  # R190: before its first write
+    if why:
+        rep.stop(why)
+        return False
     journal(host, "write", f"{TOOL_COPY}, /etc/systemd/system/{WATCH_UNIT}.service and .timer")
     sudo(host, ["install", "-d", "-o", "root", "-g", "root", "-m", "0755", HOOKS_ROOT])
     rc, out = sudo(host, ["install", "-o", "root", "-g", "root", "-m", "0755", src, TOOL_COPY])
@@ -5149,22 +5372,36 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
         if rc != 0:
             rep.stop(f"could not write {path}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
-    for argv in (systemctl("daemon-reload"), systemctl("enable", "--now", f"{WATCH_UNIT}.timer")):
-        journal(host, " ".join(argv))
-        sudo(host, argv)
+    journal(host, "systemctl daemon-reload")
+    sudo(host, systemctl("daemon-reload"))
+    # R190: what systemd parsed of the watch's unit, word for word, before its timer is turned on
+    parsed, why, own = unit_as_meant(host, f"{WATCH_UNIT}.service", watch_meant(host.user(), path_for(found)))
+    if parsed == "differ":
+        rep.stop(unit_not_as_written("the watch's unit", f"{WATCH_UNIT}.service", why, "; its timer was not turned on"))
+        return False
+    if own:
+        rep.warn(own_entries_line(f"{WATCH_UNIT}.service", own))
+    argv = systemctl("enable", "--now", f"{WATCH_UNIT}.timer")
+    journal(host, " ".join(argv))
+    sudo(host, argv)
     rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
     if active.strip(BLANKS) != "active":
         rep.stop(f"the watch's timer is not active ({answer_or_words(active)}). Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
     data = load_state(host)
-    data["watch"] = dict(data.get("watch") or {}, every_s=every_s)
+    data["watch"] = dict(data.get("watch") or {}, every_s=every_s, user=host.user())  # R190: as User= has it
     data["programs"] = found
     if os.path.abspath(src) != TOOL_COPY:  # G6.12, R161: where the skill came from, never a plugin's version folder
         data["skill_from"] = skill_from(src)
         data.pop("skill_folder", None)
     save_state(host, data)
-    rep.ok(f"the watch runs every {every_s // 60} minutes as you (a system timer, read back); status says when it "
-           f"last ran. The programs it runs by name are found where this terminal finds them (gh: {found['gh']})")
+    if parsed == "unread":
+        rep.warn(f"what systemd made of the watch's unit could not be read ({why}), so this tool does not say the "
+                 "watch is set up as written; status reads it again")
+    else:
+        rep.ok(f"the watch runs every {every_s // 60} minutes as you (a system timer; its unit read back word for "
+               f"word as systemd holds it); status says when it last ran. The programs it runs by name are found "
+               f"where this terminal finds them (gh: {found['gh']})")
     if repo is None:
         return True
     # G5.15: one real pass now, as the timer runs it, and what it read, read back.

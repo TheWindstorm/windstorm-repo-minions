@@ -51,7 +51,8 @@ Folders, and who can write them:
 | `install_hooks` | `install` | no | no: root's folders. Each repository's records folder is made in root's folder, then handed to the runner user | the hooks folders 0755 root:root; the records root 0755 root:root; the repository's records folder 2750, the runner user's, your group; `seen` 0755, yours, your group |
 | `install_hooks` | `stat` | no | no | nothing. The two hooks are written by `root_file` (0755 root:root) |
 | `install_watch` | `install` | no | no: the tool's copy, in root's folder | the hooks root 0755 root:root; the tool's copy 0755 root:root |
-| `install_watch` | `(argv)` | no: `systemctl daemon-reload`, `enable --now` the timer. The watch runs as you (`User=`), from root's copy | no | nothing. The watch's service and timer are written by `root_file` (0644 root:root) |
+| `install_watch` | `systemctl daemon-reload` | no | no | nothing: systemd reads the watch's unit files again, before they are read back word for word |
+| `install_watch` | `(argv)` | no: `enable --now` the timer, after its unit was read back as systemd parsed it. The watch runs as you (`User=`), from root's copy | no | nothing. The watch's service and timer are written by `root_file` (0644 root:root) |
 | `install_watch` | `systemctl start` | no | no | nothing |
 | `start_runner` | `systemctl start` | no | no | nothing |
 | `_stop_runner` | `systemctl stop` | no | no | nothing |

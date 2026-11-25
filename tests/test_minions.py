@@ -142,6 +142,78 @@ class StandIn(M.GitHub):
         return 404, {"message": "Not Found"}
 
 
+def systemd_words(value):
+    """A stand-in for how systemd reads a unit's value (R190): its specifiers first ("%%" is one percent sign; any
+    other % is refused here, it would name something else), then words split at blanks, a double-quoted word kept
+    whole with its C escapes (here only \\\\ and \\"). None when the value is not read as written words."""
+    out, i = [], 0
+    while i < len(value):
+        if value[i] == "%":
+            if value[i + 1:i + 2] != "%":
+                return None
+            out.append("%"); i += 2
+        else:
+            out.append(value[i]); i += 1
+    v, words, i = "".join(out), [], 0
+    while i < len(v):
+        if v[i] in " \t":
+            i += 1
+            continue
+        word = []
+        if v[i] == '"':
+            i += 1
+            while i < len(v) and v[i] != '"':
+                if v[i] == "\\":
+                    if v[i + 1:i + 2] not in ("\\", '"'):
+                        return None
+                    word.append(v[i + 1]); i += 2
+                else:
+                    word.append(v[i]); i += 1
+            if i >= len(v):
+                return None  # a quote never closed
+            i += 1
+            if i < len(v) and v[i] not in " \t":
+                return None  # a word that goes on after its closing quote: not the one value meant
+        else:
+            while i < len(v) and v[i] not in " \t":
+                if v[i] in '"\\':
+                    return None
+                word.append(v[i]); i += 1
+        words.append("".join(word))
+    return words
+
+
+def bus_stand_in(host):
+    """busctl's answers (R190) from the unit text this tool last wrote, read as systemd_words reads it."""
+    def unit_text_of(unit):
+        path = M.unit_path(unit) if unit.startswith("actions.runner.") else f"/etc/systemd/system/{unit}"
+        for argv, text in reversed(host.fed):
+            if argv[-2:] == ("tee", path):
+                return text
+        return None
+
+    def answer(argv, input=None):
+        argv = list(argv)
+        if "LoadUnit" in argv:
+            return 0, json.dumps({"type": "o", "data": ["/org/freedesktop/systemd1/unit/" + argv[-1]]})
+        if "get-property" in argv:
+            unit, prop = argv[argv.index("get-property") + 2].rsplit("/", 1)[-1], argv[-1]
+            text = unit_text_of(unit)
+            if text is None:
+                return 1, "Failed to get property: Unit not loaded."
+            vals = [x.split("=", 1)[1] for x in text.splitlines() if x.startswith(prop + "=")]
+            if prop == "ExecStart":
+                ws = [systemd_words(x) for x in vals]
+                data = [[w[0], w] for w in ws if w]
+            elif prop == "Environment":
+                data = [w for x in vals for w in (systemd_words(x) or ["(not read as written)"])]
+            else:
+                data = vals[-1] if vals else ""
+            return 0, json.dumps({"type": "x", "data": data})
+        return 1, ""
+    return answer
+
+
 STREAM_WARNING = "warning: a line on standard error that is not part of any answer (R168)\n"
 
 
@@ -155,6 +227,7 @@ class FakeHost(M.Host):
         self.runs.setdefault(("getent", "passwd", "minions-runner"),
                              (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n"))
         self.runs.setdefault(("gh", "auth", "login", "--hostname", "github.com", "--help"), (0, GH_LOGIN_HELP))
+        self.runs.setdefault(M.BUS, bus_stand_in(self))  # R190: what systemd parsed, from the text the tool wrote
         if which is None:  # every program the tool and its hooks run (G8.9); no container engine
             which = ("gh", "sudo", "systemctl", *M.PROGRAMS, *M.HOOK_PROGRAMS)
         self._which, self._uid, self._groups = set(which), uid, list(groups)
@@ -326,6 +399,9 @@ class FakeHost(M.Host):
 
     def user(self):
         return "person"
+
+    def account(self):  # R190: the account by its number; a test that plants LOGNAME sets another
+        return getattr(self, "_account", "person")
 
     def disk_free(self, path):
         return self.free
@@ -7859,6 +7935,198 @@ class RuleTwo(unittest.TestCase):
             self.assertEqual(code, M.EXIT_NEED, lines)
             self.assertTrue(lines[0].startswith("need you: log in to GitHub: run `gh auth login`"), lines)
             self.assertEqual(os.listdir(host.state_dir()), [], f"the need to log in made the tool's record: {answer}")
+
+    def test_G5_27_the_watch_unit_carries_its_values_whole_or_refuses(self):
+        # R190: every value in the watch's unit is one value in systemd's grammar, or
+        # setup refuses before its first write. systemd reads an Environment= line by expanding its specifiers
+        # (a percent sign and a letter; "%%" is one percent sign), then taking one quoted word with C escapes.
+        def systemd_reads(line):
+            v = line[len("Environment="):]
+            out, i = [], 0
+            while i < len(v):  # the specifiers: here only "%%" may stand; any other % names something else
+                if v[i] == "%":
+                    if v[i + 1:i + 2] != "%":
+                        return None
+                    out.append("%"); i += 2
+                else:
+                    out.append(v[i]); i += 1
+            v = "".join(out)
+            if len(v) < 2 or v[0] != '"' or v[-1] != '"':
+                return None
+            inner, word, i = v[1:-1], [], 0
+            while i < len(inner):
+                c = inner[i]
+                if c == '"':
+                    return None  # the word ends before the line does: not one value
+                if c == "\\":
+                    nxt = inner[i + 1:i + 2]
+                    if nxt not in ("\\", '"'):
+                        return None  # another C escape would turn into another character
+                    word.append(nxt); i += 2
+                else:
+                    word.append(c); i += 1
+            return "".join(word)
+        for folders in ([], ["s bin"], ["bin 100%b"], ["p%hbin"], ["d$HOMEbin"], ['q"bin'], ["b\\x41bin"],
+                        ["s bin", "p%hbin", "d$HOMEbin", 'q"bin', "b\\x41bin"]):
+            path = ":".join([f"/home/you/{f}" for f in folders] + ["/usr/bin"])
+            svc, _ = M.watch_units("person", 300, path)
+            env = [x for x in svc.splitlines() if x.startswith("Environment=")]
+            self.assertEqual(len(env), 1, svc)
+            self.assertEqual(systemd_reads(env[0]), "PATH=" + path, f"not carried whole: {env[0]!r}")
+            self.assertIn("\nUser=person\n", svc)
+        # a folder with a line feed, a login name that is not the account's, a name systemd's User= does not take:
+        # setup stops before its first write, in one line that names the value and the next step
+        for label, change in (("a line feed in a PATH folder", "lf"), ("LOGNAME is another account", "logname"),
+                              ("a login name with a space", "space")):
+            host, sha = setup_host()
+            if change == "lf":
+                host.which = lambda n: "/home/you/b\nin/gh" if n == "gh" else f"/usr/bin/{n}"
+            elif change == "logname":
+                host._account = "someone-else"
+            else:
+                host.user = lambda: "per son"
+                host._account = "per son"
+            fresh_look(host)
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_STOP, (label, lines))
+            stop = [x for x in lines if x.startswith("stop")]
+            self.assertTrue(stop and ("Nothing was changed" in stop[-1]), (label, lines))
+            self.assertTrue(G8Words.NEXT.search(stop[-1]), (label, stop[-1]))
+            self.assertEqual([a for a in host.ran if a[:1] == ("sudo",)], [], f"{label}: an admin step ran")
+        # The runner's unit and its drop-in carry the repository's name inside a path (ExecStart, WorkingDirectory,
+        # and a shell line in ExecStopPost): setup refuses a name outside GitHub's own letters before any write.
+        for bad in ("o/r b", "o/r%b", "o/r$b", 'o/r"b', "o/r\\b", "o b/r", "o/r\nb", "o/r'b", "o/r;b"):
+            host, sha = setup_host()
+            out = Out()
+            code = M.setup(bad, host=host, gh=setup_gh(sha), out=out, interactive=True)
+            lines = out.getvalue().splitlines()
+            self.assertEqual(code, M.EXIT_STOP, (bad, lines))
+            self.assertTrue(lines and lines[0].startswith("stop not a repository name"), (bad, lines))
+            self.assertEqual([a for a in host.ran if a[:1] == ("sudo",)], [], f"{bad!r}: an admin step ran")
+            self.assertEqual(os.listdir(host.state_dir()), [], f"{bad!r}: setup wrote its record")
+        # THE READ-BACK: setup and status compare what systemd parsed, word for word, from its
+        # own answer over its bus, and say the watch is set up only when it equals what was meant
+        host, sha = setup_host()
+        host.which = lambda n: "/home/you/bin 100%b/gh" if n == "gh" else f"/usr/bin/{n}"
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue([x for x in lines if x.startswith("ok the watch runs every") and "read back word for word" in x], lines)
+        code, st = run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))
+        self.assertIn("ok the units of this tool read back word for word as systemd holds them (2)", st)
+        for label, bus in (
+                ("the watch: one word more", lambda real: lambda argv, input=None: (
+                    (lambda rc, out: (rc, out.replace('"-I",', '"-I", "x",')))(*real(argv, input)))),
+                ("the runner: one word more", lambda real: lambda argv, input=None: (
+                    (lambda rc, out: (rc, out.replace('runsvc.sh"]', 'runsvc.sh", "x"]')))(*real(argv, input)))),
+                ("no bus", lambda real: lambda argv, input=None: (1, "Failed to connect to bus: No such file or directory"))):
+            host, sha = setup_host()
+            host.runs[M.BUS] = bus(host.runs[M.BUS])
+            fresh_look(host)
+            code, lines = run_setup(setup_gh(sha), host)
+            said_ok = [x for x in lines if "read back word for word" in x]
+            self.assertEqual(said_ok, [], (label, lines))
+            if label.endswith("one word more"):
+                which = "watch" if "watch" in label else "runner"
+                self.assertEqual(code, M.EXIT_STOP, lines)
+                self.assertTrue([x for x in lines if x.startswith(f"stop the {which}'s unit, as systemd read it, is not what this tool wrote")], lines)
+                turned_on = [a for a in host.ran if "enable" in a and (("--now" in a) if which == "watch" else ("--now" not in a))]
+                self.assertEqual(turned_on, [], f"{label}: its unit was turned on: {lines}")
+                # the step for when the same stop comes back, and nothing of the person's in it
+                stop = [x for x in lines if x.startswith(f"stop the {which}'s unit")][0]
+                self.assertIn("if this line comes back the same, run", stop)
+                self.assertIn("uninstall --all", stop)
+            else:
+                self.assertTrue([x for x in lines if x.startswith("warn what systemd made of the runner's unit could not be read")], lines)
+                self.assertTrue([x for x in lines if x.startswith("warn what systemd made of the watch's unit could not be read")], lines)
+                code, st = run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))
+                self.assertTrue([x for x in st if x.startswith("warn what systemd made of") and "could not be read" in x], st)
+        # a setting of the person's own in the watch's unit (a drop-in with a proxy address holding a
+        # password, made up here): named by name only, a warn, never a stop; no line holds its value. A SECOND entry
+        # for the PATH this tool set (the later one wins at start) is a stop, and still no value is printed.
+        secret = "made-up-secret-7f3a"
+        for label, extra, kind in (("the person's own variable", f"HTTPS_PROXY=http://me:{secret}@proxy:3128", "warn"),
+                                   ("a second PATH", f"PATH=/home/you/{secret}:/usr/bin", "stop")):
+            host, sha = setup_host()
+            host.runs[M.BUS] = (lambda real, extra: lambda argv, input=None: (
+                (lambda rc, out: (rc, out.replace('"data": ["PATH=', '"data": [' + json.dumps(extra) + ', "PATH=', 1)
+                                  if argv[-1] == "Environment" and "minions_2dwatch" not in out else out)
+                 if argv[-1] == "Environment" and "minions-watch" in " ".join(argv) else (rc, out))(*real(argv, input))))(
+                host.runs[M.BUS], extra)
+            fresh_look(host)
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual([x for x in lines if secret in x], [], f"{label}: a value the tool did not write is printed")
+            if kind == "warn":
+                self.assertEqual(code, M.EXIT_OK, (label, lines))
+                self.assertTrue([x for x in lines if x.startswith("warn systemd holds in minions-watch.service, beside "
+                                                                  "what this tool wrote, setting(s) of your own for "
+                                                                  "HTTPS_PROXY")], lines)
+                code, st = run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))
+                self.assertEqual([x for x in st if secret in x], [], st)
+                self.assertIn("ok the units of this tool read back word for word as systemd holds them (2)", st)
+                self.assertTrue([x for x in st if x.startswith("warn systemd holds in minions-watch.service") and
+                                 "HTTPS_PROXY" in x], st)
+            else:
+                self.assertEqual(code, M.EXIT_STOP, (label, lines))
+                self.assertTrue([x for x in lines if x.startswith("stop the watch's unit, as systemd read it, is not "
+                                                                  "what this tool wrote: it holds 2 entries for PATH where this tool wrote one")], lines)
+        # the account's name that could not be read from its number: refused before the first write
+        host, sha = setup_host()
+        host.account = lambda: None
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertTrue([x for x in lines if x.startswith("stop the name of this account (number")], lines)
+        self.assertEqual([a for a in host.ran if a[:1] == ("sudo",)], [], lines)
+        # status compares with what setup wrote into User=, never with this terminal's LOGNAME
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        host.user = lambda: "someone-else"
+        code, st = run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))
+        self.assertIn("ok the units of this tool read back word for word as systemd holds them (2)", st)
+        # no name in the record and none for the number: the watch's unit "could not be read", whatever LOGNAME says
+        data = M.load_state(host)
+        self.assertEqual(data["watch"].get("user"), "person", "the name setup wrote is kept by the watch's passes")
+        data["watch"].pop("user")
+        M.save_state(host, data)
+        host.account = lambda: None
+        code, st = run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))
+        self.assertTrue([x for x in st if x.startswith("warn what systemd made of minions-watch.service (the account "
+                                                       "name setup wrote is not in its record")], st)
+        self.assertEqual([x for x in st if "read back word for word" in x or "is not what this tool wrote" in x], [], st)
+        # a bus that does not answer within its time limit: "could not be read", and every bus call had the limit
+        host, limits = FakeHost(), []
+        real_run = host.run
+        def timed_run(argv, timeout=20):
+            if tuple(argv[:3]) == M.BUS:
+                limits.append(timeout)
+                return 127, M.Out("", f"Command {argv!r} timed out after {timeout} seconds")
+            return real_run(argv, timeout)
+        host.run = timed_run
+        kind, why, own = M.unit_as_meant(host, "minions-watch.service", M.watch_meant("you", "/usr/bin"))
+        self.assertEqual(kind, "unread", why)
+        self.assertIn("the manager's bus gave no unit object for minions-watch.service", why)
+        self.assertTrue(limits and all(t == M.BUS_WAIT_S for t in limits), limits)
+        # a systemd older than the one whose busctl gives JSON: "could not be read", and the line says why
+        host = FakeHost()
+        host.runs[M.BUS] = lambda argv, input=None: (1, "busctl: unrecognized option '--json=short'")
+        host.runs[tuple(M.systemctl("--version"))] = (0, "systemd 239 (239)\n+PAM +AUDIT\n")
+        kind, why, own = M.unit_as_meant(host, "minions-watch.service", M.watch_meant("you", "/usr/bin"))
+        self.assertEqual((kind, own), ("unread", []), why)
+        self.assertIn("this computer's systemd is 239, and its busctl gives no JSON form, which this tool reads from "
+                      "systemd 240 on", why)
+        host.runs[tuple(M.systemctl("--version"))] = (0, "systemd 255 (255.4-1ubuntu8)\n")
+        self.assertNotIn("JSON", M.unit_as_meant(host, "minions-watch.service", M.watch_meant("you", "/usr/bin"))[1])
+        # what does reach the runner's unit is one word in its grammar: no space, quote, backslash, % or $
+        for good in ("o/r", "Some-Org/my.repo_2", "o/.."):
+            folder = M.runner_folder(good)
+            unit = M.unit_name(folder, "minions-box")
+            text = M.unit_text(folder, unit) + M.dropin_text(folder)
+            self.assertNotRegex(folder + unit, r"[\s\"'\\%$;]", good)
+            self.assertIn(f"\nExecStart={folder}/runsvc.sh\n", text)
+            self.assertEqual(os.path.dirname(folder), "/home/minions-runner/runners", good)
 
     def test_G5_25_the_watch_and_status_say_each_reason_by_its_kind(self):
         # R160 (owner's ruling 11-24): seen 2026-11-24, a watch with no login it could read said "GitHub answered
