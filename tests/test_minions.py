@@ -5202,7 +5202,10 @@ class G6(unittest.TestCase):
             was = os.environ.get("MINIONS_TEST_STREAMS")
             os.environ["MINIONS_TEST_STREAMS"] = streams
             try:
-                return {name: (code, [x.replace(host.state_dir(), "STATE") for x in lines])
+                # the clock read as it runs (status's "until 01:45:51Z") is not the streams' business: two runs a
+                # second apart read two times (seen on CI, 3.10, ddc45e4), so it is compared as HH:MM:SS
+                return {name: (code, [re.sub(r"(?<!\d)\d\d:\d\d:\d\dZ", "HH:MM:SSZ", x.replace(host.state_dir(), "STATE"))
+                                      for x in lines])
                         for name, host, (code, lines) in worlds()}
             finally:
                 if was is None:
@@ -7749,7 +7752,7 @@ class Rule31(unittest.TestCase):
                 return v
             v = re.sub(r"/tmp/[\w.-]+", "/tmp/T", v)
             v = re.sub(r"\btmp[a-z0-9_]{8}\b", "tmpX", v)
-            v = re.sub(r"\b\d\d:\d\d(:\d\d)?(Z| UTC)", r"HH:MM\2", v)  # the clock, where a run reads it
+            v = re.sub(r"(?<!\d)\d\d:\d\d(:\d\d)?(Z| UTC)", r"HH:MM\2", v)  # the clock, where a run reads it
             v = re.sub(r"\b1[6-9]\d{8}\b", "EPOCH", v)  # the clock as seconds (the watch's seen mark)
             return re.sub(r"minions-([a-z-]+)-[0-9a-f]{8}", r"minions-\1-X", v)
 
