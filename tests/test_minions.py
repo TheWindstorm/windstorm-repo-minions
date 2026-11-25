@@ -9597,7 +9597,11 @@ for name, make, run in runs:
                          (None, M.NOT_ONE_READING_IS.format("U+0085, U+2028 and U+2029")))
         self.assertEqual(M.unread_step(M.NOT_ONE_READING_IS.format("U+0085 and U+2029")),
                          "Take U+0085 and U+2029 out of the file on GitHub")
-        self.assertEqual(M.workflow_text(b64("on: [push]\rjobs:\r\n  a: {}\n")), ("on: [push]\rjobs:\r\n  a: {}\n", ""))
+        self.assertEqual(M.workflow_text(b64("on: [push]\rjobs:\r\n  a:\r    runs-on: x\n")),
+                         ("on: [push]\rjobs:\r\n  a:\r    runs-on: x\n", ""))
+        # R202: a job given whole on its key's line ("a: {}") is not a plain job key: the file is not read, named
+        self.assertEqual(M.workflow_text(b64("on: [push]\rjobs:\r\n  a: {}\n"))[1], M.NOT_JOBS_READ_IS.format(
+            3, "not a job's plain name and a colon (letters, digits, _ and -)"))
 
     def workflow_file_unread(self, answer, said_is, step):
         def not_text(gh, name):
@@ -9650,6 +9654,76 @@ for name, make, run in runs:
         self.assertIn("runs-on: ubuntu-latest", x)
         self.assertEqual(gh.blobs(), [])
         self.assertFalse([x for x in lines if "no job read" in x], lines)
+
+    def test_G3_11_a_file_whose_jobs_cannot_be_told_apart_is_not_read_and_the_others_go_on(self):
+        # Row R202 (the maintainer's sighting, 2026-11-25): a job's key in another valid spelling started no job, and
+        # its lines were read as part of the job above it: the page named a job moved that was not, gave a job a
+        # reason that was another's, left a job out of every list, and the line written was another job's. Now a file
+        # in which a line at the jobs' indent is not a plain job key is not read at all, on every road: one line
+        # for it on the terminal and on the page, no job of it named, nothing written to it, and the other files
+        # move as before. Each spelling is planted as the first job and as a later one, beside a job that moves
+        # and beside one that stays.
+        spellings = (('"second":', "double quotes"), ("'second':", "single quotes"), ("second: &s", "an anchor"),
+                     ("second :", "a space before the colon"), ("sec.ond:", "an id with a dot"),
+                     ("second: *base", "a job given whole as an alias"))
+        base = "x-base: &base\n  runs-on: ubuntu-latest\n  steps:\n    - run: b\n"
+        odd_body = "\n    runs-on: ubuntu-latest\n    steps:\n      - run: b\n"
+        path = ".github/workflows/two.yml"
+        for key, what in spellings:
+            for neighbour in ("ubuntu-latest", "macos-latest"):
+                for first in (True, False):
+                    with self.subTest(what=what, neighbour=neighbour, odd_first=first):
+                        plain_job = f"  first:\n    runs-on: {neighbour}\n    steps:\n      - run: a\n"
+                        odd_job = "  " + key + ("\n" if key.endswith("*base") else odd_body)
+                        text = ("name: two\non: [push]\n" + (base if "*base" in key else "") + "jobs:\n"
+                                + (odd_job + plain_job if first else plain_job + odd_job))
+                        gh = MoveGH({".github/workflows/ci.yml": CI_YML, path: text})
+                        code, lines = run_move(gh, move_host())
+                        # the heart: nothing written to the file, no job of it named, the one not-read line
+                        written = [e["path"] for m, p, b in gh.writes if p.endswith("/git/trees") for e in b["tree"]]
+                        self.assertEqual(written, [".github/workflows/ci.yml"], lines)  # the other file moves
+                        self.assertFalse([x for x in lines if f"{path} job " in x], lines)
+                        said = [x for x in lines if x.startswith(f"warn {path}: its line ")]
+                        self.assertEqual(len(said), 1, lines)
+                        self.assertIn("so this tool neither reads nor changes it; it stays as it is", said[0])
+                        body = pr_body_of(gh)
+                        self.assertFalse([x for x in body.splitlines() if f"`{path}` job" in x], body)
+                        unread = body.split("## Not read (left as they are)\n")[1].split("\n## ")[0]
+                        (page,) = [x for x in unread.splitlines() if x.startswith(f"- `{path}`: its line ")]
+                        self.assertIn("it stays as it is", page)
+                        self.assertEqual(code, M.EXIT_NEED, lines)
+                        # look alike
+                        out = Out()
+                        M.look(REPO, False, host=linux_host(), gh=MoveGH({".github/workflows/ci.yml": CI_YML,
+                                                                         path: text}), out=out)
+                        looked = out.printed()
+                        self.assertFalse([x for x in looked if f"{path} job " in x], looked)
+                        self.assertEqual(len([x for x in looked if x.startswith(f"warn {path}: its line ")]), 1, looked)
+                        # the words: which line, why, and the step
+                        n = text.splitlines().index("  " + key) + 1
+                        why = M.NOT_JOBS_READ_IS.format(n, "not a job's plain name and a colon (letters, digits, _ and -)")
+                        step = "Write each job under jobs: as its plain name and a colon, all at one indent, on GitHub"
+                        self.assertEqual(said[0], f"warn {path}: {why}, so this tool neither reads nor changes it; it "
+                                                  f"stays as it is. {step}, then run look and move again to move its jobs")
+                        self.assertIn(f"warn {path}: {why}, so this tool neither reads nor changes it. {step}, then run "
+                                      f"look again to have it read", looked)
+                        self.assertEqual(page, f"- `{path}`: {why}, so this tool neither reads nor changes it; it stays "
+                                               f"as it is. {step}, then run `look {REPO}` and `move {REPO}` again to move "
+                                               "its jobs")
+        # every road: move --verify and uninstall's put-back name such a file too, as they name a file not read
+        b64 = lambda t: {"content": M.base64.b64encode(t.encode()).decode()}
+        text = "name: two\non: [push]\njobs:\n  first:\n    runs-on: ubuntu-latest\n  \"second\":\n    runs-on: x\n"
+        self.workflow_file_unread(b64(text), M.NOT_JOBS_READ_IS.format(
+            6, "not a job's plain name and a colon (letters, digits, _ and -)"),
+            "Write each job under jobs: as its plain name and a colon, all at one indent, on GitHub")
+        # a line less indented than the jobs is not read either; comments, blank lines and deeper lines never set a
+        # file aside
+        self.assertEqual(M.workflow_text(b64("on: [push]\njobs:\n    a:\n      runs-on: x\n  b:\n"))[1],
+                         M.NOT_JOBS_READ_IS.format(5, "less indented than the jobs above it"))
+        fine = ("on: [push]\njobs:\n# a comment\n  a:   # its comment\n\n    runs-on: x\n      # deeper\n"
+                "    steps:\n      - run: |\n          echo 'b:' \"c\" :\n  b:\n    runs-on: y\n")
+        self.assertEqual(M.workflow_text(b64(fine)), (fine, ""))
+        self.assertEqual([j["id"] for j in M.read_workflow(fine)], ["a", "b"])
 
     def test_rule_31_save_state_is_the_one_writer_of_the_record(self):
         # 2026-11-24: the fixed stored marks are safe only because save_state is the one writer of

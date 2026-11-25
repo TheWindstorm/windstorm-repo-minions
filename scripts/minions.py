@@ -152,6 +152,14 @@ NOT_GIVEN_IS = "GitHub did not give its content in its answer (it does not, for 
 # the character by its code. A CR and a CRLF end a line in every YAML and are read as lines (yaml_lines).
 LINE_ENDS_DISPUTED = "\x85\u2028\u2029"
 NOT_ONE_READING_IS = "its text holds {}, and readers of this file do not agree where its lines end"
+# R202 (the maintainer's sighting, 2026-11-25): a job's key in another valid spelling (in quotes, with an anchor, with
+# a space before its colon) started no job, and its lines were read as the job above's: the page named a wrong job, a
+# wrong reason, and the line written was another job's. An error is never an absence: the jobs' indent is that of the
+# first line under jobs: that is not blank and not a comment, and a file in which a line at that indent is not a plain
+# job key, or a line sits less indented than the jobs, is not read at all, named, and left as it is. Comments, blank
+# lines and deeper lines cannot change which job a line belongs to, so they never set a file aside.
+NOT_JOBS_READ_IS = "its line {} under jobs: is {}, so this tool cannot tell which job each line belongs to"
+JOB_KEY = re.compile(r"^[A-Za-z0-9_-]+:\s*$")
 
 
 def unread_step(why: str) -> str:
@@ -160,6 +168,8 @@ def unread_step(why: str) -> str:
         return "Make the file UTF-8 again on GitHub"
     if why == NOT_GIVEN_IS:
         return "Make the file smaller than 1 MB on GitHub"
+    if why.startswith(NOT_JOBS_READ_IS.split("{}")[0]):
+        return "Write each job under jobs: as its plain name and a colon, all at one indent, on GitHub"
     return f"Take {and_list(re.findall(r'U[+][0-9A-F]{4}', why))} out of the file on GitHub"
 
 
@@ -179,7 +189,34 @@ def workflow_text(fd: object) -> tuple[str | None, str]:
     except (ValueError, UnicodeDecodeError):
         return None, NOT_TEXT_IS
     held = [f"U+{ord(c):04X}" for c in LINE_ENDS_DISPUTED if c in text]
-    return (None, NOT_ONE_READING_IS.format(and_list(held))) if held else (text, "")
+    if held:
+        return None, NOT_ONE_READING_IS.format(and_list(held))
+    why = jobs_unreadable(text)
+    return (None, why) if why else (text, "")
+
+
+def jobs_unreadable(text: str) -> str:
+    """R202: why the jobs of this text cannot be told apart line by line, or "" when every line under jobs: at the
+    jobs' indent is a plain job key and none sits less indented."""
+    in_jobs, job_indent = False, None
+    for n, raw in enumerate(yaml_lines(text), 1):
+        line = strip_comment(raw)
+        if not line.strip(BLANKS):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        body = line.strip(BLANKS)
+        if indent == 0:
+            in_jobs, job_indent = body == "jobs:", None
+            continue
+        if not in_jobs:
+            continue
+        if job_indent is None:
+            job_indent = indent
+        if indent < job_indent:
+            return NOT_JOBS_READ_IS.format(n, "less indented than the jobs above it")
+        if indent == job_indent and not JOB_KEY.match(body):
+            return NOT_JOBS_READ_IS.format(n, "not a job's plain name and a colon (letters, digits, _ and -)")
+    return ""
 
 
 def odd(text: str) -> bool:
@@ -5598,7 +5635,7 @@ def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report,
     """The workflow files and their text. A file GitHub would not give is a stop; one whose content is not text, or
     whose content GitHub's answer does not carry (rule 6), is left out and put in not_text with why (NOT_TEXT_IS or
     NOT_GIVEN_IS), or whose text holds a character readers of YAML do not agree is a line end (NOT_ONE_READING_IS),
-    for the caller to name in its own words (rule 31 (vi)), and the others go on."""
+    or whose jobs cannot be told apart line by line (NOT_JOBS_READ_IS, R202), for the caller to name in its own words (rule 31 (vi)), and the others go on."""
     q = f"?ref={ref}" if ref else ""
     s, d = gh.api("GET", f"repos/{repo}/contents/.github/workflows{q}")
     if s == 404:
@@ -5707,7 +5744,7 @@ def md_job(p: str, j: str, rest: str) -> str:
 
 
 def pr_body(moved: list, left: list, publish: list, here: list, first: list[str] | None = None,
-            repo: str | None = None) -> str:
+            repo: str | None = None, unread: dict[str, str] | None = None) -> str:
     # G7.17 (R116): the page the person reads when they decide carries move's lines, word for word, above all else.
     out = (["## Before you merge", ""] + [f"- {x}" for x in first] + [""]) if first else []
     out += ["This pull request changes only `runs-on` lines, so these jobs run on your own computer's runner "
@@ -5731,6 +5768,11 @@ def pr_body(moved: list, left: list, publish: list, here: list, first: list[str]
     if here:
         out += ["", "## Already on your computer"]
         out += [md_job(p, j, w) for p, j, w in here]
+    if unread:  # R202: a file this run did not read is named on the page too, with why, never left out in silence
+        out += ["", "## Not read (left as they are)"]
+        out += [f"- {md_value(p)}: {why}, so this tool neither reads nor changes it; it stays as it is. "
+                f"{unread_step(why)}, then run `look {repo_word(repo)}` and `move {repo_word(repo)}` again to move its "
+                "jobs" + (f" {SHOWN_CHANGED}" if plain(p)[1] else "") for p, why in sorted(unread.items())]
     out += ["", "After you merge it, `move --verify` sees one real run of each moved workflow finish on your "
             "computer. Until then nothing is called moved."]
     return "\n".join(md_line(x) for x in out) + "\n"
@@ -5833,7 +5875,7 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     if not moved:
         rep.ok("no job can move to this computer now; nothing was changed")
         return rep.code()
-    pr = open_move_pr(gh, host, repo, base, changed, pr_body(moved, left, publish, here, move_lines(survey_), repo), rep)
+    pr = open_move_pr(gh, host, repo, base, changed, pr_body(moved, left, publish, here, move_lines(survey_), repo, not_text), rep)
     if pr is None:
         return rep.code()
     data = load_state(host)
