@@ -6807,7 +6807,10 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         journal(host, "delete", f"what {RUNNER_USER} owns in {', '.join(PUBLIC_TMP)} (as {RUNNER_USER})")
         give_rights_back(host, list(PUBLIC_TMP))  # R136 (fault 1): its own read-only folders there too, as itself
         as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-delete"])
-        rc, out = as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-print0"])  # item 4: NUL
+        # R136 (the owner's word 2026-11-25): another program's file that is gone before find reads it is no error in a
+        # place every program writes all day (-ignore_readdir_race); every other error of the walk still is
+        rc, out = as_runner(host, ["find", *PUBLIC_TMP, "-ignore_readdir_race", "-xdev", "-user", RUNNER_USER,
+                                   "-print0"])  # item 4: NUL
         files = [x for x in nul_items(out) if x.startswith(tuple(t + "/" for t in PUBLIC_TMP))]
         rep.stayed["public_listed"] = files  # R136 (change 2): the census says what root's walk found beyond this list
         # R167: find exits 1 when a folder it may not enter was met (systemd's private folders in /tmp, on any stock
@@ -6970,14 +6973,16 @@ def hand_to_root(host: Host, uid: str, rep: Report) -> list[str]:
     # nothing of another number changed; read back by the same walk with no -execdir.
     tops_ = [t for t in PUBLIC_TMP if root_test(host, t)]
     if tops_:
-        rc, out = sudo(host, ["find", *tops_, "-xdev", "-uid", uid, "-print0", "-execdir", "chown", "-h", "root:root",
-                              "{}", "+"])
+        rc, out = sudo(host, ["find", *tops_, "-ignore_readdir_race", "-xdev", "-uid", uid, "-print0", "-execdir",
+                              "chown", "-h", "root:root", "{}", "+"])
         gave = [x for x in nul_items(out) if x.startswith(tuple(t + "/" for t in tops_))]
-        rc2, still = sudo(host, ["find", *tops_, "-xdev", "-uid", uid, "-print0"])
+        rc2, still = sudo(host, ["find", *tops_, "-ignore_readdir_race", "-xdev", "-uid", uid, "-print0"])
         left = [x for x in nul_items(still) if x.startswith(tuple(t + "/" for t in tops_))]
         if rc2 != 0:
+            # find's own words name the path it could not read (one a program gone before find reads it is no error,
+            # -ignore_readdir_race; not seen: a mount in /tmp that root itself may not enter, a FUSE one of another user)
             failed.append(f"whether its things in {', '.join(tops_)} are handed to root could not be read (find "
-                          f"answered code {rc2}: {tail(still) or 'nothing'})")
+                          f"answered code {rc2}: {tail(said(still).replace(chr(0), chr(10))) or 'nothing'})")
         elif left:
             more = f" and {len(left) - LEFT_ON_SCREEN} more" if len(left) > LEFT_ON_SCREEN else ""
             failed.append(f"its things {', '.join(plain(x)[0] for x in left[:LEFT_ON_SCREEN])}{more} in "

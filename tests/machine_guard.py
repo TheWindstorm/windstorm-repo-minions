@@ -87,8 +87,47 @@ class MachineReached(RuntimeError):
     pass
 
 
+def _fd_path(fd):
+    """Where an open folder's handle points (Linux: /proc; macOS: F_GETPATH), or None when it cannot be read."""
+    if not isinstance(fd, int) or fd < 0:
+        return None
+    try:
+        return os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+        pass
+    try:
+        import fcntl
+        if hasattr(fcntl, "F_GETPATH"):
+            return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024)).split("\0", 1)[0] or None
+    except OSError:
+        pass
+    return None
+
+
+# Row R183 (the maintainer's word 2026-11-25): the suite's result, and what it leaves behind, do not depend on the
+# folder it is started from. shutil.rmtree opens each folder inside its tree by its bare name from its parent's
+# handle; Python's "open" event carries no handle, so such a name is judged as below the tree's own top (rmtree
+# follows no link), never as below the current folder. A name an event gives with its handle (os.remove, os.rmdir,
+# os.mkdir, ...) is judged by where that handle points. A plain relative name is still judged by the current folder.
+_RM_TOPS: list = []
+_real_rmtree = shutil.rmtree
+
+
+def _rmtree(path, *a, **k):
+    top = os.fsdecode(path) if isinstance(path, (str, bytes)) else None
+    if top is not None and not os.path.isabs(top):
+        top = os.path.join(_fd_path(k.get("dir_fd")) or os.getcwd(), top)
+    _RM_TOPS.append(os.path.realpath(top) if top else None)
+    try:
+        return _real_rmtree(path, *a, **k)
+    finally:
+        _RM_TOPS.pop()
+
+
+_rmtree.avoids_symlink_attacks = getattr(_real_rmtree, "avoids_symlink_attacks", False)
+shutil.rmtree = _rmtree
 _TMP = tempfile.mkdtemp(prefix="minions-guard-")
-atexit.register(shutil.rmtree, _TMP, True)
+atexit.register(lambda: shutil.rmtree(_TMP, True))  # looked up at exit: the rmtree above
 BIN = os.path.join(_TMP, "bin")
 LOG = os.path.join(_TMP, "reached.log")
 os.makedirs(BIN)
@@ -171,12 +210,15 @@ def _where():
     return os.environ.get("MINIONS_GUARD_TEST") or "outside a test"
 
 
-def _in_home(p):
+def _in_home(p, dir_fd=None):
     if isinstance(p, bytes):
         p = os.fsdecode(p)
     if not isinstance(p, str) or not p:
         return None
-    p = os.path.realpath(p if os.path.isabs(p) else os.path.join(os.getcwd(), p))
+    if not os.path.isabs(p):  # R183: relative to the handle it came with, else to rmtree's top, else to the folder
+        base = _fd_path(dir_fd) or (_RM_TOPS[-1] if _RM_TOPS and _RM_TOPS[-1] else None) or os.getcwd()
+        p = os.path.join(base, p)
+    p = os.path.realpath(p)
     if p != REAL_HOME and not p.startswith(REAL_HOME + os.sep):
         return None
     if "__pycache__" in p or any(p == r or p.startswith(r + os.sep) for r in ALLOWED):
@@ -225,6 +267,10 @@ def _child(exe, argv, env):
     return None
 
 
+_DIR_FD_AT = {"os.remove": 1, "os.rmdir": 1, "os.mkdir": 2, "os.chmod": 2, "os.chown": 3, "os.utime": 3,
+              "os.rename": 2, "os.replace": 2, "os.link": 2, "shutil.rmtree": 1}  # each event's handle (args)
+
+
 def _hook(event, args):
     global _busy
     if _busy:
@@ -241,7 +287,8 @@ def _hook(event, args):
         elif event in ("open", "os.listdir", "os.scandir", "os.mkdir", "os.remove", "os.rmdir", "os.rename",
                        "os.replace", "os.chmod", "os.chown", "os.symlink", "os.link", "shutil.rmtree", "os.truncate",
                        "os.utime"):
-            p = _in_home(args[0]) if args else None
+            at = _DIR_FD_AT.get(event)
+            p = _in_home(args[0], args[at] if at is not None and len(args) > at else None) if args else None
             if p:
                 what = f"{event} in this account's real home: {p}"
     except Exception as e:  # the guard's own fault is counted too, never read as "nothing reached"

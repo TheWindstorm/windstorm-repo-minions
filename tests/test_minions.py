@@ -3796,6 +3796,11 @@ class World:
         # R136 (the owner's change 2): folders of someone else's the runner user may not enter (0700): its own finds
         # say "Permission denied" for each (exit 1) and list nothing below it; root's walk enters them
         self.closed = set()
+        # R136 (the owner's word 2026-11-25): another program's files in /tmp that it deletes while a walk is under way
+        # (`vanish`: gone before find reads them; findutils 4.9.0 says "No such file or directory", exit 1, unless
+        # -ignore_readdir_race), and a place there root itself may not enter (`root_closed`: a FUSE mount of another
+        # user's answers root "Permission denied"; not seen on a real machine, named)
+        self.vanish, self.root_closed = set(), set()
 
     def owner_of(self, path):
         if path in self.owner:
@@ -3823,6 +3828,19 @@ class World:
                 continue
             out.append(p)
         return out
+
+    def raced(self, a):
+        """find's answer for what vanished under its walk: ([its lines], code)."""
+        lines, code = [], 0
+        for p in sorted(self.vanish):
+            self.paths.discard(p)
+            if "-ignore_readdir_race" not in a:
+                lines.append(f"find: '{p}': No such file or directory\n")
+                code = 1
+        for p in sorted(self.root_closed):  # `vanish` stays: the other program goes on, so every walk meets it
+            lines.append(f"find: '{p}': Permission denied\n")
+            code = 1
+        return lines, code
 
     def kind_of(self, p):
         return "l" if p in self.links else "d" if self.is_dir(p) else "f"
@@ -3944,7 +3962,8 @@ class World:
         end = "\0" if a[-1].endswith("\\0") or "-print0" in a else "\n"  # R136 (item 4): each record ends with a NUL
         if ("-print" in a or "-print0" in a) and starts == list(tops):
             self.order.append("find -print in /tmp")
-            return shut, "".join(p_ + end for p_ in walk() if self.owner_of(p_) == R)
+            said_, raced = self.raced(a) if self.vanish else ([], 0)
+            return shut or raced, "".join(p_ + end for p_ in walk() if self.owner_of(p_) == R) + "".join(said_)
         if "-maxdepth" in a and a[-1] in ("%u\t%p\n", "%u\t%p\\0"):
             return 0, "".join(f"{self.owner_of(x)}\t{x}{end}" for x in starts if x in self.paths)
         if "-mindepth" in a:
@@ -4056,6 +4075,9 @@ class World:
             for p in found:
                 if hand:
                     self.owner[p] = "root"
+            if any(s_.startswith("/tmp") for s_ in starts) and (self.vanish or self.root_closed):
+                said_, code = self.raced(a)
+                return code, "".join(p + end for p in found) + "".join(said_)
             if "-printf" in a:
                 return 0, "".join(f"{self.kind_of(p)}\t{p}{end}" for p in found)
             return 0, "".join(p + end for p in found)
@@ -5073,6 +5095,37 @@ class G6(unittest.TestCase):
                                   "user's number was left there to hand to root (root's walk, read back)"], lines)
         self.assertEqual(world.owner_of("/srv/elsewhere/r.txt"), "person")
         self.assertEqual(world.owner_of(P_), "person")
+        # The owner's word (2026-11-25, seen with the real find 4.9.0: 7 of 300 walks beside a program that makes and
+        # deletes files ended with exit 1): another program's file that is gone before find reads it never stops the
+        # leave and is never "could not be read" (-ignore_readdir_race on the runner user's listing, root's hand and
+        # root's read-back); with a held thing there too, so root's walk has something to hand.
+        for held in (False, True):
+            gh, world, host = remove_setup(moved=False)
+            world.paths |= {"/tmp/other-cache", "/tmp/other-cache/tmp.1"}
+            world.owner.update({"/tmp/other-cache": "person", "/tmp/other-cache/tmp.1": "person"})
+            world.dirs.add("/tmp/other-cache")
+            world.vanish.add("/tmp/other-cache/tmp.1")
+            if held:
+                world.paths |= {J, f"{J}/root.txt"}
+                world.owner.update({J: R, f"{J}/root.txt": "root"})
+                world.dirs.add(J)
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_OK, (held, lines))
+            self.assertFalse([x for x in lines if x.startswith("stop ") or "could not be read" in x], (held, lines))
+            self.assertFalse(world.user, held)
+            races = [a for a in host.ran if a[2:3] == ("find",) and "/tmp" in a and ("-uid" in a or "-print0" in a)]
+            self.assertTrue(races and all("-ignore_readdir_race" in a for a in races), races)
+        # Every other error of the walk still stops before userdel, and the stop names the path find named (a place in
+        # /tmp root itself may not enter: a FUSE mount of another user's; not seen on a real machine, named).
+        gh, world, host = remove_setup(moved=False)
+        world.root_closed.add("/tmp/fuse-mount")
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        stop = [x for x in lines if x.startswith("stop ")]
+        self.assertTrue(stop and "the user minions-runner is not deleted" in stop[0] and "'/tmp/fuse-mount': Permission "
+                        "denied" in stop[0] and "run the same command again" in stop[0], lines)
+        self.assertTrue(world.user)
+        self.assertNotIn("userdel", world.order)
 
     def test_G6_19_a_name_read_from_the_state_or_journal_is_checked_before_a_delete(self):
         # R136 (the owner's ruling 2026-11-25, item 4): a runner folder's name read from the state or from a journal
@@ -8151,6 +8204,73 @@ class MachineGuard(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr[-3000:])
             self.assertIn("Ran 11 tests", r.stderr)
             self.assertNotIn("rule 17", r.stderr)
+
+    def test_G9_12_where_the_suite_starts_does_not_change_what_it_finds(self):
+        # Row R183 (the maintainer's trial 2026-11-25, on 6cc829a): started from a folder inside the home, the suite
+        # failed 3 tests and left 19 folders in /tmp: the guard joined every relative name to the current folder, and
+        # shutil.rmtree opens each folder inside its tree by its bare name from its parent's handle, so the suite's own
+        # cleanup was taken for a reach into the home. In a child with a made home (the guard's REAL_HOME, nothing
+        # allowed around it), started from a folder inside it: the cleanup of a tree outside it reaches nothing, and
+        # the guard's own folder is gone at exit; the guard is not loosened: a plain relative open there is still
+        # counted, and so is a folder made through a handle that points into it.
+        tests = os.path.dirname(os.path.abspath(__file__))
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            script = os.path.join(d, "child.py")
+            with open(script, "w") as f:
+                f.write(f"""import json, os, shutil, sys
+sys.path.insert(0, {tests!r})
+import machine_guard as g
+home = os.path.realpath({d!r} + "/made-home")
+os.makedirs(home + "/sub")
+tree = os.path.realpath({d!r} + "/outside/tree")
+os.makedirs(tree + "/a/b")
+open(tree + "/a/b/f", "w").close()
+hfd = os.open(home, os.O_RDONLY)  # a handle into the made home, opened before it is the home the guard watches
+g.REAL_HOME, g.ALLOWED = home, ()
+os.chdir(home + "/sub")
+out = {{"guard_tmp": g._TMP}}
+try:
+    shutil.rmtree(tree)
+    out["cleanup"] = "reached nothing"
+except g.MachineReached as e:
+    out["cleanup"] = str(e)
+out["tree_gone"] = not os.path.exists(tree)
+for name, act in (("through a handle", lambda: os.mkdir("y", dir_fd=hfd)),):
+    with g.expect() as seen:
+        try:
+            os.chdir("/")
+            act()
+            out[name] = "not counted"
+        except g.MachineReached:
+            out[name] = "counted"
+        finally:
+            os.chdir(home + "/sub")
+out["seen"] = g.seen()
+print(json.dumps(out))
+""")
+            r = subprocess.run([sys.executable, "-I", script], capture_output=True, text=True, timeout=120,
+                               cwd=d, env=dict(os.environ))
+            out = json.loads(r.stdout.strip().splitlines()[-1])
+            self.assertEqual(out["cleanup"], "reached nothing", (out, r.stderr[-2000:]))
+            self.assertTrue(out["tree_gone"], out)
+            self.assertEqual(out["seen"], [], out)
+            self.assertEqual(out["through a handle"], "counted", out)  # made through a handle into the made home
+            self.assertFalse(os.path.exists(out["guard_tmp"]), (out, r.stderr[-2000:]))  # its own folder, at exit
+        # a plain relative open from a folder inside the made home is still counted (the guard is not loosened)
+        with tempfile.TemporaryDirectory(dir=TMP) as d:
+            home = os.path.realpath(os.path.join(d, "made-home"))
+            os.makedirs(os.path.join(home, "sub"))
+            here, old = os.getcwd(), (machine_guard.REAL_HOME, machine_guard.ALLOWED)
+            try:
+                machine_guard.REAL_HOME, machine_guard.ALLOWED = home, ()
+                os.chdir(os.path.join(home, "sub"))
+                with machine_guard.expect() as seen:
+                    with self.assertRaises(machine_guard.MachineReached):
+                        open("x", "w")
+                self.assertIn("in this account's real home", seen[0])
+            finally:
+                os.chdir(here)
+                machine_guard.REAL_HOME, machine_guard.ALLOWED = old
 
     def test_G9_12_the_guard_has_no_switch(self):
         # Rule 17, THE GUARD HAS NO SWITCH (the maintainer's ruling 2026-11-24): MINIONS_GUARD_OFF=1 set in the
