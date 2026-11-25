@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import tempfile
+import unicodedata
 import unittest
 from unittest import mock
 
@@ -103,7 +104,10 @@ class Out(io.StringIO):
         PRINTED.append((test_of_stack(), self))
 
     def printed(self):
-        return super().getvalue().splitlines()
+        """The lines as a terminal gets them: split on a line feed only, so a carriage return, a form feed or
+        U+2028 a value carried stays inside its line where ZRule31 reads it (str.splitlines would split on them)."""
+        raw = super().getvalue()
+        return (raw[:-1] if raw.endswith("\n") else raw).split("\n") if raw else []
 
     def getvalue(self):
         raw = super().getvalue()
@@ -4065,6 +4069,11 @@ class G6(unittest.TestCase):
             self.assertIn("`sudo atrm 4`", x)
             self.assertEqual(x.count("sudo atrm"), 1, "the running copy (=) is the same job, named once")
             self.assertIn("remove them first", x)
+            # the owner's 7:45 PM ET 11-24, thing 2: with no record that this tool made the user, what is true and
+            # the way on, never "open an issue" for something of the person's own
+            self.assertNotIn("open an issue", x)
+            self.assertIn("If they are something else of yours, they are yours: setup goes on once they are no longer "
+                          "there, removed as above or moved away", x)
         host.runs[R_ROOT + (cron,)] = (1, "")  # the steps taken as printed
         host.runs[("sudo", "-n", "find", at)] = (0, "")
         self.assertEqual(run_setup(no_runner_gh(sha), host)[0], M.EXIT_OK)
@@ -4101,6 +4110,8 @@ class G6(unittest.TestCase):
         code, lines = run_setup(no_runner_gh(sha), host)
         said_ = [x for x in lines if x.startswith("warn not read: where cron and at keep their jobs")]
         self.assertTrue(said_, lines)
+        # the owner's 7:45 PM ET 11-24, thing 1: when it matters, in the line
+        self.assertIn("this matters only where a user of that name was on this computer before", said_[0])
 
     def test_G6_30_uninstall_with_the_user_gone_names_what_it_left_scheduled(self):
         # Change 4: uninstall with the user absent runs nothing as it and deletes none of its schedules; it names them
@@ -5723,7 +5734,7 @@ def hook_run(folder, seen_value, wait_s=0, event=None):
         with open(env["GITHUB_EVENT_PATH"], "w") as f:
             json.dump(event, f)
     r = subprocess.run(["bash", path], env=env, capture_output=True, text=True, timeout=60)
-    HOOKS.append((test_of_stack(), (r.stdout + r.stderr).splitlines()))  # rule 31 (v): read by ZRule31
+    HOOKS.append((test_of_stack(), (r.stdout + r.stderr).split("\n")))  # rule 31 (v): read by ZRule31
     return r.returncode, r.stdout + r.stderr
 
 
@@ -7361,6 +7372,20 @@ ODD_B_YML = ("name: rel\non:\n  push:\n    tags:\n      - 'v*'\njobs:\n  publish
              "    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n")
 
 
+# Rule 31 (a), the owner's 7:43 PM ET 11-24: workflow names that hold a line break, a carriage return, and a
+# terminal's escape (erase the line, cursor up), each a publish job, so look tries to give a command that names it.
+ODD_NL = ".github/workflows/odd\nsudo id #.yml"
+ODD_CR = ".github/workflows/odd\rsudo id #.yml"
+ODD_ESC = ".github/workflows/odd\x1b[2K\x1b[1Arel.yml"
+# The test's own reading of the class, by Unicode category, not the tool's: control characters (C0, C1, DEL, tab),
+# format characters (bidi overrides and the like), lone surrogates, and the line and paragraph separators.
+ODD_CATEGORIES = ("Cc", "Cf", "Cs", "Zl", "Zp")
+
+
+def odd_in(text):
+    return [hex(ord(c)) for c in text if unicodedata.category(c) in ODD_CATEGORIES]
+
+
 def outside_quotes(line):
     """A command line with its single-quoted parts taken out: what the shell would read as code."""
     return re.sub(r"'[^']*'", "", line)
@@ -7434,6 +7459,105 @@ class Rule31(unittest.TestCase):
         M.save_state(host, data)
         self.assertEqual(M.load_state(host)["odd"], "a " + "0" * 12 + "x" + "0" * 12 + " b")
 
+    def test_rule_31_a_names_with_a_line_break_or_a_terminal_escape_never_make_a_line_or_a_command(self):
+        # The owner's 7:43 PM ET 11-24, (a), (b), (d): three publish jobs whose workflow files hold a line feed, a
+        # carriage return and an escape, and a job that moves from a file with a line feed (for the pull request).
+        build = ".github/workflows/b\nsudo id #.yml"
+        files = {ODD_NL: ODD_B_YML, ODD_CR: ODD_B_YML, ODD_ESC: ODD_B_YML, build: CI_YML}
+
+        class OddLook(StandIn):
+            def api(self, method, path, body=None):
+                base = f"repos/{REPO}/contents/.github/workflows"
+                if method == "GET" and path.split("?")[0] == base:
+                    self.calls.append((method, path))
+                    return 200, [{"name": p.rsplit("/", 1)[1], "path": p} for p in sorted(files)]
+                if method == "GET" and path.startswith(f"repos/{REPO}/contents/"):
+                    self.calls.append((method, path))
+                    p = path[len(f"repos/{REPO}/contents/"):].split("?")[0]
+                    return 200, {"content": M.base64.b64encode(files[p].encode()).decode()}
+                return super().api(method, path, body)
+
+        out = Out()
+        M.look(REPO, False, host=linux_host(), gh=OddLook(load("look-recent-runs.jsonl")), out=out)
+        looked = out.printed()
+        gh = MoveGH(files)
+        out2 = Out()
+        M.move(REPO, host=move_host(), gh=gh, out=out2)
+        moved = out2.printed()
+        for road, lines in (("look", looked), ("move", moved)):
+            for x in lines:
+                self.assertEqual(odd_in(x), [], (road, x))
+                self.assertFalse(x.startswith("sudo id") or x.startswith("rel.yml"), (road, x))
+            named = [x for x in lines if "odd?sudo id #.yml" in x or "odd?[2K?[1Arel.yml" in x]
+            self.assertEqual(len({n for x in named for n in ("odd?sudo id #.yml", "odd?[2K?[1Arel.yml") if n in x}),
+                             2, (road, lines))
+            for x in named:
+                self.assertTrue(x.endswith(M.SHOWN_CHANGED), (road, x))
+            for sentence, commands in unfold(lines):
+                for c in commands:
+                    self.assertNotIn("--include-job", c, (road, c))  # (b): no command whose value was changed
+        # Look's own step for such a job: the name cannot be typed on one line; it is renamed on GitHub.
+        said = [x for x in looked if "odd?sudo id #.yml" in x and "publishes or deploys" in x]
+        self.assertEqual(len(said), 2, looked)  # the line feed's and the carriage return's
+        for x in said:
+            self.assertIn("cannot be typed on one line", x)
+            self.assertIn("rename the file on GitHub", x)
+        # The pull request's body (the owner's 7:45 PM ET, thing 3): the name stays inside its list line.
+        body = pr_body_of(gh)
+        for x in body.split("\n"):
+            self.assertEqual(odd_in(x), [], x)
+            self.assertFalse(x.startswith("sudo id"), x)
+        self.assertIn("b?sudo id #.yml", body)
+
+    def test_rule_31_a_render_changes_every_character_of_the_class_and_never_prints_a_command_holding_one(self):
+        # (d): every code point of the class, from the test's own reading of Unicode's categories, so a character
+        # cannot slip between a list and the rule.
+        seen = 0
+        for i in range(0x110000):
+            ch = chr(i)
+            if unicodedata.category(ch) not in ODD_CATEGORIES:
+                continue
+            seen += 1
+            lines = M.render(f"ok a{ch}b")
+            self.assertEqual(len(lines), 1, hex(i))
+            self.assertEqual(odd_in(lines[0]), [], hex(i))
+            self.assertTrue(lines[0].endswith(M.SHOWN_CHANGED), hex(i))
+            lines = M.render("ok run " + M.cmd(f"look a{ch}b") + " again, then " + M.cmd("status x/y"))
+            self.assertEqual([odd_in(x) for x in lines], [[]] * len(lines), hex(i))
+            self.assertEqual(len(lines), 2, (hex(i), lines))  # only the command with nothing changed is printed
+            self.assertEqual(lines[1], "status x/y", hex(i))
+            self.assertIn("cannot be typed on one line", lines[0], hex(i))
+            self.assertEqual(len(REF.findall(lines[0])), 1, (hex(i), lines[0]))
+        self.assertGreater(seen, 2000)  # Cc 65, Cf 170 or so, Cs 2048, Zl 1, Zp 1
+
+    def test_rule_31_save_state_is_the_one_writer_of_the_record(self):
+        # The owner's 7:43 PM ET 11-24: the fixed stored marks are safe only because save_state is the one writer of
+        # minions.json. Every json.dump of the tool is inside save_state; the record's name is written in one place,
+        # state_path; and state_path is called only where the record is read, written by save_state, or looked for.
+        with open(M.__file__, encoding="utf-8") as f:
+            src = f.read()
+        tree = ast.parse(src)
+        where = {}
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for node in ast.walk(fn):
+                    if isinstance(node, ast.Call):
+                        f = node.func
+                        name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+                        if name in ("dump", "state_path"):
+                            where.setdefault(name, set()).add(fn.name)
+        self.assertEqual(where.get("dump"), {"save_state"})
+        self.assertEqual(where.get("state_path"), {"load_state", "save_state", "record_look"})
+        docs = {id(d.body[0].value) for d in ast.walk(tree)
+                if isinstance(d, (ast.Module, ast.ClassDef, ast.FunctionDef)) and d.body
+                and isinstance(d.body[0], ast.Expr) and isinstance(d.body[0].value, ast.Constant)}
+        names = {id(n) for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                 and "minions.json" in n.value and id(n) not in docs}
+        defs = {fn.name for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+                and any(id(n) in names for n in ast.walk(fn))}
+        self.assertEqual(defs, {"state_path"}, defs)
+        self.assertIn("the one writer of minions.json", src[src.index("def save_state"):][:600])
+
 
 def journals():
     """Every journal.log the suite's computers wrote, under both temporary homes."""
@@ -7454,7 +7578,8 @@ class ZRule31(unittest.TestCase):
     # The tests that plant a value with a backtick or a dollar-parenthesis; anywhere else a "shown changed" line
     # means the tool's own words held one (its text not yet rendered), not another's value.
     CHANGED_ON_PURPOSE = ("test_rule_31_iv_names_others_chose_are_shown_changed_and_said_so_in_look_and_move",
-                          "test_G6_17_with_the_user_there_its_crontab_and_at_jobs_go_before_userdel_or_the_leave_stops")
+                          "test_G6_17_with_the_user_there_its_crontab_and_at_jobs_go_before_userdel_or_the_leave_stops",
+                          "test_rule_31_a_names_with_a_line_break_or_a_terminal_escape_never_make_a_line_or_a_command")
 
     def test_rule_31_every_line_every_road_printed(self):
         bad, odd_starts, commands_seen = [], set(), 0
@@ -7467,6 +7592,8 @@ class ZRule31(unittest.TestCase):
                 refs = len(REF.findall(sentence))
                 if re.search("[-]", sentence):
                     bad.append((test, "a mark", sentence[:120]))
+                if odd_in(sentence):  # rule 31 (a): no control, format or separator character, as printed
+                    bad.append((test, f"{odd_in(sentence)} in a sentence", sentence[:120]))
                 for ch in ("`", "$(", "\t"):
                     if ch in sentence:
                         bad.append((test, f"{ch!r} in a sentence", sentence[:120]))
@@ -7481,8 +7608,8 @@ class ZRule31(unittest.TestCase):
                     commands_seen += 1
                     if c.startswith(self.STARTS) or not c.strip() or c != c.strip():
                         bad.append((test, "a command line that is not a command alone", c[:120]))
-                    if re.search("[-]", c) or "\t" in c:
-                        bad.append((test, "a mark or a tab in a command", c[:120]))
+                    if re.search("[-]", c) or odd_in(c):
+                        bad.append((test, "a mark or a control character in a command", c[:120]))
                     for ch in ("`", "$("):
                         if ch in outside_quotes(c):
                             bad.append((test, f"{ch!r} a shell would read", c[:120]))
@@ -7494,13 +7621,13 @@ class ZRule31(unittest.TestCase):
         for test, lines in HOOKS:  # the job's log on GitHub: lines of the hooks, run for real
             for line in lines:
                 hook_lines += 1
-                if re.search("[`\t\ue001-\ue004]", line) or "$(" in line:
+                if re.search("[`\ue001-\ue004]", line) or "$(" in line or odd_in(line):
                     bad.append((test, "a hook's line in the job's log", line[:120]))
         self.assertGreater(hook_lines, 10)
         for path in journals():
-            with open(path, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if re.search("[`\t-]", line.rstrip("\n")) or "$(" in line:
+            with open(path, encoding="utf-8", errors="replace", newline="") as f:  # a carriage return kept in its line
+                for line in f.read().split("\n"):
+                    if re.search("[`-]", line) or "$(" in line or odd_in(line):
                         bad.append((path, "a journal line", line[:120]))
         self.assertEqual(bad, [])
         self.assertGreater(commands_seen, 100)

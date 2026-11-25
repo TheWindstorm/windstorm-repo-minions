@@ -44,7 +44,10 @@ command stands alone on the line after the line that names it ("the command belo
 each is numbered in order, as in "the second command below"), as many as that line names, and nothing else is on it. When you give the person a
 command, give it the same way: on a line of its own, exactly as printed, never inside a sentence. A line that says
 "shown changed" held a name someone else chose (a workflow file, a job, another program's words): say that it was
-changed, as the line does. Read the line, then say it to the person in plain words; quote
+changed, as the line does. A line that says a command is "not given here" because it "cannot be typed on one
+line" gives no command on purpose: a name it would carry holds a line break or a character a terminal acts on.
+Never build that command yourself; give the person the step the line names (for a workflow file, renaming it on
+GitHub). Read the line, then say it to the person in plain words; quote
 the tool's own numbers and names, never your own. When you give the tool's words as its words, give them exactly
 as printed: add nothing inside them (no other time zone, no conversion, no comment). Your own explanation is
 never presented as the tool's.

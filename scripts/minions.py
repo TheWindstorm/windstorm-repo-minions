@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.request
 
 VERSION = "0.1.0"
@@ -42,8 +43,11 @@ VERSION = "0.1.0"
 # character the line's last, on every road that prints it. A command is marked where it is written, between C0 and C1,
 # and render() puts it on its own line at the moment it is printed, so a clause another road adds after it stays in the
 # sentence. The marks carry a token drawn fresh each run and are never printed, so a value this tool did not write (a
-# job's name, a branch, another program's words) cannot make a line of its own. What is left in a sentence that is a
-# backtick, a dollar sign before a parenthesis or a tab came from such a value: it is shown changed, and said so.
+# job's name, a branch, another program's words) cannot make a command of its own. What is left in a sentence that is
+# a backtick, a dollar sign before a parenthesis or a tab came from such a value: it is shown changed, and said so.
+# Rule 31 (vi), the owner's 7:43 PM ET 11-24: nor can such a value make a LINE. Every character a line breaks on or a
+# terminal acts on is shown changed in a sentence, decided by its Unicode class (ODD_CATEGORIES), never by a list; a
+# command that would carry one is not printed at all, and its sentence says why and what is left.
 _MARK = secrets.token_hex(6)
 C0, C1 = f"{_MARK}", f"{_MARK}"
 _COMMAND = re.compile(re.escape(C0) + "(.*?)" + re.escape(C1), re.S)
@@ -102,7 +106,20 @@ ZERO_JOB_WORDS = ("GitHub did not start the run; this is the account's or reposi
 
 _ORDINAL = ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth")
 SHOWN_CHANGED = ("(shown changed: a value in this line that this tool did not write held a backtick, a dollar sign "
-                 "before a parenthesis or a tab, printed here as ', $ ( or a space)")
+                 "before a parenthesis, a tab, or a character a line breaks on or a terminal acts on, printed here "
+                 "as ', $ (, a space or ?)")
+# Rule 31 (vi): the class, by Unicode category: control characters (C0 and C1 with line feed, carriage return, ESC,
+# backspace and DEL; tab too, printed as a space), format characters (the bidi overrides that make a terminal show a
+# line in another order, among them), lone surrogates (which cannot even be printed), and U+2028 and U+2029.
+ODD_CATEGORIES = ("Cc", "Cf", "Cs", "Zl", "Zp")
+NOT_TYPABLE = ("a command not given here, because a value it must carry holds a character a line breaks on or a "
+               "terminal acts on, so it cannot be typed on one line (shown changed: {}); that value is to be renamed "
+               "to one without such a character first")
+
+
+def odd(text: str) -> bool:
+    """Rule 31 (vi): True when the text holds a character of ODD_CATEGORIES."""
+    return any(unicodedata.category(c) in ODD_CATEGORIES for c in text)
 
 
 def cmd(command: str) -> str:
@@ -115,20 +132,22 @@ def plain(text: str) -> tuple[str, bool]:
     (from a text kept from an earlier run) is taken out."""
     text = re.sub("[-][0-9a-f]*", "", text)
     out = text.replace("`", "'").replace("$(", "$ (").replace("\t", " ")
+    out = "".join("?" if unicodedata.category(c) in ODD_CATEGORIES else c for c in out)  # rule 31 (vi)
     return out, out != text
 
 
 def render(text: str) -> list[str]:
     """Rule 31: one printed sentence, then each command it names on a line of its own, in the order named. The
     sentence names each where it stood: "the command below", or "the first command below", "the second ..."."""
-    commands = _COMMAND.findall(text)
+    commands = [c for c in _COMMAND.findall(text) if not odd(c)]  # rule 31 (vi): never one whose value is changed
     n = len(commands)
     names = iter(["the command below"] if n == 1 else
                  [f"the {_ORDINAL[i] if i < len(_ORDINAL) else str(i + 1) + 'th'} command below" for i in range(n)])
-    sentence, changed = plain(_COMMAND.sub(lambda m: next(names), text))
+    sentence, changed = plain(_COMMAND.sub(lambda m: NOT_TYPABLE.format(m.group(1)) if odd(m.group(1))
+                                           else next(names), text))
     if changed:
         sentence += " " + SHOWN_CHANGED
-    return [sentence] + [c.replace("\n", " ") for c in commands]
+    return [sentence] + commands
 
 
 _STORED = ("\ue001stored\ue002", "\ue003stored\ue004")
@@ -1822,8 +1841,16 @@ def look_job_line(path: str, triggers: dict, job: dict, survey_: dict, repo: str
     if kind == "here":
         return "ok", words
     if kind == "publish":
+        which = os.path.basename(path) + ":" + str(job["id"])
+        if odd(which):  # rule 31 (vi): no command can name it on one line; renaming it is the step that is left
+            return "warn", (f"publishes or deploys ({words}): it is left as it is, and moves only with your word for "
+                            f"this job; the name of its {'workflow file' if odd(os.path.basename(path)) else 'job'} "
+                            f"({which}) holds a character a line breaks on or a terminal acts on, so no command can "
+                            f"name it and it cannot be typed on one line: rename the "
+                            f"{'file' if odd(os.path.basename(path)) else 'job'} on GitHub to a name without it, then "
+                            f"run {C0}look {repo}{C1} again")
         return "warn", (f"publishes or deploys ({words}): it is left as it is, and moves only with your word for "
-                        f"this job ({C0}move {repo} --include-job {shlex.quote(os.path.basename(path) + ':' + str(job['id']))}{C1})")
+                        f"this job ({C0}move {repo} --include-job {shlex.quote(which)}{C1})")
     return "warn", words
 
 
@@ -1975,7 +2002,11 @@ def load_state(host: Host) -> dict:
 
 
 def save_state(host: Host, data: dict) -> None:
-    """minions.json: which repositories, which runners, the last looks. Nothing secret. 0600, written whole."""
+    """minions.json: which repositories, which runners, the last looks. Nothing secret. 0600, written whole.
+    Rule 31 (v), the owner's 7:43 PM ET 11-24: this is the one writer of minions.json, and it is what makes the fixed
+    stored marks safe: every text goes through _marks_moved here, which takes out any mark character a value brought
+    with it, so a fixed mark in the file was written by this tool. A second writer would let a value make a command;
+    test_rule_31_save_state_is_the_one_writer_of_the_record holds that there is none."""
     ensure_state_dir(host)
     path = state_path(host)
     tmp = path + ".tmp"
@@ -2539,7 +2570,8 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
             # the owner's 6:46 PM ET 11-24 point 1: never "none" on the third answer, said in a line of its own. A
             # layout this tool does not know cannot be settled by any step, so it is said and setup goes on (rule 7)
             rep.warn(f"not read: {unread[0]}. What an earlier user named {RUNNER_USER} left there (a crontab, an at "
-                     "job) would run as the user setup makes now")
+                     "job) would run as the user setup makes now; this matters only where a user of that name was on "
+                     "this computer before")
         elif unread:
             rep.stop(f"could not read what a user named {RUNNER_USER} left scheduled ({'; '.join(unread)}): the user "
                      "is not made, since a new user of that name would run it. " + settle_first())
@@ -2551,8 +2583,10 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
                      "more is made. " + (f"Your next step: remove them first: {steps}; {then}" if kept_home_made(host)
                      else f"This tool's record does not say it made a user of that name. If you know they are left "
                      f"from this tool's runner, your next step: remove them first: {steps}; {then}. If they are "
-                     "something else of yours, this tool cannot go on while they would pass to its user: open an "
-                     "issue"))
+                     "something else of yours, they are yours: setup goes on once they are no longer there, removed "
+                     "as above or moved away (the crontab is a file you can move out of that folder; an at job's "
+                     "commands are shown by at's -c option with its number, to keep before it is removed); "
+                     f"{then}"))
             return False
         journal(host, "useradd", RUNNER_USER)
         rc, out = sudo(host, ["useradd", "--create-home", "--user-group", "--shell", "/bin/bash", RUNNER_USER])
@@ -5260,7 +5294,18 @@ def pr_body(moved: list, left: list, publish: list, here: list, first: list[str]
         out += [f"- `{p}` job `{j}`: {w}" for p, j, w in here]
     out += ["", "After you merge it, `move --verify` sees one real run of each moved workflow finish on your "
             "computer. Until then nothing is called moved."]
-    return "\n".join(out) + "\n"
+    return "\n".join(md_line(x) for x in out) + "\n"
+
+
+MD_CHANGED = ("(shown changed: a name in this line that this tool did not write held a character a line breaks on "
+              "or a terminal acts on, printed here as ?)")
+
+
+def md_line(line: str) -> str:
+    """Rule 31 (vi), Markdown's side (the owner's 7:45 PM ET 11-24): a line of the pull request's body stays one line;
+    a character of ODD_CATEGORIES in it is shown changed, and the line says so."""
+    out = "".join("?" if unicodedata.category(c) in ODD_CATEGORIES else c for c in line)
+    return out if out == line else f"{out} {MD_CHANGED}"
 
 
 def move(repo: str, verify: bool = False, include: list[str] | None = None, host: Host | None = None,
