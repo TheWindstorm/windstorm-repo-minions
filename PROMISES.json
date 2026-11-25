@@ -2443,6 +2443,20 @@
    "issue": 382,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R195",
+   "seen": "2026-11-25, read in the code by the maintainer: the runner's archive is downloaded into this tool's own folder under the file name GitHub's download list gives, and a download cut short leaves it there. The names a removal deletes there as this tool's own held only Linux's form, so on a Mac a removal left the archive, and the folder with it. The download also joined the whole name GitHub gave to this tool's folder, checking only its end, so a name holding a folder part would have been written outside it.",
+   "promise": "One pattern names the runner archive, for Linux and for a Mac. The download takes only a name of that whole form, never a path and never another kind of file, and a removal deletes by the same form what a cut download left; anything else there is left and named. A test reads GitHub's recorded download list: every name in it is this tool's own, a planted folder of them is emptied and goes, and a name with a folder part, another kind or a line break is refused before anything is downloaded.",
+   "codon": "G6.32",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G6_32_the_runner_archive_is_ours_by_its_name_on_linux_and_on_a_mac",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 383,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

@@ -4465,6 +4465,40 @@ class G6(unittest.TestCase):
         # 2026-11-24: when it matters, in the line
         self.assertIn("this matters only where a user of that name was on this computer before", said_[0])
 
+    def test_G6_32_the_runner_archive_is_ours_by_its_name_on_linux_and_on_a_mac(self):
+        # Row R195: the runner's archive is downloaded into this tool's own folder under GitHub's own file name, and a
+        # download cut short leaves it there. The names this tool deletes there as its own (R129) held Linux's form
+        # only, so on a Mac an uninstall left the archive, and the folder with it. One pattern now names the archive:
+        # the download takes only a name of that form, and the leave deletes by it. GitHub's recorded list is read.
+        rows = load("setup-release.jsonl")
+        names = [x["filename"] for x in rows[0]["data"]]
+        self.assertTrue(any("-osx-" in n for n in names) and any("-linux-" in n for n in names), names)
+        with tempfile.TemporaryDirectory() as d:
+            state = os.path.join(d, "state")
+            os.mkdir(state)
+            for n in names + ["minions.json", "journal.log"]:
+                open(os.path.join(state, n), "w").close()
+            self.assertEqual(M.delete_ours(state, M.STATE_NAMES), [], "every archive GitHub names is this tool's own")
+            self.assertFalse(os.path.exists(state), "and the folder goes with them")
+            os.mkdir(state)
+            others = ["actions-runner-osx-x64-2.338.2.tar.gz.part", "actions-runner-win-x64-2.338.2.zip", "notes.txt"]
+            for n in others + ["actions-runner-osx-arm64-2.338.2.tar.gz"]:
+                open(os.path.join(state, n), "w").close()
+            self.assertEqual(M.delete_ours(state, M.STATE_NAMES), sorted(others), "what is not ours is left, named")
+        # The download takes only a name of the archive's form, on a Mac too: never a path, never another kind.
+        mac = FakeHost(system="Darwin", which=("gh",), groups=("staff", "admin"))
+        rel = M.runner_release(StandIn(rows), REPO, mac, M.Report(Out()))
+        self.assertEqual(rel["filename"], "actions-runner-osx-x64-2.338.2.tar.gz")
+        for bad in ("../actions-runner-osx-x64-2.338.2.tar.gz", "x/actions-runner-osx-x64-2.338.2.tar.gz",
+                    "actions-runner-osx-x64-2.338.2.zip", "actions-runner-osx-x64-2.338.2.tar.gz\n"):
+            changed = copy.deepcopy(rows)
+            for x in changed[0]["data"]:
+                if (x["os"], x["architecture"]) == ("osx", "x64"):
+                    x["filename"] = bad
+            rep = M.Report(Out())
+            self.assertIsNone(M.runner_release(StandIn(changed), REPO, mac, rep), bad)
+            self.assertIn("not in the shape this tool knows", folded(rep.lines)[-1], bad)
+
     def test_G6_30_uninstall_with_the_user_gone_names_what_it_left_scheduled(self):
         # Change 4: uninstall with the user absent runs nothing as it and deletes none of its schedules; it names them
         # as what stayed, with the rehearsed steps, in its warning and in the census; the leave finishes.

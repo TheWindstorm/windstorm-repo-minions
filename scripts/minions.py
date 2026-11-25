@@ -2323,7 +2323,10 @@ def dropin_text(folder: str = "") -> str:
 
 
 RECORD_NAMES = r"README\.txt|journal\.log|jobs-[A-Za-z0-9_.-]+\.log"
-STATE_NAMES = r"minions\.json(\.tmp)?|journal\.log|actions-runner-linux-[a-z0-9]+-[0-9.]+\.tar\.gz"
+# R195: the runner archive, by GitHub's own file name for Linux and for a Mac. One pattern: the download takes only
+# a name of this form into this tool's folder, and a leave deletes by the same form what a cut download left.
+RUNNER_ARCHIVE = r"actions-runner-(?:linux|osx)-[a-z0-9]+-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz"
+STATE_NAMES = r"minions\.json(\.tmp)?|journal\.log|" + RUNNER_ARCHIVE
 
 
 def delete_ours(folder: str, names: str) -> list[str]:
@@ -2801,7 +2804,9 @@ def runner_release(gh: GitHub, repo: str, host: Host, rep: Report) -> dict | Non
         rep.stop(f"GitHub offers no runner for {system} {arch} (HTTP {s}). " + (github_next(s, repo, gh=gh) if spent(gh, s) else "Run the same command again; if it stops here again, GitHub's answer named here is the reason"))
         return None
     rel = pick[0]
-    m = re.search(r"-(\d+\.\d+\.\d+)\.(tar\.gz|zip)$", rel.get("filename", ""))
+    # R195: the whole name is the archive's form (it is joined to this tool's folder), and its version is read from it
+    name = rel.get("filename") if isinstance(rel.get("filename"), str) else ""
+    m = re.search(r"-(\d+\.\d+\.\d+)\.tar\.gz$", name) if re.fullmatch(RUNNER_ARCHIVE, name) else None
     if not m or not re.fullmatch(r"[0-9a-f]{64}", rel.get("sha256_checksum") or ""):
         rep.stop("GitHub's runner download list is not in the shape this tool knows: nothing was downloaded. Run the same command again later; if it stops here again, do not go on: open an issue on this tool's repository with this line")
         return None
