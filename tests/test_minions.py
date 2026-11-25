@@ -7534,7 +7534,7 @@ class Rule31(unittest.TestCase):
         # The owner's 7:59 PM ET 11-24, "not text": a file's name whose bytes are not UTF-8 (rm names one a job left in
         # the runner's home; find prints one). Another program's answer is read with each such byte as a lone
         # surrogate (class Cs), so it reaches plain(), which shows it changed; it never ends the tool in a traceback.
-        prog = [sys.executable, "-I", "-c", "import sys; sys.stdout.buffer.write(b'kept /home/x/a\\xffb\\n'); "
+        prog = [sys.executable, "-I", "-c", "import sys; sys.stdout.buffer.write(b'kept /home/you/a\\xffb\\n'); "
                 "sys.stderr.buffer.write(b'rm: cannot remove \\xfe\\n'); sys.exit(1)"]
         host = M.Host()
         for road in (host.run, host.run_own, lambda argv: host.run_in(argv, "")):
