@@ -8165,17 +8165,25 @@ class RuleTwo(unittest.TestCase):
                 code, st = run_cmd(M.status, REPO, host=host, gh=setup_gh(sha))
                 self.assertTrue([x for x in st if x.startswith("warn what systemd made of") and "could not be read" in x], st)
         # a setting of the person's own in the watch's unit (a drop-in with a proxy address holding a
-        # password, made up here): named by name only, a warn, never a stop; no line holds its value. A SECOND entry
-        # for the PATH this tool set is a stop, said by its count only, and still no value is printed.
+        # password, made up here): named by name only, a warn, never a stop; no line holds its value. A person's
+        # drop-in that sets PATH again: the form seen, where a manager lists the variable ONCE with the value written
+        # last (the person's), is "its PATH entry is not the value this tool wrote", a stop that prints no value.
+        # A SECOND entry for the PATH this tool set is the stand-in's own form, not one a manager was seen to list:
+        # it stays a stop, said by its count only, and still no value is printed.
         secret = "made-up-secret-7f3a"
         for label, extra, kind in (("the person's own variable", f"HTTPS_PROXY=http://me:{secret}@proxy:3128", "warn"),
-                                   ("a second PATH", f"PATH=/home/you/{secret}:/usr/bin", "stop")):
+                                   ("the person's PATH, set again", f"PATH=/home/you/{secret}:/usr/bin", "changed"),
+                                   ("a second PATH (the stand-in's own form)", f"PATH=/home/you/{secret}:/usr/bin",
+                                    "stop")):
             host, sha = setup_host()
-            host.runs[M.BUS] = (lambda real, extra: lambda argv, input=None: (
-                (lambda rc, out: (rc, out.replace('"data": ["PATH=', '"data": [' + json.dumps(extra) + ', "PATH=', 1)
+            put = ((lambda out, extra: re.sub(r'"PATH=(?:[^"\\]|\\.)*"', lambda m: json.dumps(extra), out, count=1))
+                   if kind == "changed" else
+                   (lambda out, extra: out.replace('"data": ["PATH=', '"data": [' + json.dumps(extra) + ', "PATH=', 1)))
+            host.runs[M.BUS] = (lambda real, extra, put: lambda argv, input=None: (
+                (lambda rc, out: (rc, put(out, extra)
                                   if argv[-1] == "Environment" and "minions_2dwatch" not in out else out)
                  if argv[-1] == "Environment" and "minions-watch" in " ".join(argv) else (rc, out))(*real(argv, input))))(
-                host.runs[M.BUS], extra)
+                host.runs[M.BUS], extra, put)
             fresh_look(host)
             code, lines = run_setup(setup_gh(sha), host)
             self.assertEqual([x for x in lines if secret in x], [], f"{label}: a value the tool did not write is printed")
@@ -8189,6 +8197,11 @@ class RuleTwo(unittest.TestCase):
                 self.assertIn("ok the units of this tool read back word for word as systemd holds them (2)", st)
                 self.assertTrue([x for x in st if x.startswith("warn systemd holds in minions-watch.service") and
                                  "HTTPS_PROXY" in x], st)
+            elif kind == "changed":
+                self.assertEqual(code, M.EXIT_STOP, (label, lines))
+                self.assertTrue([x for x in lines if x.startswith("stop the watch's unit, as systemd read it, is not "
+                                                                  "what this tool wrote: its PATH entry is not the value "
+                                                                  "this tool wrote")], lines)
             else:
                 self.assertEqual(code, M.EXIT_STOP, (label, lines))
                 self.assertTrue([x for x in lines if x.startswith("stop the watch's unit, as systemd read it, is not "
