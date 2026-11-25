@@ -2389,6 +2389,62 @@
    "issue": 374,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R187",
+   "seen": "2026-11-25, read in the code by the maintainer on family rule 31 (v) (not seen on a machine): the runner's systemd unit (its ExecStart, WorkingDirectory and Description lines). Text systemd reads carries the runner's folder, which holds the repository's owner and name: a value the tool did not write (typed by the person, then GitHub's). One road writes it: setup, after the name check on owner/name (letters, digits, '_', '.', '-'); no other command writes it. No test yet reads that check in front of the write, or that no other command writes the unit.",
+   "promise": "No value the tool did not write changes what the runner's unit runs: the folder's name reaches the unit only through setup, after the name check, and a name that fails the check writes no unit; the step that failed says so in one line, with what the person can do instead. A test plants a name that fails the check and reads that no unit was written, and a test reads that no other command writes the unit.",
+   "codon": "G2.26",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R188",
+   "seen": "2026-11-25, read in the code by the maintainer on family rule 31 (v) (not seen on a machine): the drop-in's ExecStopPost line, a shell script run by sh -c, in which the folder's path stands unquoted. Text the shell reads carries the runner's folder, which holds the repository's owner and name: a value the tool did not write (typed by the person, then GitHub's). One road writes it: setup, after the name check on owner/name (letters, digits, '_', '.', '-'); no other command writes it. The path is not quoted for the shell there.",
+   "promise": "No value the tool did not write becomes part of the drop-in's shell text: the script reads the path as an argument or a variable, never as text inside the script; the name check stays as well. A test reads the drop-in with a folder name holding the shell's special characters, and reads that the stop line ends the same process and touches nothing else.",
+   "codon": "G2.27",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R189",
+   "seen": "2026-11-25, read in the code by the maintainer on family rule 31 (v) (not seen on a machine): the hooks job-started.sh and job-completed.sh, shell scripts in which the folder, the seen file, the records folder and the PATH line are assignments quoted for the shell by the tool. Text the shell reads carries the runner's folder, which holds the repository's owner and name: a value the tool did not write (typed by the person, then GitHub's). One road writes it: setup, after the name check on owner/name (letters, digits, '_', '.', '-'); no other command writes it. No test plants the shell's special characters in those values and reads them arrive whole (family rule 31 (v.2)).",
+   "promise": "The hooks' values arrive whole: a test writes the hooks with a folder, a seen file, a records folder and a PATH folder holding the shell's special characters, runs them, and reads each value arrive whole and the hooks refuse or hold exactly as with a plain name. When those lines are next touched, each hook reads them from its environment or arguments instead of text inside the script.",
+   "codon": "G2.28",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R190",
+   "seen": "2026-11-25, read in the code by the maintainer on family rule 31 (v) (not seen on a machine): the watch's systemd unit (minions-watch.service, its User= and Environment=\"PATH=...\" lines). Text systemd reads carries the person's login name and the folders of the programs found on the person's PATH: values the tool did not write, which only the person's own settings choose. They are written as plain text, neither escaped for systemd's grammar nor checked before the write: a PATH folder whose name holds a double quote, a percent sign, a backslash or a line feed is not carried as itself.",
+   "promise": "The watch's unit carries the person's login name and PATH folders whole, as systemd's grammar takes one value, or setup refuses before the first write, in one line that names the value and what to choose instead. A test plants systemd's own special characters (a double quote, a percent sign, a backslash, a line feed) in a PATH folder and in the name, and reads each value back whole or the refusal; the row is seen with the real systemd on a stock machine before its version is tagged.",
+   "codon": "G5.27",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": null,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
