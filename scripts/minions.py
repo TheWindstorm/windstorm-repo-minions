@@ -479,6 +479,14 @@ def said(out: str) -> str:
     return str(out) + ("" if not out or out.endswith("\n") else "\n") + err
 
 
+
+def admin_cwd(argv: list[str]) -> dict:
+    """R136 (seen 2026-11-25): an admin step starts in /, a folder every user may enter. Started from the person's
+    working folder (a home is closed to other users on a stock Ubuntu 24.04), a command run as the runner user fails
+    on that folder (find: "Failed to restore initial working directory") and hides any failure of its own. Every
+    admin command of this tool names absolute paths, or changes folder itself first."""
+    return {"cwd": "/"} if argv[:1] == ["sudo"] else {}
+
 class Host:
     """The computer, read through these few calls so tests can stand in for it."""
 
@@ -504,7 +512,8 @@ class Host:
         this tool that reads an answer does the same."""
         env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144
         try:
-            p = subprocess.run(argv, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+            p = subprocess.run(argv, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env,
+                               **admin_cwd(argv))
             return p.returncode, answer_of(p)
         except (OSError, subprocess.SubprocessError) as e:
             return 127, Out("", str(e))
@@ -523,7 +532,7 @@ class Host:
         env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144, R172
         try:
             p = subprocess.run(argv, input=None if input is None else input.encode("utf-8", "surrogateescape"),
-                               capture_output=True, timeout=timeout, env=env)
+                               capture_output=True, timeout=timeout, env=env, **admin_cwd(argv))
             return p.returncode, answer_of(p)
         except (OSError, subprocess.SubprocessError) as e:
             return 127, Out("", str(e))
@@ -534,6 +543,16 @@ class Host:
                 return f.read()
         except OSError:
             return None
+
+    def read_checked(self, path: str) -> tuple[str | None, str | None]:
+        """R136 (item 4): (text, why it could not be read); a file that is not there is (None, None)."""
+        try:
+            with open(path, encoding="utf-8", errors="replace", newline="") as f:
+                return f.read(), None
+        except FileNotFoundError:
+            return None, None
+        except OSError as e:
+            return None, str(e)
 
     def write_text(self, path: str, text: str) -> None:
         """A small file written whole (a reader never sees half of it), readable by every user."""
@@ -558,6 +577,10 @@ class Host:
             return False
         except OSError:
             return None
+
+    def isdir(self, path: str) -> bool:
+        """A folder itself, never a link to one (R136: a name of ours that is not what we made stays)."""
+        return os.path.isdir(path) and not os.path.islink(path)
 
     def listdir_or_none(self, path: str) -> list[str] | None:
         """[] when the folder is not there; None when it could not be read (rule 6: never read as empty)."""
@@ -2517,9 +2540,9 @@ def kept_home_why(host: Host) -> str:
     read = (f"the user {RUNNER_USER} is not on this computer, the folder is, and this tool deletes in a runner's home "
             "only as that user")
     known = load_state(host)
-    if known.get("runner_home_left"):
-        how = ("this tool made that user and removed it, and something in the folder was not deleted as that user (a "
-               "file of root's, or a disk mounted inside)")
+    if known.get("runner_home_left"):  # R136: what stayed there is named in the person's record, never deleted
+        how = ("this tool made that user and removed it; the folder holds what the runner user did not make (the whole "
+               f"list is in {os.path.join(host.record_dir(), 'left-behind.txt')}), so it stays")
     elif known.get("runner_user_made"):
         how = "this tool made that user and it is no longer here"
     else:
@@ -5715,6 +5738,171 @@ def empty_then_rmdir(host: Host, path: str) -> None:
     sudo(host, ["rmdir", path])
 
 
+LEFT_ON_SCREEN = 5  # R136: what stayed in one folder, named on the screen up to this many; the whole list goes to the record
+
+
+def known_folders(host: Host, rep: Report | None = None) -> list[str]:
+    """R136: every runner folder this tool unpacked on this computer: the state's runners and each "unpack" line of its
+    journal, the journal as it is and as kept in the person's record. The exact names of what it wrote in its own
+    folders come from these (read once a run: the journal moves to the record before the last step)."""
+    if rep is not None and getattr(rep, "folders", None) is not None:
+        return rep.folders
+    found, refused = set(), []
+    for r in (load_state(host).get("runners") or {}).values():
+        f = str((r or {}).get("folder") or "")
+        if f and runner_folder_shaped(f):
+            found.add(f)
+        elif f:
+            refused.append((state_path(host), f))
+    for path in (os.path.join(host.state_dir(), "journal.log"), os.path.join(host.record_dir(), "journal.log")):
+        for line in lines_of(host.read(path) or ""):
+            w = line.split(" ", 2)
+            if len(w) == 3 and w[1] == "unpack":
+                f = w[2].strip(BLANKS)
+                if runner_folder_shaped(f):
+                    found.add(f)
+                elif (path, f) not in refused:
+                    refused.append((path, f))  # R136 (item 4): named, and nothing by its name is deleted
+    out = sorted(found)
+    if rep is not None:
+        rep.folders = out
+        if refused:
+            rep.stayed["refused"] = refused
+    return out
+
+
+def runner_folder_shaped(f: str) -> bool:
+    """R136 (item 4): a runner's folder as this tool names it (runner_folder): absolute, no ".." part, directly under
+    the runners' own folder, owner-name of a repository's letters. A name read from the state or the journal is
+    taken only in this shape; whether it is a link is read where it is used (clear_folder)."""
+    rest = f[len(RUNNERS_HOME):] if f.startswith(RUNNERS_HOME) else ""
+    return bool(rest) and ".." not in f.split("/") and re.fullmatch(r"[A-Za-z0-9_.-]+-[A-Za-z0-9_.-]+", rest) is not None \
+        and rest not in (".", "..")
+
+
+def names_unread(host: Host) -> list[str]:
+    """R136 (item 4): the state or a journal that is there and could not be read: the third answer, so nothing is
+    deleted on its word. A file that is not there is no answer of this kind (nothing was written yet)."""
+    bad = []
+    path = state_path(host)
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                if not isinstance(json.load(f), dict):
+                    bad.append(f"{path} (not this tool's record)")
+        except (OSError, ValueError) as e:
+            bad.append(f"{path} ({tail(str(e)) or type(e).__name__})")
+    for j in (os.path.join(host.state_dir(), "journal.log"), os.path.join(host.record_dir(), "journal.log")):
+        _, why = host.read_checked(j)
+        if why:
+            bad.append(f"{j} ({why})")
+    return bad
+
+
+def leave_folders(host: Host, rep: Report | None = None) -> list[tuple[str, str, dict]]:
+    """R136 (the owner's word, 2026-11-25): every folder the uninstall deletes or empties, with whose rule decides what
+    in it is ours. "tool": only this tool writes there (as root, or as you): ours is what it wrote, by exact name
+    (a name to "file" or "dir"); anything else stays with the folders above it. "runner": a job can write there (as
+    the runner user): ours is what the runner user owns; anything else stays. The test walks this list."""
+    bases = [os.path.basename(f.rstrip("/")) for f in known_folders(host, rep)]
+    hooks = {"job-started.sh": "file", "job-completed.sh": "file"}
+    out = [(f, "runner", {}) for f in known_folders(host, rep)]
+    out += [(records_dir_of(f), "runner", {}) for f in known_folders(host, rep)]
+    out += [(f"{HOOKS_ROOT}/{b}", "tool", hooks) for b in bases]
+    out += [(SEEN_ROOT, "tool", {b: "file" for b in bases})]
+    out += [(RECORDS_ROOT, "tool", {"seen": "dir", **{b: "dir" for b in bases}})]
+    out += [(f"/home/{RUNNER_USER}", "runner", {})]
+    out += [(HOOKS_ROOT, "tool", {"minions.py": "file", **{b: "dir" for b in bases}})]
+    units = {(r or {}).get("unit") for r in (load_state(host).get("runners") or {}).values()}
+    out += [(unit_path(u) + ".d", "tool", {DROPIN: "file"}) for u in sorted(x for x in units if x)]
+    return out
+
+
+def clear_folder(host: Host, path: str, kind: str, names: dict, rep: Report) -> tuple[str, list[str]]:
+    """R136: one folder of leave_folders. Answers ("gone", []), ("stays", what stayed: tops only, each with why) or
+    ("unread", why): the last when ours could not be deleted, or what is in it could not be read (the stop line's case).
+    Nothing is followed and nothing on another file system is entered; only ours is deleted."""
+    if root_test(host, path) is False:
+        return "gone", []
+    if kind == "runner":
+        # R136 (item 4): a link where a folder of ours should be is not followed and nothing where it points is
+        # deleted; the link itself is the folder above's to take (as what the runner user made, or named as what stayed)
+        rc, here = as_runner(host, ["find", path, "-maxdepth", "0", "-printf", "%D %y\n"])
+        if rc == 0 and str(here).strip(BLANKS).endswith(" l"):
+            rep.ok(f"{path} is a link, not a folder: not followed, and nothing where it points is deleted; the link "
+                   "itself goes with the folder that holds it, or is named there")
+            return "link", []
+        # as the runner user, from / (admin_cwd): what it owns; a link is unlinked, never followed; -xdev: one file system
+        as_runner(host, ["find", path, "-xdev", "-mindepth", "1", "-user", RUNNER_USER, "-delete"])
+        rc, here = as_runner(host, ["find", path, "-maxdepth", "0", "-printf", "%D %y\n"])
+        rc2, out = as_runner(host, ["find", path, "-xdev", "-mindepth", "1", "!", "-user", RUNNER_USER, "-prune",
+                                    "-printf", "%D\t%u\t%y\t%P\n"])
+        dev = str(here).strip(BLANKS).split(" ")[0]
+        if rc != 0 or rc2 != 0 or not dev:  # an entry whose owner could not be read is not taken for foreign or gone
+            return "unread", [f"what is in {path} could not be read as {RUNNER_USER} (find answered code "
+                              f"{rc2 if rc == 0 else rc}: {tail(out if rc == 0 else here) or 'nothing'})"]
+        left = []
+        for line in lines_of(out):
+            w = line.split("\t", 3)
+            if len(w) == 4:
+                d_, who, y, name = w
+                what = {"d": "a folder", "l": "a link", "f": "a file"}.get(y, "a thing")
+                left.append(f"{name} ({what} of {who}" + (", a disk mounted there" if d_ != dev and y == "d" else "")
+                            + ")")
+        if left:
+            return "stays", left
+        if path == f"/home/{RUNNER_USER}":
+            return "gone", []  # emptied: the home itself goes after its user (remove_runner_user)
+        if path.startswith(RUNNERS_HOME):
+            as_runner(host, ["rmdir", path])
+        else:
+            sudo(host, ["rmdir", path])
+    else:
+        entries = host.listdir_or_none(path)
+        if entries is None:
+            return "unread", [f"{path} could not be listed"]
+        for n in entries:
+            if names.get(n) == "file":
+                sudo(host, ["rm", "-f", f"{path}/{n}"])  # refuses a folder of that name: then it stays, named
+            elif names.get(n) == "dir":
+                sudo(host, ["rmdir", f"{path}/{n}"])  # an emptied folder of ours; refuses a file of that name
+        entries = host.listdir_or_none(path)
+        if entries is None:
+            return "unread", [f"{path} could not be listed after its delete"]
+        ours = [n for n in entries if names.get(n) == "file" and root_test(host, f"{path}/{n}") is not False
+                and not host.isdir(f"{path}/{n}")]
+        if ours:
+            return "unread", [f"{path}/{n} could not be deleted (read back after its delete)" for n in ours]
+        if entries:
+            return "stays", [n + (" (a folder)" if host.isdir(f"{path}/{n}") else "") for n in entries]
+        sudo(host, ["rmdir", path])
+    after = root_test(host, path)
+    if after is None:
+        return "unread", [f"whether {path} is deleted could not be read (read back after its delete)"]
+    if after:
+        return "unread", [f"{path} could not be deleted (read back after its delete)"]
+    return "gone", []
+
+
+def record_left_behind(host: Host, foreign: dict) -> str | None:
+    """R136: the whole list of what stayed, into the person's record (the screen shows up to LEFT_ON_SCREEN of each)."""
+    path = os.path.join(host.record_dir(), "left-behind.txt")
+    text = "".join(f"{p_}: {w}\n" for p_ in sorted(foreign) for w in foreign[p_][1])
+    try:
+        os.makedirs(host.record_dir(), exist_ok=True)
+        with open(path, "a", encoding="utf-8", errors="surrogateescape") as f:
+            f.write(f"# {host.now().strftime('%Y-%m-%dT%H:%M:%SZ')} uninstall: what stayed, not made by this tool or "
+                    f"its runner user\n{text}")
+        return path
+    except OSError:
+        return None
+
+
+def foreign_stayed(rep: Report, path: str, kind: str, left: list[str]) -> None:
+    """R136: what stayed in one folder, for the census (named with why, no command) and for the person's record."""
+    rep.stayed.setdefault("foreign", {})[path] = (kind, left)
+
+
 def exists_as_root(host: Host, path: str) -> bool:
     """A path that could not be read counts as there, so a removal never reads "gone" from a refused read (R71)."""
     return root_test(host, path) is not False
@@ -5842,12 +6030,21 @@ def remove_service(host: Host, mine: dict, rep: Report, again: str = "uninstall"
             sudo(host, ["rm", "-f", unit_path(unit)])
         if exists_as_root(host, unit_path(unit) + ".d"):
             journal(host, "remove drop-in", f"{unit_path(unit)}.d")
-            sudo(host, ["rm", "-rf", unit_path(unit) + ".d"])
+            answer, what = clear_folder(host, unit_path(unit) + ".d", "tool", {DROPIN: "file"}, rep)  # R136: ours only
+            if answer == "stays":
+                foreign_stayed(rep, unit_path(unit) + ".d", "tool", what)
+            elif answer == "unread":
+                rep.stop(f"could not delete our drop-in: {'; '.join(what)}. Nothing would delete it differently on a "
+                         "second run. Your next step: settle what is in it first; then run the same command again")
+                return False
         sudo(host, systemctl("daemon-reload"))
         sudo(host, systemctl("reset-failed", unit))  # R132: a failed unit stays loaded until its failure is forgotten
         if not gone_or_stop(host, unit, rep, again):
             return False
-    rep.ok("the runner's service and our drop-in are gone, read back")
+    stayed = [p_ for p_ in (rep.stayed.get("foreign") or {}) if unit and p_ == unit_path(unit) + ".d"]
+    rep.ok("the runner's service and our drop-in are gone, read back" + (
+        f"; the drop-in's folder {stayed[0]} stays: it holds what this tool did not write, named at the end"
+        if stayed else ""))
     return True
 
 
@@ -5868,18 +6065,21 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
             rep.stayed["home"] = kept_home_why(host)  # change 2: what stayed carries its own why
             rep.stayed["home_made"] = kept_home_made(host)
     paths = [x for x in (ours, hook_dir(repo), records) if x]
+    rules = {p_: (k, n) for p_, k, n in leave_folders(host, rep)}
+    left = []
     for path in paths:
         if exists_as_root(host, path):
             journal(host, "delete", path)
             # R128 (rule 28): what the runner user can write is deleted as the runner user, who can take only what it
-            # could already; root then removes an emptied records folder with rmdir, which follows nothing.
-            if path == folder:
-                as_runner(host, ["rm", "-rf", "--one-file-system", path])
-            elif path == records:
-                empty_then_rmdir(host, path)
-            else:
-                sudo(host, ["rm", "-rf", "--one-file-system", path])
-    left = [x for x in paths if exists_as_root(host, x)]
+            # could already; root then removes an emptied records folder with rmdir, which follows nothing. R136: in
+            # each, only ours is deleted (leave_folders says by which rule); what is not ours stays, named.
+            kind, names = rules.get(path) or (("runner", {}) if path in (folder, records) else
+                                              ("tool", {"job-started.sh": "file", "job-completed.sh": "file"}))
+            answer, what = clear_folder(host, path, kind, names, rep)
+            if answer == "stays":
+                foreign_stayed(rep, path, kind, what)
+            elif answer == "unread":
+                left.append(path)
     if left:
         rep.stop(f"could not delete {', '.join(left)} (each read back after its delete): nothing would delete it "
                  "differently on a second run. Your next step: settle what is in it first (a file a job left that its "
@@ -5887,9 +6087,12 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
         return False
     stays = (f"; the runner's folder {folder} stays inside /home/{RUNNER_USER}, named at the end with why"
              if gone and rep.stayed.get("home") and folder else "")
+    foreign = [p_ for p_ in paths if p_ in (rep.stayed.get("foreign") or {})]
     rep.ok(("its hooks are deleted, read back" + stays if stays else
             "the runner's folders and its hooks are deleted, read back")
-           + (f"; its jobs' records are in your record ({host.record_dir()})" if kept == "kept" else ""))
+           + (f"; its jobs' records are in your record ({host.record_dir()})" if kept == "kept" else "")
+           + (f"; what is ours in {', '.join(foreign)} is deleted, and each stays: it holds what this tool or the "
+              "runner user did not make, named at the end" if foreign else ""))
     return True
 
 
@@ -6288,35 +6491,49 @@ def remove_shared(host: Host, rep: Report) -> bool:
         return False  # the user stays, so `uninstall --all` run again finishes from here (G6.4)
     # G6.10: any runner's jobs' records still here go to the person's record first; one that cannot stays.
     names = host.listdir_or_none(RECORDS_ROOT)
+    bases = {os.path.basename(f.rstrip("/")) for f in known_folders(host, rep)}
     if names is None:
         rep.warn(f"{RECORDS_ROOT} could not be read, so the jobs' records in it are kept where they are, not deleted")
         kept_here = [RECORDS_ROOT]
     else:
-        kept_here = [x for x in (f"{RECORDS_ROOT}/{n}" for n in names if n != os.path.basename(SEEN_ROOT))
+        # R136: a repository's records folder is one this tool made for a runner folder it unpacked here (by name, and a
+        # folder); anything else in the records root is not this tool's, and stays
+        kept_here = [x for x in (f"{RECORDS_ROOT}/{n}" for n in names if n in bases and host.isdir(f"{RECORDS_ROOT}/{n}"))
                      if not keep_jobs_record(host, x, rep)]
     # R167 (2026-11-24): the tool's copy (HOOKS_ROOT) is the one the person is told to run
     # uninstall from (the skill's own words); it goes LAST (remove_copy), so every step that stops before it names a
     # copy that is still there
-    for path in [SEEN_ROOT] if kept_here else [RECORDS_ROOT]:
+    unread = []
+    if kept_here == [RECORDS_ROOT]:
+        targets = [SEEN_ROOT]
+    else:
+        targets = [f"{RECORDS_ROOT}/{n}" for n in names or [] if n in bases and host.isdir(f"{RECORDS_ROOT}/{n}")
+                   and f"{RECORDS_ROOT}/{n}" not in kept_here] + [SEEN_ROOT, RECORDS_ROOT]
+    rules = {p_: (k, n) for p_, k, n in leave_folders(host, rep)}
+    for path in targets:
         if exists_as_root(host, path):
             journal(host, "delete", path)
-            if path == RECORDS_ROOT:  # R128: each repository's records folder is the runner user's to empty
-                for n in names or []:
-                    if n != os.path.basename(SEEN_ROOT):
-                        empty_then_rmdir(host, f"{RECORDS_ROOT}/{n}")
-                for sub in [SEEN_ROOT]:
-                    sudo(host, ["rm", "-rf", "--one-file-system", sub])
-                sudo(host, ["rmdir", path])
-            else:
-                sudo(host, ["rm", "-rf", "--one-file-system", path])
-    if any(exists_as_root(host, x) for x in ([SEEN_ROOT] if kept_here else [RECORDS_ROOT])):
-        rep.stop(f"could not delete {RECORDS_ROOT} (read back after its delete): nothing would delete it "
-                 "differently on a second run. Your next step: settle what is in it first (a disk mounted inside, or "
-                 "a file of another user's); then run the same command again")
+            # R128: each repository's records folder is the runner user's to empty; R136: only ours, by leave_folders
+            kind, names_ = rules.get(path) or ("runner", {})
+            answer, what = clear_folder(host, path, kind, names_, rep)
+            if answer == "stays":
+                what = [w for w in what if f"{path}/{w.split(' (')[0]}" not in kept_here]  # kept by rule 6, said apart
+                if what:
+                    foreign_stayed(rep, path, kind, what)
+            elif answer == "unread":
+                unread += what
+    if unread:
+        rep.stop(f"could not delete {RECORDS_ROOT}: {'; '.join(unread)}. Nothing would delete it differently on a "
+                 "second run. Your next step: settle what is in it first (a disk mounted inside, or a file of another "
+                 "user's); then run the same command again")
         ok = False
     else:
+        stays = [p_ for p_ in (rep.stayed.get("foreign") or {}) if p_ == RECORDS_ROOT or p_.startswith(RECORDS_ROOT + "/")]
         rep.ok("the jobs' records are " + (f"kept where they are, not deleted: {', '.join(kept_here)}" if kept_here
-                                           else f"in your record ({host.record_dir()}), and {RECORDS_ROOT} is deleted"))
+                                           else f"in your record ({host.record_dir()})")
+               + (f"; what is ours in {', '.join(stays)} is deleted, and it stays: it holds what this tool or the "
+                  "runner user did not make, named at the end" if stays else
+                  "" if kept_here else f", and {RECORDS_ROOT} is deleted"))
     return ok and remove_runner_user(host, rep)
 
 
@@ -6330,9 +6547,34 @@ def remove_copy(host: Host, rep: Report, src: dict) -> bool:
     """R167 (2026-11-24): the tool's copy and the job hooks, the very last removal of
     `uninstall --all`: the skill tells the person to run uninstall from this copy, so nothing that may stop comes
     after it. A copy still there names itself; one not read names the clone the person set up from."""
+    stays, last = [], None
     if exists_as_root(host, HOOKS_ROOT):
-        sudo(host, ["rm", "-rf", "--one-file-system", HOOKS_ROOT])
-    t = root_test(host, HOOKS_ROOT)
+        # R136: only ours, by exact name (leave_folders): each runner's hook folder, then the copy and the folder
+        rules = [(p_, k, n) for p_, k, n in leave_folders(host, rep) if p_ == HOOKS_ROOT or p_.startswith(HOOKS_ROOT + "/")]
+        for path, kind, names in sorted(rules, key=lambda r: r[0] == HOOKS_ROOT):
+            answer, what = clear_folder(host, path, kind, names, rep)
+            if answer == "stays":  # the census says a folder of ours that stayed as "named on its own line"
+                foreign_stayed(rep, path, kind, what)
+                stays.append(path)
+            elif answer == "unread" and path != HOOKS_ROOT:
+                rep.stop(f"could not delete {path} (the job hooks): {'; '.join(what)}. Everything else is off. Settle "
+                         "what it says, then run the same command again: it finishes a removal that was not finished")
+                return False
+            if path == HOOKS_ROOT:
+                last = (answer, what)
+    # the copy's folder is read once after its delete (clear_folder's read-back), never twice (R167's third answer)
+    if last is None:
+        t = root_test(host, HOOKS_ROOT)
+    elif last[0] == "gone":
+        t = False
+    elif last[0] == "unread" and any(w.startswith("whether ") for w in last[1]):
+        t = None
+    else:
+        t = True
+    if t and stays and root_test(host, TOOL_COPY) is False:
+        rep.ok(f"the tool's copy and the job hooks are deleted, the very last removal; {', '.join(stays)} "
+               "stays: it holds what this tool did not write, named at the end")
+        return True
     if t is None:
         rep.stop(f"whether {HOOKS_ROOT} (the tool's copy and the job hooks) is deleted could not be read: everything "
                  f"else is off. Your next step, to run it again: {copy_gone_step(src)}; it finishes here")
@@ -6367,8 +6609,9 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
     """R130 (rule 28, the last uninstall): nothing of the runner user outlives it, and a later user of the same name
     inherits nothing. In order: the service is stopped (before this); no process of that user alive (a job's sleep
     hold named as such; the rest ended by that user's id, as that user); its crontab and at jobs off; linger off; what
-    it owns in the places anyone can write deleted AS that user, never by root; then userdel -r. Each read back; what
-    could not be removed is named, never said gone (rule 6)."""
+    it owns in the places anyone can write deleted AS that user, never by root; its home emptied of what it made, as
+    that user; then userdel WITHOUT -r, and the home removed by rmdir only when it is empty (R136, 2026-11-25). Each
+    read back; what could not be removed is named, never said gone (rule 6)."""
     kind, uid = runner_user_state(host)
     if kind == "unread":
         rep.stop(f"could not read whether the user {RUNNER_USER} is on this computer ({uid}): the user is not "
@@ -6385,6 +6628,11 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
             rep.stayed["schedules"], rep.stayed["schedules_unread"] = found, unread
             rep.warn(schedules_stayed(found, unread))
         t = root_test(host, home)
+        if t and kept_home_made(host):
+            # R136: a home this tool's own userdel left (its record says so) is removed when it is empty: rmdir, on
+            # the folder in /home itself, follows nothing and removes nothing in it (a second run after a cut one)
+            sudo(host, ["rmdir", home])
+            t = root_test(host, home)
         if t is False:
             known = load_state(host)
             made, left_ = known.pop("runner_user_made", None), known.pop("runner_home_left", None)
@@ -6394,6 +6642,10 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
             return True
         rep.stayed["home"] = kept_home_why(host)  # change 2: what stayed carries its own why
         rep.stayed["home_made"] = kept_home_made(host)
+        if t and load_state(host).get("runner_home_left"):  # R136: named with why, no command; a leave, not a warn
+            rep.stayed["home_left"] = True  # the census reads it here: uninstall --all deletes the state before it
+            rep.ok(f"the folder {home} stays: {rep.stayed['home']}")
+            return True
         rep.warn(f"the folder {home} stayed" + ("" if t else " (whether it is there could not be read, so it is "
                                                      "named, never taken for gone)")
                  + f": {rep.stayed['home']}. It is yours. {kept_home_next(host, made=rep.stayed['home_made'])}")
@@ -6443,20 +6695,44 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         if rc not in (0, 1):
             left.append(f"its files in {', '.join(PUBLIC_TMP)} (could not be read: find answered code {rc}: "
                         f"{tail(out) or 'nothing'})")
-        if files:
-            left.append(f"its files {', '.join(files[:5])}" + (f" and {len(files) - 5} more" if len(files) > 5 else ""))
+        elif files:
+            # R136 (the owner's ruling 2026-11-25, item 2): what stayed only because of a thing that is not the
+            # runner user's stays, named, and is handed to root after userdel; anything else is the third answer
+            held, unheld, unread = public_held(host, files)
+            if unread:
+                left.append(unread)
+            elif unheld:
+                left.append(f"its files {', '.join(unheld[:5])}" + (f" and {len(unheld) - 5} more" if len(unheld) > 5
+                                                                    else ""))
+            else:
+                rep.stayed["public"] = held
         if left:
             rep.stop(f"the user {RUNNER_USER} is not deleted: {'; '.join(left)} could not be removed. Settle what it "
                      "says, then run the same command again: it finishes from here")
             return False
         rep.ok(f"nothing of {RUNNER_USER} is left running or scheduled: no process, no crontab, no at job, no linger, "
-               f"no file of it in {', '.join(PUBLIC_TMP)}, read back")
+               + (f"no file of it in {', '.join(PUBLIC_TMP)}" if not rep.stayed.get("public") else
+                  f"no file of it in {', '.join(PUBLIC_TMP)} but what holds, or sits in, a thing it did not make "
+                  "(named at the end)") + ", read back")
         # R128 (rule 28): the home is the runner user's to empty (as that user, following no link); userdel -r then
         # removes an empty folder, so root deletes nothing a job could have placed or re-pointed.
         journal(host, "delete", f"/home/{RUNNER_USER}'s contents (as {RUNNER_USER})")
-        as_runner(host, ["find", f"/home/{RUNNER_USER}", "-mindepth", "1", "-delete"])
+        # R136 (the owner's word 2026-11-25): only what the runner user owns, as that user, one file system, no link
+        # followed; what it did not make stays, and the home with it. The user is deleted WITHOUT its home: root
+        # deletes nothing in it, and removes the home only when it is empty.
+        answer, what = clear_folder(host, home, "runner", {}, rep)
+        if answer == "unread":
+            rep.stop(f"the user {RUNNER_USER} is not deleted: {'; '.join(what)}. Settle what it says, then run the same "
+                     "command again: it finishes from here")
+            return False
+        if answer == "stays":
+            foreign_stayed(rep, home, "runner", what)
         journal(host, "userdel", RUNNER_USER)
-        _, said_userdel = sudo(host, ["userdel", "-r", RUNNER_USER])
+        _, said_userdel = sudo(host, ["userdel", RUNNER_USER])
+        if runner_user_state(host)[0] == "absent":
+            if answer != "stays":
+                sudo(host, ["rmdir", home])  # empty: as that user left it
+            hand_to_root(host, uid, rep)
     after = runner_user_state(host)[0]
     if after != "absent":
         rep.stop(f"the user {RUNNER_USER} is " + ("still there after userdel" if after == "there" else
@@ -6464,21 +6740,84 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
                  " (userdel answered: " + (last_line(said_userdel)[:160] or "nothing") + "). Your next step: settle "
                  "what userdel said first; then run the same command again")
         return False
-    if exists_as_root(host, home):  # emptied as the user before userdel; something it could not delete stayed
+    if exists_as_root(host, home) and home in (rep.stayed.get("foreign") or {}):  # R136: named with what it holds
         known = load_state(host)
         known.pop("runner_user_made", None)
-        known["runner_home_left"] = True  # change 2: the next run says how this home came to stay, from the record
+        known["runner_home_left"] = True  # the next run says, from the record, how this home came to stay
         save_state(host, known)
-        rep.stayed["home"] = kept_home_why(host)
-        rep.stayed["home_made"] = True
-        rep.warn(f"the folder {home} stayed after the user was deleted: something in it was not deleted as that "
-                 "user (a file of root's, or a disk mounted inside), and root deletes nothing in it. It is yours")
+        rep.ok(f"the user {RUNNER_USER} is deleted, read back; its home {home} stays: it holds what the runner user did "
+               "not make (named at the end), and root deletes nothing in it")
         return True
+    if exists_as_root(host, home):  # R136's third answer: emptied of all of it, and still not deleted (or not read)
+        rep.stop(f"the user {RUNNER_USER} is deleted, read back; its home {home} held nothing left of anyone and could "
+                 "not be deleted (or whether it is gone could not be read), read back after rmdir. Settle what it says, "
+                 f"then run {C0}uninstall --all{C1}: it finishes from here")  # runner_user_made stays: the next run's rmdir
+        return False
     known = load_state(host)
     if known.pop("runner_user_made", None):  # R129: a later user of this name is not ours unless this tool makes it
         save_state(host, known)
     rep.ok(f"the user {RUNNER_USER} and its home are deleted, read back")
     return True
+
+
+def public_held(host: Host, listed: list[str]) -> tuple[list[tuple[str, str]], list[str], str]:
+    """R136 (item 2): of what the runner user still owns in /tmp, /var/tmp and /dev/shm after its delete, what stayed
+    only because of a thing that is not its own: a folder of its own that holds such a thing (or holds a folder that
+    does), or a thing of its own in a folder of someone else's, which it may not write. Read as the runner user, one
+    level each, following nothing. Answers (held, each with why), the rest (the third answer), and why it could not
+    be read (find's code other than 0 or 1)."""
+    listed = sorted(set(listed))
+    parents = sorted({os.path.dirname(p_) for p_ in listed} - set(PUBLIC_TMP))
+    owners = {}
+    if parents:
+        rc, out = as_runner(host, ["find", *parents, "-maxdepth", "0", "-printf", "%u\t%p\n"])
+        if rc not in (0, 1):
+            return [], [], f"whose folders hold its files in {', '.join(PUBLIC_TMP)} (could not be read: find answered " \
+                           f"code {rc}: {tail(out) or 'nothing'})"
+        owners = {w[1]: w[0] for w in (x.split("\t", 1) for x in lines_of(out)) if len(w) == 2}
+    rc, out = as_runner(host, ["find", *listed, "-mindepth", "1", "-maxdepth", "1", "!", "-user", RUNNER_USER,
+                               "-printf", "%h\n"])
+    if rc not in (0, 1):
+        return [], [], f"what its folders in {', '.join(PUBLIC_TMP)} hold (could not be read: find answered code " \
+                       f"{rc}: {tail(out) or 'nothing'})"
+    holds = set(lines_of(out))
+    why = {}
+    for p_ in listed:
+        d = os.path.dirname(p_)
+        if p_ in holds:
+            why[p_] = "a folder of the runner user's that holds what it did not make"
+        elif d not in PUBLIC_TMP and owners.get(d) not in (None, RUNNER_USER):
+            why[p_] = f"the runner user's, in a folder of {owners[d]}'s, which it may not write"
+    for p_ in sorted(listed, key=lambda x: -x.count("/")):  # a folder of its own holding a held thing is held too
+        if p_ not in why and any(q.startswith(p_ + "/") for q in why):
+            why[p_] = "a folder of the runner user's that holds what stayed"
+    return sorted(why.items()), [p_ for p_ in listed if p_ not in why], ""
+
+
+def hand_to_root(host: Host, uid: str, rep: Report) -> None:
+    """R136 (condition 4): once the runner user is deleted, nothing in this tool's folders that stayed is left owned by
+    its number, which a later account could be given: each such thing is handed to root (chown -h: the link itself,
+    never its target; find -xdev: one file system). Nothing else changes owner."""
+    if not uid or not uid.isdigit():
+        return
+    handed = {}
+    for path in sorted(rep.stayed.get("foreign") or {}):
+        if exists_as_root(host, path):
+            _, out = sudo(host, ["find", path, "-xdev", "-uid", uid, "-print", "-exec", "chown", "-h", "root:root",
+                                 "{}", "+"])
+            n = len([x for x in lines_of(out) if x.startswith(path)])
+            if n:
+                handed[path] = n
+    public = [p_ for p_, _ in rep.stayed.get("public") or []]
+    if public:
+        # the owner's LIMIT (item 2): root changes the owner only of the exact paths the read-back listed as the
+        # runner user's, each read once more, in the same call, as not a link and still of that number; it deletes
+        # nothing there and goes nowhere else (-maxdepth 0: the path itself)
+        _, out = sudo(host, ["find", *public, "-maxdepth", "0", "!", "-type", "l", "-uid", uid, "-print", "-exec",
+                             "chown", "-h", "root:root", "{}", "+"])
+        rep.stayed["public_handed"] = [x for x in lines_of(out) if x in public]
+    if handed:
+        rep.stayed["handed"] = handed
 
 
 def pids_list_or_none(host: Host) -> list[str] | None:
@@ -6704,11 +7043,16 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         folders.remove(home)
         rep.ok(f"census: the folder {home}: kept: it is the home of the user {RUNNER_USER}, which this "
                "tool did not make; it is yours")
-    if (rep.stayed.get("home") or ukind == "absent") and home in folders:  # R167 (FAULT 2): named with why, every run
-        folders.remove(home)
+    if (rep.stayed.get("home") or ukind == "absent") and home in folders and home not in (rep.stayed.get("foreign")
+                                                                                         or {}):  # R167 (FAULT 2)
+        folders.remove(home)  # named with why, every run; R136's own leave names it below with what it holds
         why = rep.stayed.get("home")  # change 2: the why and the step said where it stayed, never re-guessed here
-        rep.ok(f"census: the folder {home}: stayed: {why if isinstance(why, str) else kept_home_why(host)}. It is "
-               f"yours. {kept_home_next(host, made=rep.stayed.get('home_made') if isinstance(why, str) else None)}")
+        why = why if isinstance(why, str) else kept_home_why(host)
+        if rep.stayed.get("home_left") or load_state(host).get("runner_home_left"):  # R136: with why, no command
+            rep.ok(f"census: the folder {home}: kept: {why}")
+        else:
+            rep.ok(f"census: the folder {home}: stayed: {why}. It is yours. "
+                   f"{kept_home_next(host, made=rep.stayed.get('home_made') if rep.stayed.get('home') else None)}")
     if rep.stayed.get("schedules") or rep.stayed.get("schedules_unread"):  # change 4: named with why, as warned
         rep.ok("census: " + schedules_stayed(rep.stayed.get("schedules") or [], rep.stayed.get("schedules_unread") or []))
     if rep.stayed.get("records") and RECORDS_ROOT in folders:  # R167: jobs' records only the runner user could read
@@ -6716,6 +7060,44 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         rep.ok(f"census: the folder {RECORDS_ROOT}: stayed, with the jobs' records in "
                f"{', '.join(rep.stayed['records'])}: {rep.stayed.get('records_why') or 'they could not be read'}. "
                "They are yours to read or delete")
+    foreign = rep.stayed.get("foreign") or {}
+    public = rep.stayed.get("public") or []
+    every = dict(foreign, **({", ".join(PUBLIC_TMP): ("public", [f"{p_} ({w})" for p_, w in public])} if public else {}))
+    listed = record_left_behind(host, every) if every else None
+    handed = rep.stayed.get("handed") or {}
+    for path in sorted(foreign):  # R136 (the owner's word 2026-11-25): named with why, no command
+        kind, what = foreign[path]
+        if path in folders:
+            folders.remove(path)
+        theirs, kept = [], []  # what is not ours, and the folders of ours that stayed because they hold it
+        for w in what:
+            full = f"{path}/{w.split(' (')[0]}"
+            inner = [k for k in foreign if k != path and (full == k or k.startswith(full + "/"))]
+            if inner:
+                name = f"{inner[0][len(path) + 1:]} (named on its own line)"
+                if name not in kept:
+                    kept.append(name)
+            else:
+                theirs.append(w)
+        who = "the runner user did not make" if kind == "runner" else "this tool did not write"
+        more = f" and {len(theirs) - LEFT_ON_SCREEN} more" if len(theirs) > LEFT_ON_SCREEN else ""
+        holds = ([f"{', '.join(theirs[:LEFT_ON_SCREEN])}{more}, which {who}"] if theirs else []) + (
+            [f"the folder{'s' if len(kept) > 1 else ''} {', '.join(kept)}, which stayed"] if kept else [])
+        rep.ok(f"census: the folder {path}: kept: it holds {'; and '.join(holds)}; that stays, and the folders above it "
+               "with it" + (f" (the whole list is in {listed})" if listed and more else "")
+               + (f" ({handed[path]} of the runner user's there handed to root, as that user is deleted)"
+                  if path in handed else ""))
+    for src, f in rep.stayed.get("refused") or []:  # R136 (item 4): a name that failed its check, named
+        rep.ok(f"census: {f!r}, named as a runner's folder in {src}: not the shape of a folder this tool makes "
+               f"(directly in {RUNNERS_HOME}, no '..'), so it is not deleted, and nothing in it or by its name is")
+    if public:  # R136 (item 2): only what holds, or sits in, a thing the runner user did not make; root deleted nothing
+        more = f" and {len(public) - LEFT_ON_SCREEN} more" if len(public) > LEFT_ON_SCREEN else ""
+        gave = rep.stayed.get("public_handed") or []
+        rep.ok(f"census: in {', '.join(PUBLIC_TMP)}: kept: "
+               + ", ".join(f"{p_} ({w})" for p_, w in public[:LEFT_ON_SCREEN]) + more
+               + "; that stays" + (f" (the whole list is in {listed})" if listed and more else "")
+               + (f"; {len(gave)} of {len(public)} handed to root, as the user they belonged to is deleted" if gave
+                  else "; none handed to root (each read again as a link, or no longer of that user's number)"))
     line("folders", folders, "" if everything else f"kept; {C0}uninstall --all{C1} takes them", mark)
     if state_left is not None:
         foreign = rep.stayed.get("state")
@@ -6795,6 +7177,12 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
     if repo and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         rep.stop(f"not a repository name: {repo!r} (write owner/name)")
         return rep.code()
+    unread = names_unread(host)
+    if unread:  # R136 (item 4): the third answer, before anything changes
+        rep.stop(f"could not read {'; '.join(unread)}: this tool's record of what it made here, so nothing is deleted "
+                 "on its word and nothing was changed. Your next step: settle what it says first (the file back as this "
+                 "tool wrote it, or readable by you); then run the same command again")
+        return rep.code()
     data = load_state(host)
     adopt_unfinished(host, data, None if everything or not repo else {repo})
     runners = data.get("runners") or {}
@@ -6845,7 +7233,8 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
                skill_folder=kept_skill_from(data), packages={k: data.get(k) for k in (
                    "dependency_packages", "dependency_packages_unread")})
         if rep.stayed and not rep.stopped:  # R136 (rule 8): the leave went to its end; what stayed is the person's
-            rep.ok("this tool is off this computer; what stayed is yours, named above with why each stayed")
+            rep.ok("this tool is off this computer; what stayed was not made by this tool or its runner user, or holds "
+                   "what was not, named above with why each stayed")
         return rep.code()
     if delete_record:
         delete_record_if_typed(host, rep)

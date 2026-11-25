@@ -64,13 +64,12 @@ Folders, and who can write them:
 | `remove_service` | `rm` | no | no: the unit and drop-in in `/etc/systemd/system`. The unit name, when read from the runner's `.service` file, is read as the runner user and must match `actions.runner.*.service` with no `/`; with that user gone it is not read there: it is the name this tool gives the unit, used unless that unit's file in `/etc/systemd/system` is read not there (R167) | nothing |
 | `remove_service` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_service` | `systemctl reset-failed` | no | no | nothing |
-| `remove_folders` | `rm` | no | no: the hooks only (root's). The runner's folder is deleted as the runner user (R128) | nothing |
+| `clear_folder` | `rm` | no | no: `rm -f` by exact name, in a folder only this tool writes (the job hooks, the drop-in, the copy, `seen`'s files of this tool: root's), each name taken from the code's own list. A folder a job can write is emptied as the runner user, never by root (R128, R136) | nothing |
+| `clear_folder` | `rmdir` | no | no: a folder of this tool, by exact name, once what this tool or the runner user made in it is gone. `rmdir` follows nothing and removes only an empty folder; a folder that still holds something stays, named (R136) | nothing |
 | `empty_then_rmdir` | `rmdir` | no | no: a records folder that the runner user has already emptied. `rmdir` follows nothing and removes only an empty folder | nothing |
 | `remove_shared` | `systemctl stop` | no | no | nothing |
 | `remove_shared` | `systemctl disable` | no | no | nothing |
 | `remove_shared` | `rm` | no | no: root's folders, and `seen` (yours) | nothing |
-| `remove_copy` | `rm` | no | no: the tool's copy and the job hooks (root's), the very last removal of `uninstall --all` (R167) | nothing |
-| `remove_shared` | `rmdir` | no | no | nothing |
 | `remove_shared` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_shared` | `systemctl reset-failed` | no | no | nothing |
 | `remove_slice` | `systemctl stop` | no | no | nothing |
@@ -82,11 +81,14 @@ Folders, and who can write them:
 | `left_schedules` | `find` | no | no: root's own at spool folder (`/var/spool/cron/atjobs`, or `/var/spool/at`), which no job can write; `-maxdepth 1 -type f -nouser -printf '%f %U\n'` reads each file's name and owner number only, and follows nothing. Read only when the runner user reads absent: setup before `useradd`, uninstall to name what stayed (change 4) | nothing |
 | `remove_runner_user` | `atrm` | no | no | nothing |
 | `remove_runner_user` | `loginctl` | no | no | nothing |
-| `remove_runner_user` | `userdel` | no | no: the home is emptied first, as the runner user. `userdel -r` then removes an empty folder | nothing |
+| `remove_runner_user` | `userdel` | no | no: the home is emptied first, as the runner user, of what that user made. `userdel` without `-r` (R130, R136) | nothing |
+| `remove_runner_user` | `rmdir` | no | no: the runner user's home, once that user is deleted and nothing stayed in it: a folder in `/home`; `rmdir` follows nothing and removes only an empty folder (R130) | nothing |
+| `hand_to_root` | `find` | no | no: in each folder of this tool that stayed (what the runner user did not make is in it), once that user is deleted: `-xdev -uid N -exec chown -h root:root`, one file system, each link itself and never its target, so nothing there stays owned by a number a later account could be given. Nothing else changes owner (R136) | nothing |
 
 The one place a root step makes something the runner user can write, outside its home, is each repository's records
 folder: the job hooks run as the runner user and write that repository's job records there. Nothing in it is ever
-run, sourced or followed by root: at uninstall the runner user empties it and root removes the empty folder.
+run, sourced or followed by root: at uninstall the runner user deletes what it made there, and root removes the folder only once it is empty. What the runner user did not
+make stays, named in the census.
 
 Steps run as you, not as root, that read the whole system: `package_list` runs `dpkg-query -W` (or `rpm -qa` where
 there is no `dpkg-query`) just before and just after the runner's dependency script, to read which system packages

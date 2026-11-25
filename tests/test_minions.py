@@ -267,6 +267,12 @@ class FakeHost(M.Host):
     def read(self, path):
         return self.files.get(path)
 
+    def read_checked(self, path):
+        """R136 (item 4): (text, why it could not be read): a path in `unreadable` answers as a refused read does."""
+        if path in getattr(self, "unreadable", ()):
+            return None, f"[Errno 13] Permission denied: '{path}'"
+        return self.files.get(path), None
+
     def write_text(self, path, text):
         if os.path.dirname(path) == M.SEEN_ROOT and getattr(self, "seen_unwritable", False):
             raise PermissionError(13, "Permission denied", path)
@@ -3743,6 +3749,25 @@ SLICE_FILE = f"/etc/systemd/system/{M.SLICE}"
 WATCH_FILES = (f"/etc/systemd/system/{M.WATCH_UNIT}.timer", f"/etc/systemd/system/{M.WATCH_UNIT}.service")
 
 
+# R136's last line (condition 2: what stays is "not made by this tool or its runner user", never "the person's")
+R136_LAST = ("ok this tool is off this computer; what stayed was not made by this tool or its runner user, or holds what "
+             "was not, named above with why each stayed")
+
+
+# R136: the walk's worlds (the owner's (A) and (B) lists, 2026-11-25)
+LEAVE_TOOL_WORLDS = {"a foreign plain file": ({"zz.txt": ("root", "f", "a1")}, True),
+        "a foreign folder holding a file": ({"zzdir": ("root", "d", None), "zzdir/f": ("root", "f", "a2")}, True),
+        "the control": ({}, False)}
+LEAVE_RUNNER_WORLDS = {"a root file": ({"root.txt": ("root", "f", "b1")}, True),
+          "a root folder with a file": ({"rd": ("root", "d", None), "rd/f": ("root", "f", "b2")}, True),
+          "a root empty folder": ({"empty": ("root", "d", None)}, True),
+          "a file of the person's": ({"p.txt": ("person", "f", "b4")}, True),
+          "a runner folder holding a foreign file": ({"sub": ("minions-runner", "d", None), "sub/f": ("person", "f", "b5")},
+                                                     True),
+          "a runner link to a folder outside": ({"ln": ("minions-runner", "l", None)}, False),
+          "the control": ({"mine.txt": ("minions-runner", "f", None)}, False)}
+
+
 class World:
     """A computer with our runner on it, changed only by the commands the tool runs (through sudo and systemctl).
     It behaves as seen on a real one: `config.sh remove` refuses while the service is installed, and a slice whose
@@ -3758,6 +3783,116 @@ class World:
         self.user, self.listener, self.worker, self.order = True, True, False, []
         self.slice_of, self.old_systemd = {UNIT: M.SLICE}, False  # R167: which units are in our slice (Slice=)
         self.files, self.links = {}, set()  # remove_setup shares the host's files; links a job planted (R128)
+        self.plain = set()  # R136: plain files put here by someone else (rmdir refuses them, as on a real one)
+        self.dirs = {FOLDER, f"/etc/systemd/system/{UNIT}.d", M.HOOKS_ROOT, M.hook_dir(REPO), M.RECORDS_ROOT,
+                     M.records_dir_of(FOLDER), "/home/minions-runner"}  # rm -f refuses these, as on a real one
+        # R136: who owns what (the runner user's own folders and what is in them; root's or the person's when said),
+        # and the disks mounted inside (another file system: find -xdev does not enter it)
+        self.owner, self.mounts = {}, set()
+
+    def owner_of(self, path):
+        if path in self.owner:
+            return self.owner[path]
+        runner = (FOLDER, M.records_dir_of(FOLDER), "/home/minions-runner")
+        return "minions-runner" if any(path == r or path.startswith(r + "/") for r in runner) else "root"
+
+    def dev_of(self, path):
+        on = [m for m in self.mounts if path == m or path.startswith(m + "/")]
+        return str(1 + sorted(self.mounts).index(max(on, key=len))) if on else "0"
+
+    def under(self, top):
+        return sorted(p for p in self.paths if p.startswith(top.rstrip("/") + "/"))
+
+    def runner_find(self, a):
+        """find as the runner user, the three forms the uninstall uses (as findutils 4.9.0 does them)."""
+        top = a[1]
+        if a[2:] == ["-maxdepth", "0", "-printf", "%D %y\n"]:  # a start that is a link is the link itself (find -P)
+            y = "l" if top in self.links else "d" if self.is_dir(top) else "f"
+            return ((0, f"{self.dev_of(top)} {y}\n") if top in self.paths or top in self.links else
+                    (1, f"find: '{top}': No such file or directory"))
+        def tops():  # what the runner user did not make, not entered; nor what is on another file system
+            out = []
+            for p in self.under(top):
+                rel = p[len(top.rstrip("/")) + 1:]
+                parts = rel.split("/")
+                anc = [top.rstrip("/") + "/" + "/".join(parts[:i]) for i in range(1, len(parts))]
+                if any(self.owner_of(x) != "minions-runner" or x in self.mounts or x in self.links for x in anc):
+                    continue
+                if self.owner_of(p) != "minions-runner" or p in self.mounts:
+                    out.append(p)
+            return out
+        if "-delete" in a:
+            self.order.append(f"empty {top}")
+            failed = 0
+            for p in sorted(self.under(top), key=lambda x: -x.count("/")):  # depth first, as -delete does
+                parent = p.rsplit("/", 1)[0]
+                if p not in self.paths or self.owner_of(p) != "minions-runner" or p in self.mounts:
+                    continue
+                if any(p.startswith(m + "/") for m in self.mounts) or any(p.startswith(l + "/") for l in self.links):
+                    continue  # -xdev; a link is never followed
+                if self.owner_of(parent) != "minions-runner" and parent != top:
+                    failed = 1  # a folder of root's: its entries are not the runner user's to unlink
+                    continue
+                if p not in self.links and self.under(p):
+                    failed = 1  # not empty: what stayed in it holds it
+                    continue
+                self.paths.discard(p)
+                self.links.discard(p)
+            return failed, ""
+        if "-prune" in a:
+            out = "".join(f"{self.dev_of(p)}\t{self.owner_of(p)}\t"
+                          f"{'l' if p in self.links else 'd' if self.is_dir(p) else 'f'}\t{p[len(top.rstrip('/')) + 1:]}\n"
+                          for p in tops())
+            return 0, out
+        return None
+
+    def public_find(self, a):
+        """find as the runner user in /tmp, /var/tmp and /dev/shm, as findutils 4.9.0 does them: -delete unlinks what
+        that user owns where it may (a sticky place's own top, or a folder of its own), a folder only once empty, a link
+        never followed; -print lists what it owns still; the two reads of what holds a thing (R136)."""
+        R, tops = "minions-runner", M.PUBLIC_TMP
+        starts = []
+        for x in a[1:]:
+            if x.startswith(("-", "!")):
+                break
+            starts.append(x)
+        def walk():
+            out = []
+            for t in tops:
+                for p_ in self.under(t):
+                    if any(p_.startswith(m + "/") for m in self.mounts) or any(p_.startswith(l + "/") for l in self.links):
+                        continue  # -xdev; a link is never followed
+                    out.append(p_)
+            return out
+        if "-delete" in a:
+            self.order.append("find -delete in /tmp")
+            failed = 0
+            for p_ in sorted(walk(), key=lambda x: -x.count("/")):
+                if self.owner_of(p_) != R or p_ not in self.paths:
+                    continue
+                parent = p_.rsplit("/", 1)[0]
+                if parent not in tops and self.owner_of(parent) != R:
+                    failed = 1  # a folder of someone else's: the runner user may not unlink in it
+                    continue
+                if p_ not in self.links and self.under(p_):
+                    failed = 1  # not empty
+                    continue
+                self.paths.discard(p_)
+                self.links.discard(p_)
+            return failed, ""
+        if "-print" in a and starts == list(tops):
+            self.order.append("find -print in /tmp")
+            return 0, "".join(p_ + "\n" for p_ in walk() if self.owner_of(p_) == R)
+        if "-maxdepth" in a and a[-1] == "%u\t%p\n":
+            return 0, "".join(f"{self.owner_of(x)}\t{x}\n" for x in starts if x in self.paths)
+        if "-mindepth" in a:
+            held = {x for x in starts if x not in self.links and any(
+                q.rsplit("/", 1)[0] == x and self.owner_of(q) != R for q in self.paths)}
+            return 0, "".join(x + "\n" for x in sorted(held))
+        return 1, f"find: the fake does not know {a}"
+
+    def is_dir(self, path):
+        return path in self.dirs or any(p.startswith(path.rstrip("/") + "/") for p in self.paths)
 
     def gone(self, path):
         self.paths = {p for p in self.paths if p != path and not p.startswith(path.rstrip("/") + "/")}
@@ -3783,16 +3918,17 @@ class World:
                     if a[1] in self.files:
                         return 0, self.files[a[1]]
                     return (0, UNIT + "\n") if a[1] in self.paths else (1, f"cat: {a[1]}: No such file or directory")
-                if a[:1] == ["find"] and a[1] == "/tmp":  # R130: what the runner user owns in /tmp etc.
-                    self.order.append(f"find {a[-1]} in /tmp")
-                    return 0, ""
+                if a[:1] == ["find"] and any(a[1] == t or a[1].startswith(t + "/") for t in M.PUBLIC_TMP):
+                    return self.public_find(a)  # R130, R136: what the runner user owns in /tmp, /var/tmp, /dev/shm
                 if a[:2] == ["kill", "-KILL"]:
                     self.order.append("kill -KILL -1 (as the runner)")
                     return 0, ""
+                if a[:1] == ["find"] and a[2:3] in (["-xdev"], ["-maxdepth"]):
+                    return self.runner_find(a)
                 if a[:1] == ["find"]:
                     self.order.append(f"empty {a[1]}")
                     self.paths = {p for p in self.paths if not p.startswith(a[1].rstrip("/") + "/")}
-                    return 0, ""
+                    return 0, ""  # as findutils 4.9.0 answered, started from / (the tool's admin steps start there)
             elif a[:3] == ["-u", "minions-runner", "--"]:
                 self.order.append("config.sh remove")
                 if f"{FOLDER}/.service" in self.paths:
@@ -3807,10 +3943,14 @@ class World:
         if a[:2] == ["test", "-e"]:
             return (0 if a[2] in self.paths else 1), ""
         if a[:1] == ["rm"]:
+            if not any(x.startswith("-") and "r" in x for x in a[1:-1]) and self.is_dir(a[-1]):
+                return 1, f"rm: cannot remove '{a[-1]}': Is a directory"  # as coreutils 9.4 answers rm -f on a folder
             self.order.append(f"rm {a[-1]}")
             self.gone(a[-1])
             return 0, ""
         if a[:1] == ["rmdir"]:
+            if a[1] in self.plain:  # as coreutils 9.4 answers rmdir on a file
+                return 1, f"rmdir: failed to remove '{a[1]}': Not a directory"
             if any(p.startswith(a[1].rstrip("/") + "/") for p in self.paths):
                 return 1, f"rmdir: failed to remove '{a[1]}': Directory not empty"
             self.order.append(f"rmdir {a[1]}")
@@ -3819,7 +3959,14 @@ class World:
         if a[:1] == ["userdel"]:
             self.order.append("userdel")
             self.user = False
-            self.gone("/home/minions-runner")
+            if "-r" in a:
+                self.gone("/home/minions-runner")
+            return 0, ""
+        if a[:1] == ["find"] and "-uid" in a:  # R136: what stayed, handed to root once its user is gone
+            self.order.append(f"to root {a[1]}")
+            for p in [a[1], *self.under(a[1])]:
+                if self.owner_of(p) == "minions-runner" and not any(p.startswith(m + "/") for m in self.mounts):
+                    self.owner[p] = "root"
             return 0, ""
         if a[:1] == ["systemctl"] and argv[0] == "sudo":
             verb, rest = a[1], [x for x in a[2:] if not x.startswith("--")]
@@ -3927,6 +4074,7 @@ def remove_setup(own_removal_works=True, interrupt_on=None, busy=(False,), moved
     # A folder lists what the world holds under it (G6.10: the records left after a copy that failed).
     host.listdir_or_none = lambda path: (sorted({p[len(path) + 1:].split("/")[0] for p in world.paths
                                                  if p.startswith(path.rstrip("/") + "/")}) if path in world.paths else [])
+    host.isdir = world.is_dir
     Clock(host)
     data = {"runners": {REPO: {"name": OURS, "folder": FOLDER, "unit": UNIT, "labels": ["minions", "minions-medium"]}},
             "runner_user_made": True,  # R129: setup made the runner user, and its record says so
@@ -4151,6 +4299,40 @@ class G6(unittest.TestCase):
             self.assertTrue(any(a[1] == "daemon-reload" for a in ran[:reset[0]]), units)
 
     def test_G6_19_a_foreign_file_does_not_stop_a_leave(self):
+        # The fake's deletes answer as the real commands did on a stock Ubuntu 24.04 (coreutils 9.4, findutils 4.9.0,
+        # sudo 1.9.15p5; 2026-11-25, the harness's own scratch folders): rmdir refuses a file, rm -f refuses a folder,
+        # and the runner's find deletes and exits 0 when started from / (1 from the person's home, which is closed to
+        # it: the tool starts its admin steps in /, held below).
+        gh, world, host = remove_setup(moved=False)
+        RU = ["sudo", "-n", "-u", "minions-runner", "--"]
+        f, d, full = f"{M.RECORDS_ROOT}/a-file", f"{M.RECORDS_ROOT}/a-folder", M.records_dir_of(FOLDER)
+        world.paths |= {f, d, f"{full}/x"}
+        world.plain.add(f)
+        world.dirs.add(d)
+        for argv, want, there in (
+                (["sudo", "-n", "rmdir", f], (1, f"rmdir: failed to remove '{f}': Not a directory"), [f]),
+                (["sudo", "-n", "rm", "-f", d], (1, f"rm: cannot remove '{d}': Is a directory"), [d]),
+                (RU + ["rm", "-f", d], (1, f"rm: cannot remove '{d}': Is a directory"), [d]),
+                (["sudo", "-n", "rmdir", full], (1, f"rmdir: failed to remove '{full}': Directory not empty"), [full]),
+                (RU + ["find", full, "-mindepth", "1", "-delete"], (0, ""), [full]),
+                (["sudo", "-n", "rmdir", full], (0, ""), []),
+                (["sudo", "-n", "rmdir", d], (0, ""), []),
+                (["sudo", "-n", "rm", "-f", f], (0, ""), [])):
+            self.assertEqual(world.answer(tuple(argv)), want, argv)
+            for x in there:
+                self.assertIn(x, world.paths, argv)
+        self.assertFalse({f, d, full, f"{full}/x"} & world.paths)
+        # The tool's admin steps start in /, a folder every user may enter, so a runner-user command never fails on the
+        # person's working folder (closed to that user) and a real failure is never hidden behind that one.
+        seen = []
+        def fake_run(argv, **kw):
+            seen.append((argv[0], kw.get("cwd")))
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        with mock.patch.object(M.subprocess, "run", fake_run):
+            M.Host().run(["sudo", "-n", "-u", "minions-runner", "--", "find", "/x", "-mindepth", "1", "-delete"])
+            M.Host().run_in(["sudo", "-n", "true"], "")
+            M.Host().run(["uname", "-s"])
+        self.assertEqual(seen, [("sudo", "/"), ("sudo", "/"), ("uname", None)])
         # R136 (rule 8, A FOREIGN FILE DOES NOT STOP A LEAVE): at uninstall, what this tool did not make (a file of
         # the person's in its state folder or record folder, a minions-runner it did not make) stays with the folders
         # above it, named in the census as the person's with why, and no command; the leave goes to its end and exits
@@ -4180,8 +4362,27 @@ class G6(unittest.TestCase):
         for x in census:
             if "kept:" in x and "your record of what this tool did" not in x:
                 self.assertNotIn("`", x, "no command for what is the person's")
-        self.assertEqual(lines[-1], "ok this tool is off this computer; what stayed is yours, named above with why "
-                                    "each stayed")
+        self.assertEqual(lines[-1], R136_LAST)
+        # Seen on a stock Ubuntu 24.04 machine (2026-11-25, the end part, part 3): a file put by hand, as root, at the
+        # top of the jobs' records folder stopped uninstall --all after the slice ("could not delete
+        # /var/lib/windstorm-repo-minions"), exit 2, with the runner user and the tool's copy still there. It is not
+        # this tool's: it stays with that folder, named in the census with why, and the leave goes to its end.
+        gh, world, host = remove_setup(moved=False)
+        planted = f"{M.RECORDS_ROOT}/my-notes.txt"
+        world.paths.add(planted)
+        world.plain.add(planted)
+        code, lines = run_uninstall(gh, host, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertFalse([x for x in lines if x.startswith("stop ")], lines)
+        self.assertIn(planted, world.paths)  # never deleted, never moved
+        self.assertNotIn(M.records_dir_of(FOLDER), world.paths)  # ours went, by name
+        self.assertNotIn(M.SEEN_ROOT, world.paths)
+        self.assertIn("userdel", world.order)  # the leave went to its end: the user this tool made is gone
+        census = [x for x in lines if x.startswith(("ok census:", "warn census:"))]
+        self.assertIn(f"ok census: the folder {M.RECORDS_ROOT}: kept: it holds my-notes.txt, which this tool did not "
+                      "write; that stays, and the folders above it with it", census)
+        self.assertFalse([x for x in census if M.RECORDS_ROOT in x and "`" in x], "no command for what is the person's")
+        self.assertEqual(lines[-1], R136_LAST)
         # nothing foreign: the census stays last, as before (G6.10)
         gh, world, host = remove_setup(moved=False)
         code, lines = run_uninstall(gh, host, everything=True)
@@ -4392,7 +4593,8 @@ class G6(unittest.TestCase):
             (".service", UNIT, ".d")))
         self.assertLess(o.index("config.sh remove"), first_delete)
         # R167 (answer 6): then the tool's copy, the one the person runs uninstall from, the very last removal
-        self.assertEqual(o[-2:], ["userdel", f"rm {M.HOOKS_ROOT}"])
+        # R130 (2026-11-25): userdel without -r, then the home's rmdir once it is empty; the copy's folder by rmdir last
+        self.assertEqual(o[-3:], ["userdel", "rmdir /home/minions-runner", f"rmdir {M.HOOKS_ROOT}"])
         removal = next(a for a in host.ran if M.REMOVE_SCRIPT in a)
         self.assertEqual(removal[:5], ("sudo", "-n", "-u", "minions-runner", "--"))
         # Nothing the person runs enters the runner's home: every command that names it goes through sudo.
@@ -4620,8 +4822,7 @@ class G6(unittest.TestCase):
                     self.assertNotIn("outside this tool", x)
                 if everything:
                     self.assertTrue([x for x in lines if x.startswith(f"ok census: the folder {home}: stayed")], lines)
-                    self.assertEqual(lines[-1], "ok this tool is off this computer; what stayed is yours, named above "
-                                                "with why each stayed")
+                    self.assertEqual(lines[-1], R136_LAST)
                     self.assertNotIn(M.HOOKS_ROOT, world.paths)
             self.assertIsNone(gh.runner)  # GitHub's side went
             self.assertNotIn(f"/etc/systemd/system/{UNIT}", world.paths)
@@ -4637,36 +4838,230 @@ class G6(unittest.TestCase):
         self.assertIn(f"a disk is mounted inside it ({home}/mnt)", x)
         self.assertLess(x.index("unmount it first"), x.index("`sudo rm -rf"))
 
+    def test_G6_19_a_foreign_thing_in_a_public_place_does_not_stop_a_leave(self):
+        # R136 (the owner's ruling 2026-11-25, item 2): /tmp, /var/tmp and /dev/shm are a place a job can write. A
+        # foreign thing a job's own folder there holds, or a file of the runner user's in a folder of someone else's,
+        # never stops the leave: it stays, what holds it is handed to root by its exact name (never a link, never
+        # followed), and it is named in the census with why; the leave ends with success and R136's last line. Root
+        # deletes nothing there. Each world alone, with the bytes of everything not the runner user's summed before
+        # and after. Seen red first at 01fe753 (the stop "the user minions-runner is not deleted: its files ...").
+        R, J, P_ = "minions-runner", "/tmp/job-1", "/tmp/person-dir"
+        worlds = {  # name: (paths, {path: owner}, plain files with their bytes, dirs, links, what must stay named)
+            "a root file": ([f"{J}/root.txt"], {f"{J}/root.txt": "root"}, {f"{J}/root.txt": "r1"}, [], [], [J]),
+            "a root folder with a file": ([f"{J}/rd", f"{J}/rd/f"], {f"{J}/rd": "root", f"{J}/rd/f": "root"},
+                                          {f"{J}/rd/f": "r2"}, [f"{J}/rd"], [], [J]),
+            "a root empty folder": ([f"{J}/empty"], {f"{J}/empty": "root"}, {}, [f"{J}/empty"], [], [J]),
+            "a file of the person's": ([f"{J}/p.txt"], {f"{J}/p.txt": "person"}, {f"{J}/p.txt": "p4"}, [], [], [J]),
+            "a runner folder holding a foreign file": ([f"{J}/sub", f"{J}/sub/f"], {f"{J}/sub": R, f"{J}/sub/f": "person"},
+                                                       {f"{J}/sub/f": "p5"}, [f"{J}/sub"], [], [J, f"{J}/sub"]),
+            "a runner link to a folder outside": ([f"{J}/ln", "/srv/outside", "/srv/outside/data"],
+                                                  {f"{J}/ln": R, "/srv/outside": "person", "/srv/outside/data": "person"},
+                                                  {"/srv/outside/data": "o6"}, ["/srv/outside"], [f"{J}/ln"], []),
+            "the control": ([f"{J}/mine.txt"], {f"{J}/mine.txt": R}, {}, [], [], []),
+            "a runner file in a folder of someone else's": ([P_, f"{P_}/r.txt"], {P_: "person", f"{P_}/r.txt": R},
+                                                            {}, [P_], [], [f"{P_}/r.txt"]),
+        }
+        for name, (paths, owner, plain, dirs, links, named) in worlds.items():
+            gh, world, host = remove_setup(moved=False)
+            world.paths |= {J, *paths} if not name.endswith("someone else's") else set(paths)
+            world.owner.update({J: R} if not name.endswith("someone else's") else {}, **owner)
+            world.dirs |= {J, *dirs}
+            world.plain |= set(plain)
+            world.links |= set(links)
+            world.files.update(plain)
+            def summed():
+                return hashlib.sha256("".join(f"{k}={world.files.get(k)}" for k in sorted(plain)).encode()).hexdigest()
+            before = summed()
+            foreign = sorted(p_ for p_ in world.paths if world.owner_of(p_) != R and p_.startswith(("/tmp/", "/srv/")))
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_OK, (name, lines))
+            self.assertFalse([x for x in lines if x.startswith("stop ")], (name, lines))
+            self.assertEqual(summed(), before, name)
+            self.assertTrue(set(foreign) <= world.paths, (name, sorted(set(foreign) - world.paths)))
+            self.assertIn("userdel", world.order, name)
+            left = [p_ for p_ in world.paths if p_.startswith(("/tmp/", "/srv/")) and world.owner_of(p_) == R]
+            self.assertEqual(left, [], (name, "still owned by the runner user's number"))
+            census = [x for x in lines if x.startswith("ok census: in /tmp, /var/tmp, /dev/shm: kept: ")]
+            if named:
+                self.assertEqual(len(census), 1, (name, lines))
+                for p_ in named:
+                    self.assertIn(p_ + " (", census[0], name)
+                    self.assertEqual(world.owner_of(p_), "root", (name, p_))
+                self.assertIn("handed to root", census[0], name)
+                self.assertTrue(lines[-1].startswith("ok this tool is off this computer; what stayed"), (name, lines[-1]))
+            else:
+                self.assertEqual(census, [], (name, lines))
+                self.assertFalse([p_ for p_ in world.paths if p_ == J or p_.startswith(J + "/")], name)
+            self.assertFalse([a for a in host.ran if a[:3] == ("sudo", "-n", "rm") and str(a[-1]).startswith("/tmp")],
+                             name)  # root deletes nothing there
+
+    def test_G6_19_a_name_read_from_the_state_or_journal_is_checked_before_a_delete(self):
+        # R136 (the owner's ruling 2026-11-25, item 4): a runner folder's name read from the state or from a journal
+        # line is deleted in only after it is checked: absolute, no ".." part, directly under the runners' own folder,
+        # the shape this tool gives a runner's folder, and not a link. A line that fails is named and not deleted. A
+        # state or journal that could not be read is the third answer: nothing is deleted on its word, and the stop
+        # names the file. Seen red first (the fix branch before this check deleted in the planted folders).
+        # A journal line that points outside (two folders deep, so its last part is a name the person keeps in seen):
+        # the name is not taken, the person's file stays, and the line is named.
+        bad = [f"{M.RUNNERS_HOME}sub/notes.txt", "/srv/data", f"{M.RUNNERS_HOME}x/../../../etc", f"{M.RUNNERS_HOME}no shape!"]
+        gh, world, host = remove_setup(moved=False)
+        jl = os.path.join(host.state_dir(), "journal.log")
+        host.files[jl] = "".join(f"2026-11-25T10:00:0{n}Z unpack {f}\n" for n, f in enumerate(bad))
+        mine = f"{M.SEEN_ROOT}/notes.txt"
+        world.paths |= {M.SEEN_ROOT, mine}
+        world.dirs.add(M.SEEN_ROOT)
+        world.plain.add(mine)
+        world.owner[mine] = "person"
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(mine, world.paths, lines)  # never deleted on an unchecked name
+        self.assertFalse([a for a in host.ran if mine in a], "a command named the person's file")
+        for f in bad[:1] + bad[2:]:  # the line that points outside the runners' folder is not one of ours at all
+            self.assertTrue([x for x in lines if f in x and "not deleted" in x], (f, lines))
+        # A link where a runner's folder should be: not followed, not deleted, named.
+        gh, world, host = remove_setup(moved=False)
+        world.paths |= {"/srv/target", "/srv/target/data"}
+        world.links.add(FOLDER)
+        world.owner.update({"/srv/target": "person", "/srv/target/data": "person"})
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertIn("/srv/target/data", world.paths)
+        self.assertTrue([x for x in lines if FOLDER in x and "a link" in x], lines)
+        # A state that could not be read, and a journal that could not be read: a stop that names the file, nothing
+        # changed, exit 2; nothing deleted on their word.
+        for which in ("state", "journal"):
+            gh, world, host = remove_setup(moved=False)
+            before = set(world.paths)
+            if which == "state":
+                with open(M.state_path(host), "w", encoding="utf-8") as f:
+                    f.write("{ not json")
+                named = M.state_path(host)
+            else:
+                named = os.path.join(host.state_dir(), "journal.log")
+                host.unreadable = {named}
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_STOP, (which, lines))
+            stop = [x for x in lines if x.startswith("stop ")]
+            self.assertTrue(stop and named in stop[0] and "nothing is deleted on its word" in stop[0], (which, lines))
+            self.assertEqual(world.paths, before, which)
+            self.assertFalse([a for a in host.ran if a[:2] == ("sudo", "-n") and a[2:3] != ("true",)], which)
+
+    def leave_world(self, rules, top, kind, name, plant, named):
+        """One world of the walk (test_G6_19_every_folder_the_leave_empties_keeps_what_is_not_ours), alone."""
+        R = "minions-runner"
+        gh, world, host = remove_setup(moved=False)
+        world.paths |= {"/srv/outside", "/srv/outside/data"}
+        world.owner.update({"/srv/outside": "person", "/srv/outside/data": "person"})
+        world.files["/srv/outside/data"] = "o6"
+        if top not in world.paths:
+            world.paths.add(top)
+            world.dirs.add(top)
+        for rel, (who, y, text) in plant.items():
+            p_ = f"{top}/{rel}"
+            world.paths.add(p_)
+            world.owner[p_] = who
+            if y == "d":
+                world.dirs.add(p_)
+            elif y == "l":
+                world.links.add(p_)
+            else:
+                world.plain.add(p_)
+                if text:
+                    world.files[p_] = text
+        theirs = sorted([f"{top}/{r}" for r, (who, _, _) in plant.items() if who != R and not (
+            kind == "tool" and False)] + ["/srv/outside", "/srv/outside/data"])
+        def summed():
+            return hashlib.sha256("".join(f"{k}={world.files.get(k)}" for k in theirs).encode()).hexdigest()
+        before = summed()
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        what = (top, name)
+        self.assertEqual(code, M.EXIT_OK, (what, lines))
+        self.assertFalse([x for x in lines if x.startswith("stop ")], (what, lines))
+        self.assertEqual(summed(), before, what)
+        self.assertEqual([p_ for p_ in theirs if p_ not in world.paths], [], what)
+        census = [x for x in lines if x.startswith("ok census: the folder ")]
+        if named:
+            for f in [t for t, _, _ in rules if t == top or top.startswith(t + "/")]:
+                said = [x for x in census if x.startswith(f"ok census: the folder {f}: kept: ")]
+                self.assertEqual(len(said), 1, (what, f, census))
+                self.assertNotIn("`", said[0], what)  # no command
+            self.assertEqual(lines[-1], R136_LAST, what)
+        else:
+            self.assertFalse([x for x in census if f"the folder {top}:" in x], (what, census))
+            self.assertNotIn(top, world.paths, what)
+            self.assertFalse([p_ for p_ in world.paths if p_.startswith(top + "/")], what)
+
+    def test_G6_19_every_folder_the_leave_empties_keeps_what_is_not_ours(self):
+        # R136 (the owner's word 2026-11-25): the test walks EVERY folder the uninstall deletes or empties, from the
+        # code's own list (leave_folders). In each, alone: (A) a folder only this tool writes: a foreign plain file, a
+        # foreign folder holding a file, the control; (B) a folder a job can write: a root file, a root folder with a
+        # file, a root EMPTY folder (it stays), a file of the person's, a runner-owned folder holding a foreign file, a
+        # runner-owned link to a folder outside (the link goes; where it points is summed), the control. Each: exit 0,
+        # no stop, the bytes of what is not ours the same before and after, every such thing still there, the folder
+        # and each folder of the list above it that stayed named in the census with why and no command, R136's last
+        # line; in the control the folder is gone.
+        R = "minions-runner"
+        gh, world, host = remove_setup(moved=False)
+        rules = M.leave_folders(host, M.Report(Out()))
+        self.assertEqual(sorted(k for _, k, _ in rules).count("runner"), 3, rules)  # its folder, records, the home
+        self.assertEqual(len(rules), 8, rules)
+        tool, runner = LEAVE_TOOL_WORLDS, LEAVE_RUNNER_WORLDS
+        n = 0
+        for top, kind, _ in rules:
+            for name, (plant, named) in (tool if kind == "tool" else runner).items():
+                n += 1
+                self.leave_world(rules, top, kind, name, plant, named)
+        self.assertEqual(n, 5 * 3 + 3 * 7)  # every folder, every world
+
     def test_G6_30_a_home_left_by_this_tools_own_userdel_is_said_from_the_record(self):
-        # Change 2 (2026-11-24): this tool's own userdel left the home (a file of
-        # root's in it); the census said "the user was removed outside this tool", which the tool had not read, and the
-        # record that it made the user was dropped. Now the why says what was read, and how it came about only from
-        # the record (runner_home_left), in that run's census and in the next run's.
+        # Change 2 (2026-11-24), as R136 reworded it (2026-11-25): the runner user's home holds a file of root's. The
+        # runner user deletes only what it made there; userdel runs WITHOUT -r; the home stays, named with what it holds
+        # and why, and no command (the owner's condition 2: "not made by the runner user", never "the person's"). The
+        # next runs say, from the record (runner_home_left), how it came to stay, again with no command, and exit 0.
         home = f"/home/{M.RUNNER_USER}"
         gh, world, host = remove_setup(moved=False)
-        real = host._answer
-        def answer(a, i=None):
-            r = real(a, i)
-            if list(a[:3]) == ["sudo", "-n", "userdel"]:
-                world.paths.add(home)  # something in it was not deleted as that user
-            return r
-        host._answer = answer
-        how = "this tool made that user and removed it"
-        read = (f"the user {M.RUNNER_USER} is not on this computer, the folder is, and this tool deletes in a runner's "
-                "home only as that user; ")
+        world.paths |= {f"{home}/left.txt", f"{home}/.cache", f"{home}/.cache/x"}
+        world.plain.add(f"{home}/left.txt")
+        world.owner[f"{home}/left.txt"] = "root"
         for n, (repo, everything) in enumerate(((REPO, False), (REPO, False), (None, True))):
             code, lines = run_uninstall(gh, host, repo=repo, everything=everything)
             self.assertEqual(code, M.EXIT_OK, (n, lines))
-            census = [x for x in lines if x.startswith(f"ok census: the folder {home}: stayed")]
+            self.assertFalse([x for x in lines if x.startswith("stop ")], (n, lines))
+            census = [x for x in lines if x.startswith(f"ok census: the folder {home}: kept: ")]
             self.assertEqual(len(census), 1, (n, lines))
-            self.assertIn(read + how, census[0])
-            self.assertIn("Your next step: delete that folder first: `sudo rm -rf --one-file-system "
-                          f"{home}`", census[0])
-            self.assertFalse([x for x in lines if "outside this tool" in x], (n, lines))
-            self.assertFalse([x for x in lines if "If you know it is left" in x], (n, lines))
-            if not everything:
-                self.assertTrue(M.load_state(host).get("runner_home_left"), n)
-                self.assertNotIn("runner_user_made", M.load_state(host))
+            if n == 0:
+                self.assertIn("it holds left.txt (a file of root), which the runner user did not make; that stays",
+                              census[0])
+                self.assertIn("userdel", world.order)
+                self.assertNotIn(f"{home}/.cache/x", world.paths)  # what the runner user made is deleted
+            else:
+                self.assertIn("this tool made that user and removed it; the folder holds what the runner user did not "
+                              f"make (the whole list is in {host.record_dir()}/left-behind.txt), so it stays", census[0])
+            self.assertIn(f"{home}/left.txt", world.paths, n)  # never deleted, by any run
+            self.assertFalse([x for x in lines if "rm -rf" in x or "Your next step" in x], (n, lines))
+            self.assertFalse([x for x in lines if "outside this tool" in x or "It is yours" in x], (n, lines))
+            self.assertTrue(M.load_state(host).get("runner_home_left") or everything, n)
+            self.assertNotIn("runner_user_made", M.load_state(host))
+        self.assertNotIn("userdel -r", " ".join(world.order))
+        # The third answer, reached by a cause that is not a foreign file: the emptied home's rmdir is refused once.
+        # That run stops with the present stop line; the next run's rmdir finishes it and exits 0, read back.
+        gh, world, host = remove_setup(moved=False)
+        real = world.answer
+        def busy(argv, input=None, once=[True]):
+            if list(argv) == ["sudo", "-n", "rmdir", home] and once[0]:
+                once[0] = False
+                return 1, f"rmdir: failed to remove '{home}': Device or resource busy"
+            return real(argv, input)
+        host._answer = busy
+        code, lines = run_uninstall(gh, host, repo=REPO)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertTrue([x for x in lines if x.startswith(f"stop the user {M.RUNNER_USER} is deleted, read back; its "
+                                                         f"home {home} held nothing left of anyone")], lines)
+        self.assertTrue([x for x in lines if x.startswith("stop ") and "then run `uninstall --all`: it finishes" in x],
+                        lines)
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)  # the step the stop names
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertNotIn(home, world.paths)
+        self.assertIn(f"ok the user {M.RUNNER_USER} and its home are not on this computer, read back", lines)
 
     def test_G2_14_setup_with_a_kept_home_and_no_record_says_only_what_it_read(self):
         # Change 2 (case c): setup with the home there, the user not, and no record of this tool: the stop says what
@@ -4986,10 +5381,10 @@ class G6(unittest.TestCase):
                 code, lines = run_uninstall(gh, host, repo=None, everything=True)
                 self.assertEqual(code, M.EXIT_STOP, lines)
                 self.assertIn(M.HOOKS_ROOT, world.paths, lines[-1])
-                self.assertNotIn(f"rm {M.HOOKS_ROOT}", world.order)
+                self.assertNotIn(f"rmdir {M.HOOKS_ROOT}", world.order)
             gh, world, host = remove_setup()
             code, lines = run_uninstall(gh, host, repo=None, everything=True)
-            self.assertEqual(world.order[-1], f"rm {M.HOOKS_ROOT}")
+            self.assertEqual(world.order[-1], f"rmdir {M.HOOKS_ROOT}")
             self.assertTrue(any(x.endswith("the very last removal") for x in lines), lines)
         finally:
             M.tool_path = real
@@ -5043,14 +5438,14 @@ class G6(unittest.TestCase):
             rm_sent = []
             def first(argv, input=None, real=real, how=how, once=[True], rm_sent=rm_sent):
                 a = list(argv)
-                if how == "rm refused" and a[:2] == ["sudo", "-n"] and a[2:3] == ["rm"] and a[-1] == M.HOOKS_ROOT \
+                if how == "rm refused" and a[:2] == ["sudo", "-n"] and a[2:3] == ["rmdir"] and a[-1] == M.HOOKS_ROOT \
                         and once[0]:
                     once[0] = False
-                    return 1, f"rm: cannot remove '{M.HOOKS_ROOT}': Device or resource busy"
+                    return 1, f"rmdir: failed to remove '{M.HOOKS_ROOT}': Device or resource busy"
                 if how == "not read" and a == ["sudo", "-n", "test", "-e", M.HOOKS_ROOT] and once[0] and rm_sent:
                     once[0] = False  # the read after the copy's removal
                     return 1, "sudo: a terminal is required to read the password"
-                if a[2:3] == ["rm"] and a[-1] == M.HOOKS_ROOT:
+                if a[2:3] == ["rmdir"] and a[-1] == M.HOOKS_ROOT:
                     rm_sent.append(1)
                 return real(argv, input)
             host._answer = first
@@ -5463,7 +5858,8 @@ class G6(unittest.TestCase):
 
     def test_G6_4_uninstall_again_finishes_an_interrupted_removal(self):
         # Cut right after the GitHub side was removed, at the first delete.
-        gh, world, host = remove_setup(interrupt_on=lambda a: a[:7] == ["sudo", "-n", "-u", "minions-runner", "--", "rm", "-rf"])
+        gh, world, host = remove_setup(interrupt_on=lambda a: a[:6] == ["sudo", "-n", "-u", "minions-runner", "--", "find"]
+                                          and "-delete" in a)  # R136: the runner user's first delete
         code = M.main(["uninstall", "--all"], host=host, out=Out(), gh=gh)
         self.assertEqual(code, M.EXIT_INTERRUPTED)
         self.assertIsNone(gh.runner)
@@ -6549,7 +6945,8 @@ class INV(unittest.TestCase):
         self.assertNotIn("setting_up", state)
         self.assertNotIn(REPO, state.get("runners") or {})
         # A removal cut part-way (the record says removing) is finished, read back.
-        gh, world, host = remove_setup(interrupt_on=lambda a: a[:7] == ["sudo", "-n", "-u", "minions-runner", "--", "rm", "-rf"])
+        gh, world, host = remove_setup(interrupt_on=lambda a: a[:6] == ["sudo", "-n", "-u", "minions-runner", "--", "find"]
+                                          and "-delete" in a)  # R136: the runner user's first delete
         self.assertEqual(M.main(["uninstall", REPO], host=host, out=Out(), gh=gh), M.EXIT_INTERRUPTED)
         self.assertTrue(M.load_state(host)["runners"][REPO]["removing"])
         out = Out()
@@ -8021,7 +8418,10 @@ for name, make, run in runs:
                         if name in ("dump", "state_path"):
                             where.setdefault(name, set()).add(fn.name)
         self.assertEqual(where.get("dump"), {"save_state"})
-        self.assertEqual(where.get("state_path"), {"load_state", "save_state", "record_look"})
+        # R136 (item 4, 2026-11-25): names_unread reads the record to tell "could not be read" from "not there", and
+        # known_folders names it as the source of a name it did not take; neither writes it
+        self.assertEqual(where.get("state_path"), {"load_state", "save_state", "record_look", "names_unread",
+                                                   "known_folders"})
         docs = {id(d.body[0].value) for d in ast.walk(tree)
                 if isinstance(d, (ast.Module, ast.ClassDef, ast.FunctionDef)) and d.body
                 and isinstance(d.body[0], ast.Expr) and isinstance(d.body[0].value, ast.Constant)}

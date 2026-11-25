@@ -18,6 +18,12 @@ request could run code on that computer, as GitHub's own documentation warns.
 A job's code runs as the runner's own user, and it could leave a cron line or an at job behind. Uninstall and setup
 read for both and say what they find.
 
+Uninstall deletes the files the runner's user owns in /tmp, /var/tmp and /dev/shm, as that user and never as root.
+Anything a job wrote anywhere else outside the runner's own folders is not looked for and stays.
+
+If you later give the runner's user more rights (a container engine's group, a sudo rule), its jobs can leave files
+that user does not own. Uninstall does not delete those. It names them.
+
 ## Family
 
 Part of the Windstorm skills: [Pit Stop](https://github.com/TheWindstorm/windstorm-pit-stop),
