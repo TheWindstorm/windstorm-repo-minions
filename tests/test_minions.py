@@ -9588,8 +9588,9 @@ for name, make, run in runs:
         for answer, said_is, step in kinds:
             with self.subTest(said_is):
                 self.workflow_file_unread(answer, said_is, step)
-        # a file GitHub says is empty is one with no jobs, as before
-        self.assertEqual(M.workflow_text({"size": 0, "encoding": "base64", "content": ""}), ("", ""))
+        # a file GitHub says is empty is never one whose content GitHub did not give; since R202 (no workflow file is
+        # passed over in silence) it is named as a file with no jobs key, as every file without one is
+        self.assertEqual(M.workflow_text({"size": 0, "encoding": "base64", "content": ""}), (None, M.NOT_JOBS_KEY_IS))
         # the third kind names each of the three it holds by its code; a CR and a CRLF end a line in every YAML,
         # so a file with them is read
         b64 = lambda t: {"content": M.base64.b64encode(t.encode()).decode()}
@@ -9631,6 +9632,10 @@ for name, make, run in runs:
                       f"to move its jobs", lines)
         self.assertFalse([x for x in lines if x.startswith("stop ")], lines)
         self.assertEqual(len(gh.blobs()), 1, "ci.yml still moves")
+        # the page names it too, under its own heading, in the terminal's words (R202, accepted for every kind)
+        unread = pr_body_of(gh).split("## Not read (left as they are)\n")[1].split("\n## ")[0]
+        self.assertIn(f"- `.github/workflows/ff.yml`: {said}; it stays as it is. {step}, then run `look {REPO}` and "
+                      f"`move {REPO}` again to move its jobs", unread.splitlines())
         # move --verify: a moved file that is not text now is named, never called moved
         merged = gh.blobs()[0]
         h = move_host()
@@ -9724,6 +9729,44 @@ for name, make, run in runs:
                 "    steps:\n      - run: |\n          echo 'b:' \"c\" :\n  b:\n    runs-on: y\n")
         self.assertEqual(M.workflow_text(b64(fine)), (fine, ""))
         self.assertEqual([j["id"] for j in M.read_workflow(fine)], ["a", "b"])
+        # The jobs key itself (the maintainer's ruling, 2026-11-25): a file with no plain jobs key at the left margin
+        # read as no jobs and was named nowhere, on the terminal or the page, and look said only "no job read". Now it
+        # is not read and named on every road, beside a file that still moves.
+        job = "    runs-on: ubuntu-latest\n    steps:\n      - run: a\n"
+        head = "name: four\non: [push]\n"
+        no_key = {"the key in double quotes": head + '"jobs":\n  build:\n' + job,
+                  "the key in single quotes": head + "'jobs':\n  build:\n" + job,
+                  "a space before the colon": head + "jobs :\n  build:\n" + job,
+                  "every top-level key indented": "".join("  " + x + "\n" for x in (head + "jobs:\n  build:\n" + job)
+                                                          .splitlines()),
+                  "the jobs given whole on the key's line": head + "jobs: {build: {runs-on: ubuntu-latest, steps: "
+                                                                   "[{run: a}]}}\n",
+                  "no jobs key at all": head + "env:\n  A: b\n"}
+        path = ".github/workflows/four.yml"
+        step = "Write the jobs key plain at the left margin, jobs: on a line of its own, on GitHub"
+        for what, text in no_key.items():
+            with self.subTest(jobs_key=what):
+                gh = MoveGH({".github/workflows/ci.yml": CI_YML, path: text})
+                code, lines = run_move(gh, move_host())
+                written = [e["path"] for m, p, b in gh.writes if p.endswith("/git/trees") for e in b["tree"]]
+                self.assertEqual(written, [".github/workflows/ci.yml"], lines)
+                self.assertFalse([x for x in lines if f"{path} job " in x], lines)
+                said = [x for x in lines if x.startswith(f"warn {path}: ")]
+                self.assertEqual(len(said), 1, lines)  # named, once: never passed over in silence
+                self.assertIn("## Not read (left as they are)\n- `.github/workflows/four.yml`: ", pr_body_of(gh))
+                self.assertEqual(said, [f"warn {path}: {M.NOT_JOBS_KEY_IS}, so this tool neither reads nor changes "
+                                        f"it; it stays as it is. {step}, then run look and move again to move its jobs"],
+                                 lines)
+                self.assertEqual(code, M.EXIT_NEED, lines)
+                body = pr_body_of(gh)
+                self.assertIn(f"- `{path}`: {M.NOT_JOBS_KEY_IS}", body)
+                self.assertFalse([x for x in body.splitlines() if f"`{path}` job" in x], body)
+                # look, verify and uninstall's put-back, and the page's line, through the helper every kind walks
+                self.workflow_file_unread(b64(text), M.NOT_JOBS_KEY_IS, step)
+        # controls, read as before: a comment after the key, and a document start line first
+        for text in (head + "jobs: # the jobs\n  build:\n" + job, "---\n" + head + "jobs:\n  build:\n" + job):
+            self.assertEqual(M.workflow_text(b64(text)), (text, ""))
+            self.assertEqual([j["id"] for j in M.read_workflow(text)], ["build"])
 
     def test_rule_31_save_state_is_the_one_writer_of_the_record(self):
         # 2026-11-24: the fixed stored marks are safe only because save_state is the one writer of

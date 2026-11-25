@@ -159,6 +159,10 @@ NOT_ONE_READING_IS = "its text holds {}, and readers of this file do not agree w
 # job key, or a line sits less indented than the jobs, is not read at all, named, and left as it is. Comments, blank
 # lines and deeper lines cannot change which job a line belongs to, so they never set a file aside.
 NOT_JOBS_READ_IS = "its line {} under jobs: is {}, so this tool cannot tell which job each line belongs to"
+# R202 (the maintainer's ruling, 2026-11-25): no workflow file is passed over in silence. A file in which the reader
+# finds no plain jobs key at the left margin (the key in quotes, a space before its colon, every top-level key
+# indented, the jobs given whole on the key's own line, or no jobs key at all) read as no jobs and was named nowhere.
+NOT_JOBS_KEY_IS = "this tool looked for its jobs key written plain at the left margin (jobs: on a line of its own) and did not find it"
 JOB_KEY = re.compile(r"^[A-Za-z0-9_-]+:\s*$")
 
 
@@ -170,6 +174,8 @@ def unread_step(why: str) -> str:
         return "Make the file smaller than 1 MB on GitHub"
     if why.startswith(NOT_JOBS_READ_IS.split("{}")[0]):
         return "Write each job under jobs: as its plain name and a colon, all at one indent, on GitHub"
+    if why == NOT_JOBS_KEY_IS:
+        return "Write the jobs key plain at the left margin, jobs: on a line of its own, on GitHub"
     return f"Take {and_list(re.findall(r'U[+][0-9A-F]{4}', why))} out of the file on GitHub"
 
 
@@ -197,8 +203,9 @@ def workflow_text(fd: object) -> tuple[str | None, str]:
 
 def jobs_unreadable(text: str) -> str:
     """R202: why the jobs of this text cannot be told apart line by line, or "" when every line under jobs: at the
-    jobs' indent is a plain job key and none sits less indented."""
-    in_jobs, job_indent = False, None
+    jobs' indent is a plain job key and none sits less indented; a file with no plain jobs key at the left margin is
+    NOT_JOBS_KEY_IS."""
+    in_jobs, job_indent, found = False, None, False
     for n, raw in enumerate(yaml_lines(text), 1):
         line = strip_comment(raw)
         if not line.strip(BLANKS):
@@ -207,6 +214,7 @@ def jobs_unreadable(text: str) -> str:
         body = line.strip(BLANKS)
         if indent == 0:
             in_jobs, job_indent = body == "jobs:", None
+            found = found or in_jobs
             continue
         if not in_jobs:
             continue
@@ -216,7 +224,7 @@ def jobs_unreadable(text: str) -> str:
             return NOT_JOBS_READ_IS.format(n, "less indented than the jobs above it")
         if indent == job_indent and not JOB_KEY.match(body):
             return NOT_JOBS_READ_IS.format(n, "not a job's plain name and a colon (letters, digits, _ and -)")
-    return ""
+    return "" if found else NOT_JOBS_KEY_IS
 
 
 def odd(text: str) -> bool:
@@ -5635,7 +5643,8 @@ def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report,
     """The workflow files and their text. A file GitHub would not give is a stop; one whose content is not text, or
     whose content GitHub's answer does not carry (rule 6), is left out and put in not_text with why (NOT_TEXT_IS or
     NOT_GIVEN_IS), or whose text holds a character readers of YAML do not agree is a line end (NOT_ONE_READING_IS),
-    or whose jobs cannot be told apart line by line (NOT_JOBS_READ_IS, R202), for the caller to name in its own words (rule 31 (vi)), and the others go on."""
+    or whose jobs cannot be told apart line by line or has no plain jobs key (NOT_JOBS_READ_IS, NOT_JOBS_KEY_IS,
+    R202), for the caller to name in its own words (rule 31 (vi)), and the others go on."""
     q = f"?ref={ref}" if ref else ""
     s, d = gh.api("GET", f"repos/{repo}/contents/.github/workflows{q}")
     if s == 404:
