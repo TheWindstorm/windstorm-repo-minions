@@ -2361,6 +2361,34 @@
    "issue": 370,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R185",
+   "seen": "2026-11-24, once, through GitHub's own list of workflows, on this project's private proof repository: a workflow file whose first line is a comment, then U+2028 (a line separator, which cannot be seen), then `name: ...` on the same line, then a valid workflow. GitHub listed the workflow by that hidden name, not by its path: GitHub's reader ends a line at U+2028, as readers built on libyaml do and YAML 1.2 does not. 0.1.0 does not read such a file at all (readers of the file do not agree where its lines end).",
+   "promise": "A workflow file's lines are cut where GitHub was seen to cut them: a file holding U+2028 is read with a line ending there, as GitHub reads it, and is no longer set aside for that character. NEL (U+0085) and U+2029 stay set aside until each is tried on GitHub the same way, by commits that keep the proof repository's workflows from starting. Its test: the line-ends test reads a file with U+2028 as GitHub was seen to (the hidden name, the file's jobs listed), from the recorded answer of the try; a file with NEL or U+2029 is still not read, and the character is named.",
+   "codon": "G8.22",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 373,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R186",
+   "seen": "2026-11-25, on a stock Ubuntu 24.04 virtual machine, and on an earlier fresh install of the same image: the runner's dependency script, run by setup, ran `apt-get install -y libkrb5-3 zlib1g`; zlib1g was already installed, so apt moved it to the archive's newer version (1:1.3.dfsg-3.1ubuntu2.2 to 1:1.3.dfsg-3.1ubuntu2.3). The record and the census of `uninstall --all` named only the three packages it added: the lists read before and after the script are compared by name only. Read by a reviewer in the run's own log.",
+   "promise": "The record and uninstall's census name every system package whose version changed while the dependency step ran, with the version before and after, beside the packages it added; the comparison is by name and version; a package list that could not be read is said as \"could not be read\", never as \"nothing changed\". Its test: lists before and after in which one package is added, one changes version and one stays; the record and the census name the added one and the changed one with both versions, the third not at all; a list not read gives \"could not be read\".",
+   "codon": "G2.25",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 374,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
