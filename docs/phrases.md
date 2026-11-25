@@ -12,7 +12,7 @@ when this page lists one the code no longer matches.
 
 That test's limit: it finds a phrase only where the code matches it against an answer held in a variable named `out`,
 `head`, `mode`, `words` or `entry`, or passed through `said()`. A phrase matched against an answer under any other name
-is not found by it. Row R183, due 0.1.1, turns the test around: it starts from every answer the tool reads from another
+is not found by it. Row R191, due 0.1.1, turns the test around: it starts from every answer the tool reads from another
 program, whatever its name, and finds each phrase matched against it.
 
 "Seen" means seen on a real computer. "German guest" is a stock Ubuntu 24.04.5 computer with the German language
