@@ -1992,17 +1992,12 @@ def look_job_line(path: str, triggers: dict, job: dict, survey_: dict, repo: str
     if kind == "here":
         return "ok", words
     if kind == "publish":
-        which = os.path.basename(path) + ":" + str(job["id"])
-        if odd(which):  # rule 31 (vi): no command can name it on one line; renaming it is the step that is left
+        step = include_step(repo, path, job["id"])
+        if step is None:  # rule 31 (vi): no command can name it on one line; renaming it is the step that is left
             return "warn", (f"publishes or deploys ({words}): it is left as it is, and moves only with your word for "
-                            f"this job; the name of its {'workflow file' if odd(os.path.basename(path)) else 'job'} "
-                            f"({which}) holds a character a line breaks on or a terminal acts on, or that cannot be "
-                            f"seen, so no command can "
-                            f"name it and it cannot be typed on one line: rename the "
-                            f"{'file' if odd(os.path.basename(path)) else 'job'} on GitHub to a name without it, then "
-                            f"run {C0}look {repo}{C1} again")
+                            f"this job; {include_unnamable(path, job['id'], f'{C0}look {repo_word(repo)}{C1}')}")
         return "warn", (f"publishes or deploys ({words}): it is left as it is, and moves only with your word for "
-                        f"this job ({C0}move {repo} --include-job {shlex.quote(which)}{C1})")
+                        f"this job ({C0}{step}{C1})")
     return "warn", words
 
 
@@ -5506,6 +5501,28 @@ def cores_asked(labels: list[str]) -> int | None:
     return None
 
 
+def include_key(path: str, job_id) -> str:
+    """The word --include-job takes for one job: the workflow file's own name (never its path), a colon, the job's id."""
+    return f"{os.path.basename(path)}:{job_id}"
+
+
+def include_step(repo: str | None, path: str, job_id) -> str | None:
+    """R193: the one step that moves one publishing job, for look's line and the move page alike (move reads the same
+    key). None where no command can name it on one line (rule 31 (vi)); include_unnamable says what is left then."""
+    which = include_key(path, job_id)
+    return None if odd(which) else f"move {repo_word(repo)} --include-job {shlex.quote(which)}"
+
+
+def include_unnamable(path: str, job_id, look_again: str) -> str:
+    """R193: where no command can name a publishing job, the words look and the move page both say, with look's own
+    step (marked as each place marks a command) at the end."""
+    f = odd(os.path.basename(path))
+    return (f"the name of its {'workflow file' if f else 'job'} ({include_key(path, job_id)}) holds a character a line "
+            f"breaks on or a terminal acts on, or that cannot be seen, so no command can name it and it cannot be "
+            f"typed on one line: rename the {'file' if f else 'job'} on GitHub to a name without it, then run "
+            f"{look_again} again")
+
+
 def plan_job(path: str, triggers: dict, job: dict, system: str, machine: str, our_labels: list[str],
              include: set[str]) -> tuple[str, str, list[str] | None]:
     """One job: ("move", words, new labels) | ("left", reason, None) | ("publish", reason, None) | ("here", ...)."""
@@ -5533,8 +5550,7 @@ def plan_job(path: str, triggers: dict, job: dict, system: str, machine: str, ou
     sec = sorted(s for s in job["secrets"] if PUBLISH_SECRET.search(s))
     if sec:
         publish.append("it holds a publishing secret (" + ", ".join(sec) + ")")
-    key = f"{os.path.basename(path)}:{job['id']}"
-    if publish and key not in include:
+    if publish and include_key(path, job["id"]) not in include:
         return "publish", "; ".join(publish), None
     new = ["minions"]
     cores = cores_asked(labels)
@@ -5686,8 +5702,9 @@ def pr_body(moved: list, left: list, publish: list, here: list, first: list[str]
     if publish:
         out += ["", "## Left as they are (they publish or deploy)",
                 "Each needs your word for that one job before it moves: the step under it moves that one job."]
-        out += [f"- `{p}` job `{j}`: {w}; to move it: `move {repo_word(repo)} --include-job {shlex.quote(p + ':' + j)}`"
-                for p, j, w in publish]
+        out += [f"- `{p}` job `{j}`: {w}; " + (f"to move it: `{step}`" if step else
+                                                 include_unnamable(p, j, f"`look {repo_word(repo)}`"))
+                for p, j, w in publish for step in (include_step(repo, p, j),)]
     if here:
         out += ["", "## Already on your computer"]
         out += [f"- `{p}` job `{j}`: {w}" for p, j, w in here]

@@ -2237,6 +2237,42 @@ class G3(unittest.TestCase):
         (dep,) = [c for c in gh.blobs() if c.startswith("name: deploy")]
         self.assertEqual(dep.count("runs-on: [minions]"), 1)
 
+    def test_G8_23_the_move_pages_step_moves_that_one_job(self):
+        # Row R193 (found by the maintainer on 2a4fcc7): the step the move page prints for a publishing job is taken
+        # from the body the real move opened, split as a shell splits it, and run with exactly that word: that one
+        # job moves, and no other. GitHub gives each file by its path; the step names the file's own name, as look's
+        # line does and as move reads it.
+        base_body = pr_body_of((lambda gh: (run_move(gh, move_host()), gh)[1])(MoveGH(self.FILES)))
+        moved_jobs = lambda body: set(re.findall(r"job `([^`]+)`", body.split("## Moved")[1].split("\n## ")[0]))
+        base = moved_jobs(base_body)
+        pub = base_body.split("## Left as they are (they publish or deploy)")[1].split("\n## ")[0]
+        steps = re.findall(r"to move it: `(move [^`]+)`", pub)
+        self.assertEqual(len(steps), 4, pub)  # publish, site, npm, pypi: one step each
+        for step in steps:
+            argv = shlex.split(step)
+            self.assertEqual(argv[:3], ["move", REPO, "--include-job"], step)
+            self.assertEqual(len(argv), 4, step)
+            gh = MoveGH(self.FILES)
+            run_move(gh, move_host(), include=[argv[3]])
+            self.assertEqual(moved_jobs(pr_body_of(gh)) - base, {argv[3].split(":", 1)[1]}, step)
+        # look's line and the page give the same step for the same job (one function builds both)
+        s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024}
+        (job,) = M.read_workflow(RELEASE_YML)
+        lw = M.look_job_line(".github/workflows/release.yml", M.read_triggers(RELEASE_YML), job, s, REPO)[1]
+        self.assertIn(f"{M.C0}move {REPO} --include-job release.yml:publish{M.C1}", lw)
+        self.assertIn(f"`move {REPO} --include-job release.yml:publish`", pub)
+        # a file name no command can name (a character that cannot be seen): the page holds no command for it, and
+        # says what look says: rename the file on GitHub, then look again
+        files = dict(self.FILES)
+        files[".github/workflows/rel​ease.yml"] = files.pop(".github/workflows/release.yml")
+        gh = MoveGH(files)
+        run_move(gh, move_host())
+        pub = pr_body_of(gh).split("## Left as they are (they publish or deploy)")[1].split("\n## ")[0]
+        line = next(x for x in pub.splitlines() if "job `publish`" in x)
+        self.assertNotIn("--include-job", line)
+        self.assertIn("rename the file on GitHub to a name without it, then run", line)
+        self.assertIn(f"`look {REPO}`", line)
+
     def test_G3_7_verify_counts_a_job_on_another_computer_of_ours(self):
         # Seen 2026-11-23 (run I, row R114): two computers of ours served one repository; the other one took the
         # moved job and verify said it did not move. A runner of ours elsewhere counts, and is named; one GitHub no
@@ -9528,7 +9564,8 @@ class ZRule31(unittest.TestCase):
                           "test_rule_31_vi_not_text_on_the_way_in_with_and_without_a_language",
                           "test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback",
                           "test_rule_31_vi_a_line_ends_at_a_line_feed_every_command_reads_one_item_as_one",
-                          "test_G6_19_a_name_with_a_line_feed_is_one_name")
+                          "test_G6_19_a_name_with_a_line_feed_is_one_name",
+                          "test_G8_23_the_move_pages_step_moves_that_one_job")  # R193: a file name planted with U+200B
 
     def test_rule_31_every_line_every_road_printed(self):
         bad, odd_starts, commands_seen = [], set(), 0
