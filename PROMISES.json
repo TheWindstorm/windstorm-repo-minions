@@ -2346,6 +2346,20 @@
    "issue": 359,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R184",
+   "seen": "2026-11-24, in the code, on family rule 32: the gate after a release (test_PROMISES_the_version_after_needs_proof_on_a_real_machine) takes any proven line that is not empty as proof, so a line that says of itself that part was not seen would open the next version.",
+   "promise": "A row may carry proof_owed: what is still to be seen on a real machine (absent, empty or only spaces: nothing owed). One function decides that a row is proven: its proven line is not empty and its proof_owed holds nothing; words in the proven line never decide it. The gate after a release and the gate before a tag for a row that leans on the stand-in both call it, and their message names what is owed. Its test reads the file's own rows (every row that owes is refused, read as a version after all of them), then rows it makes: owed with a proven line (refused, the message carries what is owed), owed with none (refused), no field but \"not proven yet\" in the line (passes), an empty field, a field of spaces, a row that ships in the version itself (not looked at). Seen red first on a real row that owes.",
+   "codon": "G9.2",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 370,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
