@@ -2178,7 +2178,7 @@ class G3(unittest.TestCase):
         lk, lw = M.look_job_line(".github/workflows/release.yml", trig, job, s)
         self.assertEqual(lk, "warn")
         self.assertIn("starts on a pushed tag", lw)
-        self.assertIn("--include-job release.yml:publish", lw)
+        self.assertIn("--include-job=release.yml:publish", lw)
         # A runner that is not ours: the same words in look's line and under its own heading in move's PR.
         trig = M.read_triggers(files[".github/workflows/theirs.yml"])
         for job in M.read_workflow(files[".github/workflows/theirs.yml"]):
@@ -2249,18 +2249,19 @@ class G3(unittest.TestCase):
         steps = re.findall(r"to move it: `(move [^`]+)`", pub)
         self.assertEqual(len(steps), 4, pub)  # publish, site, npm, pypi: one step each
         for step in steps:
-            argv = shlex.split(step)
-            self.assertEqual(argv[:3], ["move", REPO, "--include-job"], step)
-            self.assertEqual(len(argv), 4, step)
+            argv = shlex.split(step)  # as a shell hands it over, then read by the tool's own parser (R200)
+            self.assertEqual(argv[:2], ["move", REPO], step)
+            a = M.parser().parse_args(argv)
+            self.assertEqual(len(a.include_job), 1, step)
             gh = MoveGH(self.FILES)
-            run_move(gh, move_host(), include=[argv[3]])
-            self.assertEqual(moved_jobs(pr_body_of(gh)) - base, {argv[3].split(":", 1)[1]}, step)
+            run_move(gh, move_host(), include=a.include_job)
+            self.assertEqual(moved_jobs(pr_body_of(gh)) - base, {a.include_job[0].split(":", 1)[1]}, step)
         # look's line and the page give the same step for the same job (one function builds both)
         s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024}
         (job,) = M.read_workflow(RELEASE_YML)
         lw = M.look_job_line(".github/workflows/release.yml", M.read_triggers(RELEASE_YML), job, s, REPO)[1]
-        self.assertIn(f"{M.C0}move {REPO} --include-job release.yml:publish{M.C1}", lw)
-        self.assertIn(f"`move {REPO} --include-job release.yml:publish`", pub)
+        self.assertIn(f"{M.C0}move {REPO} --include-job=release.yml:publish{M.C1}", lw)
+        self.assertIn(f"`move {REPO} --include-job=release.yml:publish`", pub)
         # a file name no command can name (a character that cannot be seen): the page holds no command for it, and
         # says what look says: rename the file on GitHub, then look again
         files = dict(self.FILES)
@@ -2272,6 +2273,56 @@ class G3(unittest.TestCase):
         self.assertNotIn("--include-job", line)
         self.assertIn("rename the file on GitHub to a name without it, then run", line)
         self.assertIn(f"`look {REPO}`", line)
+
+    def test_G8_24_a_step_never_carries_a_name_no_command_may_and_every_step_runs_as_printed(self):
+        # Row R200 (the maintainer's ruling (A), 2026-11-25): a name holding a backtick or a dollar sign before a
+        # parenthesis gets no step, in look's line and on the move page alike, and both say to rename the file; on the
+        # page every such name stays inside its own code span, shown changed by the terminal's function with its note.
+        # A step for a name that begins with a dash runs as printed: the word is joined to its option by "=".
+        s = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024}
+        (job,) = M.read_workflow(RELEASE_YML)
+        moved_jobs = lambda body: set(re.findall(r"^- `([^`]+)` job `([^`]+)`", body.split("## Moved")[1].split("\n## ")[0], re.M))
+        for name, step_given in (("-rel.yml", True), ("release.yml", True), ("re`l.yml", False), ("re$(x).yml", False)):
+            path = f".github/workflows/{name}"
+            files = {".github/workflows/ci.yml": CI_YML, path: RELEASE_YML}
+            # look's line, as printed
+            kind, words = M.look_job_line(path, M.read_triggers(RELEASE_YML), job, s, REPO)
+            printed = M.render(f"{path} job publish: " + words)
+            gh = MoveGH(files)
+            run_move(gh, move_host())
+            body = pr_body_of(gh)
+            line = next(x for x in body.split("## Left as they are (they publish or deploy)")[1].splitlines()
+                        if " job `publish`" in x)
+            self.assertEqual(line.split(": ", 1)[0].count("`"), 4, line)  # the file and the job: two spans, whole
+            if not step_given:
+                self.assertEqual(printed[1:], [f"look {REPO}"], printed)  # the one step is look's, alone
+                self.assertNotIn("--include-job", printed[0])
+                self.assertIn("rename the file on GitHub to a name without it", printed[0])
+                self.assertTrue(printed[0].endswith(M.SHOWN_CHANGED), printed[0])
+                self.assertNotIn("--include-job", line)
+                self.assertIn("rename the file on GitHub to a name without it", line)
+                self.assertTrue(line.endswith(M.SHOWN_CHANGED), line)
+                for x in body.splitlines():
+                    self.assertNotIn("$(", x)
+                continue
+            # the step as printed by look, and as copied from the page's code span: a shell's words, read by the tool's
+            # own parser, move that one job and no other
+            (look_step,) = printed[1:]
+            (page_step,) = re.findall(r"to move it: `(move [^`]+)`", line)
+            self.assertEqual(look_step, page_step)
+            a = M.parser().parse_args(shlex.split(look_step))
+            self.assertEqual((a.cmd, a.repo, a.include_job),
+                             ("move", REPO, [f"{name}:publish"]), look_step)
+            gh2 = MoveGH(files)
+            code, lines = run_move(gh2, move_host(), include=a.include_job)
+            self.assertEqual(code, M.EXIT_NEED, lines)
+            self.assertEqual(moved_jobs(pr_body_of(gh2)) - moved_jobs(body), {(path, "publish")}, look_step)
+        # a job id is read only as GitHub allows it ([A-Za-z0-9_-]); planted at the function itself, the same holds
+        self.assertIsNone(M.include_step(REPO, ".github/workflows/rel.yml", "pu`b"))
+        self.assertIsNone(M.include_step(REPO, ".github/workflows/rel.yml", "pu$(b)"))
+        self.assertIn("the name of its job (rel.yml:pu`b)", M.include_unnamable(".github/workflows/rel.yml", "pu`b", "look"))
+        page_line = M.md_job(".github/workflows/rel.yml", "pu`b", "words")
+        self.assertEqual(page_line, f"- `.github/workflows/rel.yml` job `pu'b`: words {M.SHOWN_CHANGED}")
 
     def test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write(self):
         # Row R197 (read in the code by the maintainer, 2026-11-25): a word of --include-job that matched no job was
@@ -7081,7 +7132,7 @@ class P1a(unittest.TestCase):
             self.assertEqual(got[0][1], REPO, (what, text))
             self.assertNotIn("OWNER/REPO", text, what)
         self.assertEqual(shlex.split(re.findall(r"`(move [^`]+)`", known["move --include-job"])[0])[2:],
-                         ["--include-job", "w.yml:deploy now"])
+                         ["--include-job=w.yml:deploy now"])  # R200: one word, joined by an equals sign
         # (4) not known: the plain word, the line's own words saying to put the name there, and the paste as printed
         # ends in this tool's own refusal
         unknown = [M.zero_job_words(None), M.laptop_words(None), M.limits_in_words(lim, None),
@@ -9022,14 +9073,23 @@ class Rule31(unittest.TestCase):
                 self.assertNotIn("`", sentence, (road, sentence))
                 self.assertNotIn("$(", sentence, (road, sentence))
                 for c in commands:
-                    self.assertNotIn("`", outside_quotes(c), (road, c))
-                    self.assertNotIn("$(", outside_quotes(c), (road, c))
-        # The one command that must carry such a name exactly (look's word for a job that publishes): alone on its
-        # line, quoted for the shell, so it reads back as the very file and job.
-        step = next(c for sentence, commands in unfold(looked) for c in commands if "--include-job" in c)
-        self.assertEqual(shlex.split(step), ["move", REPO, "--include-job", "rel `y` $(id).yml:publish"])
-        # The pull request's own text is GitHub's Markdown, not a printed line: it names each file in code spans.
-        self.assertIn("odd `x` $(id).yml", pr_body_of(gh).replace("``", "`"))
+                    self.assertNotIn("`", c, (road, c))  # R200: quoted or not
+                    self.assertNotIn("$(", c, (road, c))
+        # R200 (the maintainer's ruling (A), 2026-11-25): no command carries such a name, quoted or not. Look's word
+        # for the job that publishes gives no step: its line says to rename the file on GitHub, then look again.
+        self.assertFalse([c for _, commands in unfold(looked) for c in commands if "--include-job" in c], looked)
+        said = [x for x in looked if "rel 'y' $ (id).yml:publish" in x]
+        self.assertTrue(said and "rename the file on GitHub to a name without it" in said[0], looked)
+        # The page: each such name stands in its own code span, shown changed by the terminal's own function, and the
+        # line carries the terminal's note; no backtick of the name is left to end its span.
+        body = pr_body_of(gh)
+        lines = [x for x in body.splitlines() if "odd 'x' $ (id).yml" in x or "rel 'y' $ (id).yml" in x]
+        self.assertEqual(len(lines), 3, body)  # moved, left as not ours, publishes
+        for x in lines:
+            self.assertTrue(x.endswith(M.SHOWN_CHANGED), x)
+            head = x.split(": ", 1)[0]  # the file and the job: two spans, whole (the words after are row R201's)
+            self.assertEqual(head.count("`"), 4, head)
+            self.assertNotIn("$(", head)
 
 
     def test_rule_31_v_a_text_one_run_keeps_and_a_later_run_prints_keeps_its_command_on_its_own_line(self):
@@ -9626,7 +9686,8 @@ class ZRule31(unittest.TestCase):
                           "test_rule_31_vi_a_line_ends_at_a_line_feed_every_command_reads_one_item_as_one",
                           "test_G6_19_a_name_with_a_line_feed_is_one_name",
                           "test_G8_23_the_move_pages_step_moves_that_one_job",  # R193: a file name planted with U+200B
-                          "test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write")  # R197: a backtick
+                          "test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write",  # R197: a backtick
+                          "test_G8_24_a_step_never_carries_a_name_no_command_may_and_every_step_runs_as_printed")  # R200
 
     def test_rule_31_every_line_every_road_printed(self):
         bad, odd_starts, commands_seen = [], set(), 0
@@ -9657,9 +9718,9 @@ class ZRule31(unittest.TestCase):
                         bad.append((test, "a command line that is not a command alone", c[:120]))
                     if re.search("[-]", c) or odd_in(c):
                         bad.append((test, "a mark or a control character in a command", c[:120]))
-                    for ch in ("`", "$("):
-                        if ch in outside_quotes(c):
-                            bad.append((test, f"{ch!r} a shell would read", c[:120]))
+                    for ch in ("`", "$("):  # R200: none on a command line, quoted or not (rule 31 (iv) as written)
+                        if ch in c:
+                            bad.append((test, f"{ch!r} on a command line", c[:120]))
                     try:
                         shlex.split(c)
                     except ValueError as e:

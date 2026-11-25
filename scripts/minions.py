@@ -5506,21 +5506,32 @@ def include_key(path: str, job_id) -> str:
     return f"{os.path.basename(path)}:{job_id}"
 
 
+def no_command_word(text: str) -> bool:
+    """R200: True when no command this tool prints may carry the text: a character of ODD_CATEGORIES (rule 31 (vi)),
+    or a backtick or a dollar sign before a parenthesis (rule 31 (iv): no printed line carries one, quoted or not)."""
+    return odd(text) or "`" in text or "$(" in text
+
+
 def include_step(repo: str | None, path: str, job_id) -> str | None:
     """R193: the one step that moves one publishing job, for look's line and the move page alike (move reads the same
-    key). None where no command can name it on one line (rule 31 (vi)); include_unnamable says what is left then."""
+    key). None where no command may carry its name (R200); include_unnamable says what is left then. R200: the word is
+    joined to the option by an equals sign, so a file name that begins with a dash is the option's value, never an
+    option of its own (with a space, argparse stops on it: "expected one argument")."""
     which = include_key(path, job_id)
-    return None if odd(which) else f"move {repo_word(repo)} --include-job {shlex.quote(which)}"
+    return None if no_command_word(which) else f"move {repo_word(repo)} --include-job={shlex.quote(which)}"
 
 
-def include_unnamable(path: str, job_id, look_again: str) -> str:
+def include_unnamable(path: str, job_id, look_again: str, shown=lambda v: v) -> str:
     """R193: where no command can name a publishing job, the words look and the move page both say, with look's own
-    step (marked as each place marks a command) at the end."""
-    f = odd(os.path.basename(path))
-    return (f"the name of its {'workflow file' if f else 'job'} ({include_key(path, job_id)}) holds a character a line "
-            f"breaks on or a terminal acts on, or that cannot be seen, so no command can name it and it cannot be "
-            f"typed on one line: rename the {'file' if f else 'job'} on GitHub to a name without it, then run "
-            f"{look_again} again")
+    step (marked as each place marks a command) at the end. R200: the page passes md_value as `shown`, so the name
+    stays in its code span; the terminal's render shows it changed in the sentence."""
+    f = no_command_word(os.path.basename(path))
+    which = include_key(path, job_id)
+    why = ("holds a character a line breaks on or a terminal acts on, or that cannot be seen, so no command can name "
+           "it and it cannot be typed on one line" if odd(which) else
+           "holds a backtick or a dollar sign before a parenthesis, which no command this tool prints carries")
+    return (f"the name of its {'workflow file' if f else 'job'} ({shown(which)}) {why}: rename the {'file' if f else 'job'} "
+            f"on GitHub to a name without it, then run {look_again} again")
 
 
 def plan_job(path: str, triggers: dict, job: dict, system: str, machine: str, our_labels: list[str],
@@ -5683,6 +5694,18 @@ def move_lines(s: dict) -> list[str]:
     return list(lines)
 
 
+def md_value(value: str) -> str:
+    """R200: a value this tool did not write (a workflow file's path, a job's id), as the page shows it: in its own
+    code span, shown changed by the terminal's own function (plain), so nothing in it ends the span."""
+    return f"`{plain(value)[0]}`"
+
+
+def md_job(p: str, j: str, rest: str) -> str:
+    """R200: one list line of the page: the file and the job each in its span, and the terminal's note where either
+    was shown changed."""
+    return f"- {md_value(p)} job {md_value(j)}: {rest}" + (f" {SHOWN_CHANGED}" if plain(p)[1] or plain(j)[1] else "")
+
+
 def pr_body(moved: list, left: list, publish: list, here: list, first: list[str] | None = None,
             repo: str | None = None) -> str:
     # G7.17 (R116): the page the person reads when they decide carries move's lines, word for word, above all else.
@@ -5690,24 +5713,24 @@ def pr_body(moved: list, left: list, publish: list, here: list, first: list[str]
     out += ["This pull request changes only `runs-on` lines, so these jobs run on your own computer's runner "
            "(labels `minions`). Nothing else in your workflows changes. The tool that opened it never merges it: "
            "you do.", "", "## Moved"]
-    out += [f"- `{p}` job `{j}`: {w}" for p, j, w in moved]
+    out += [md_job(p, j, w) for p, j, w in moved]
     cannot = [x for x in left if not x[2].startswith(NOT_OURS)]
     theirs = [x for x in left if x[2].startswith(NOT_OURS)]
     if cannot:
         out += ["", "## Left as they are (they cannot run on this computer)"]
-        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in cannot]
+        out += [md_job(p, j, w) for p, j, w in cannot]
     if theirs:
         out += ["", "## Left as they are (they ask for a runner that is not ours)"]
-        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in theirs]
+        out += [md_job(p, j, w) for p, j, w in theirs]
     if publish:
         out += ["", "## Left as they are (they publish or deploy)",
                 "Each needs your word for that one job before it moves: the step under it moves that one job."]
-        out += [f"- `{p}` job `{j}`: {w}; " + (f"to move it: `{step}`" if step else
-                                                 include_unnamable(p, j, f"`look {repo_word(repo)}`"))
+        out += [md_job(p, j, f"{w}; " + (f"to move it: `{step}`" if step else
+                                         include_unnamable(p, j, f"`look {repo_word(repo)}`", md_value)))
                 for p, j, w in publish for step in (include_step(repo, p, j),)]
     if here:
         out += ["", "## Already on your computer"]
-        out += [f"- `{p}` job `{j}`: {w}" for p, j, w in here]
+        out += [md_job(p, j, w) for p, j, w in here]
     out += ["", "After you merge it, `move --verify` sees one real run of each moved workflow finish on your "
             "computer. Until then nothing is called moved."]
     return "\n".join(md_line(x) for x in out) + "\n"

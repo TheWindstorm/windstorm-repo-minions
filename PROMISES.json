@@ -2471,6 +2471,20 @@
    "issue": 385,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R200",
+   "seen": "2026-11-25, on a copy of the tool: for a workflow file whose name holds a backtick or a dollar sign before a parenthesis, look printed the step that moves its publishing job with that character on the command line itself, quoted, where no line the tool prints may carry one; on the move pull request's page the same name did not stay inside its code span; and the step for a name that begins with a dash ended, as printed, in the tool's own usage stop (argument --include-job: expected one argument).",
+   "promise": "No command the tool prints carries a backtick or a dollar sign before a parenthesis, quoted or not: a name that holds one gets no step, and look and the move page say to rename the file, then look again. On the page every workflow file's path and job's id stands inside its own code span, shown changed where it holds such a character, by the same words as on the terminal. Every printed step joins its word to --include-job with an equals sign, so a name that begins with a dash is the option's value. A test runs each printed step as printed and as copied from the page, and plants such a name in the file and in the job.",
+   "codon": "G8.24",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_24_a_step_never_carries_a_name_no_command_may_and_every_step_runs_as_printed",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 388,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

@@ -112,7 +112,7 @@ folder).
 - **Merging the move pull request.** The tool never merges. Say: "I opened pull request #N. Please read it and
   merge it yourself when you are happy with it."
 - **A publishing job.** A job that publishes or deploys (a release, a package upload, a deploy) is left where it
-  is. Moving one needs the person's word for that one job: `move OWNER/REPO --include-job FILE:JOB`, with the
+  is. Moving one needs the person's word for that one job: `move OWNER/REPO --include-job=FILE:JOB`, with the
   workflow file and the job as the move pull request names them.
   Ask them by name of the job, one at a time.
 

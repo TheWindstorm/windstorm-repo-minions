@@ -71,7 +71,7 @@ class Skill(unittest.TestCase):
         self.assertEqual(steps, ["look", "tell", "setup", "move", "verify", "status"])
         persons = flat(section(t, "The person's steps"))
         for must in ("gh auth login", "admin password", "I never see it", "same terminal", "--start-test",
-                     "says yes", "never merges", "merge it yourself", "--include-job FILE:JOB",
+                     "says yes", "never merges", "merge it yourself", "--include-job=FILE:JOB",
                      "never press Agree or Accept"):
             self.assertIn(must, persons, must)
         # R81: a computer without git (a stock Debian): installing it is the person's step, named with its command
@@ -249,7 +249,7 @@ class Skill(unittest.TestCase):
         skill = flat(text())
         self.assertIn("OWNER/REPO stands for the repository's name (owner/name)", skill)
         self.assertIn("`setup OWNER/REPO --limits PROCESSORS,PERCENT`", skill)
-        self.assertIn("`move OWNER/REPO --include-job FILE:JOB`", skill)
+        self.assertIn("`move OWNER/REPO --include-job=FILE:JOB`", skill)
         # the reader itself: a span, a fenced block's lines, and a bracket in either are all seen
         planted = code_lines("a `look <owner/repo>` b\n```\nsetup x\n  move <y>\n```\nno `c` d `e > f`\n")
         self.assertEqual(planted, ["look <owner/repo>", "c", "e > f", "setup x", "  move <y>"])
