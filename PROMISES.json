@@ -2515,6 +2515,20 @@
    "issue": 387,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R201",
+   "seen": "2026-11-25, on a copy of the tool: on the move pull request's page, the values a line's words carry from the person's workflow file (a runner label, a secret's name) stood in the words, not inside a code span, so a character in such a value was live text on the page.",
+   "promise": "On the move pull request's page every value the tool did not write stands inside its own code span, a runner label too, never in the line's words; where such a value holds a backtick it is shown changed inside its span, with the same words as on the terminal. Only values the tool did not write; the tool's own words stay as they are.",
+   "codon": "G3.10",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 389,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
