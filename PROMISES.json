@@ -2373,6 +2373,20 @@
    "issue": 369,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R182",
+   "seen": "2026-11-24, in the code, on family rule 31 (B, iv, v): about 160 commands were printed between backticks inside sentences, so a command an agent pasted into a shell could run as command substitution; values the tool did not write (a workflow file's name, a job's) were set between backticks too, and crontab's own words carry one.",
+   "promise": "No line the tool prints, writes to its journal or prints into a job's log carries a backtick, a dollar sign before a parenthesis or a tab. A command the person is to type stands alone on the line after the sentence that names it, as many as the sentence names, on every road that prints it, a text kept and printed by a later run included. A value the tool did not write never makes a command line; where it holds one of those characters it is shown changed and the line says so, and a command that must carry it exactly quotes it for the shell. A repository named on any command is in GitHub's own form. The suite's last test reads every line every road printed in it. Not made in a test world: a real terminal and systemd's journal of the watch.",
+   "codon": "G8.21",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_rule_31_every_line_every_road_printed",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 371,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
