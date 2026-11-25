@@ -3775,7 +3775,7 @@ class World:
 
     def __init__(self, gh, own_removal_works=True, interrupt_on=None):
         self.gh, self.own_removal_works, self.interrupt_on = gh, own_removal_works, interrupt_on
-        self.paths = {FOLDER, f"{FOLDER}/.runner", f"{FOLDER}/.service", f"/etc/systemd/system/{UNIT}",
+        self.paths = {M.RUNNERS_HOME.rstrip("/"), FOLDER, f"{FOLDER}/.runner", f"{FOLDER}/.service", f"/etc/systemd/system/{UNIT}",
                       f"/etc/systemd/system/{UNIT}.d", SLICE_FILE, *WATCH_FILES, M.HOOKS_ROOT, M.hook_dir(REPO),
                       M.RECORDS_ROOT, M.records_dir_of(FOLDER), "/home/minions-runner"}
         self.active = {UNIT: "active", M.SLICE: "active", f"{M.WATCH_UNIT}.timer": "active"}
@@ -3784,15 +3784,21 @@ class World:
         self.slice_of, self.old_systemd = {UNIT: M.SLICE}, False  # R167: which units are in our slice (Slice=)
         self.files, self.links = {}, set()  # remove_setup shares the host's files; links a job planted (R128)
         self.plain = set()  # R136: plain files put here by someone else (rmdir refuses them, as on a real one)
-        self.dirs = {FOLDER, f"/etc/systemd/system/{UNIT}.d", M.HOOKS_ROOT, M.hook_dir(REPO), M.RECORDS_ROOT,
+        self.dirs = {M.RUNNERS_HOME.rstrip("/"), FOLDER, f"/etc/systemd/system/{UNIT}.d", M.HOOKS_ROOT, M.hook_dir(REPO), M.RECORDS_ROOT,
                      M.records_dir_of(FOLDER), "/home/minions-runner"}  # rm -f refuses these, as on a real one
         # R136: who owns what (the runner user's own folders and what is in them; root's or the person's when said),
         # and the disks mounted inside (another file system: find -xdev does not enter it)
         self.owner, self.mounts = {}, set()
+        # R136 (the owner's fault 1, 2026-11-25): file modes, as the kernel answers them. `ro`: folders whose owner has
+        # no write right (Go's module cache leaves its folders so): nothing in one is unlinked until its owner gives the
+        # right back. `stuck`: a thing of the runner user's that no unlink takes (a stand-in for whatever else refuses)
+        self.ro, self.stuck = set(), set()
 
     def owner_of(self, path):
         if path in self.owner:
             return self.owner[path]
+        if path in self.mounts:
+            return "root"  # a disk mounted there shows its own top's owner: root's, for a tmpfs mounted with no uid=
         runner = (FOLDER, M.records_dir_of(FOLDER), "/home/minions-runner")
         return "minions-runner" if any(path == r or path.startswith(r + "/") for r in runner) else "root"
 
@@ -3803,13 +3809,53 @@ class World:
     def under(self, top):
         return sorted(p for p in self.paths if p.startswith(top.rstrip("/") + "/"))
 
+    def walk(self, top, prune=False):
+        """find -xdev -P's walk below `top`, in order: nothing under a disk mounted there or under a link is entered;
+        with `prune`, nothing under what the runner user did not make either (find's -prune)."""
+        out, top = [], top.rstrip("/")
+        for p in self.under(top):
+            parts = p[len(top) + 1:].split("/")
+            anc = [top + "/" + "/".join(parts[:i]) for i in range(1, len(parts))]
+            if any(x in self.mounts or x in self.links or (prune and self.owner_of(x) != "minions-runner") for x in anc):
+                continue
+            out.append(p)
+        return out
+
+    def kind_of(self, p):
+        return "l" if p in self.links else "d" if self.is_dir(p) else "f"
+
+    def unlink_refused(self, p, parent):
+        """As the kernel answers an unlink by the runner user: refused in a folder its owner may not write (EACCES),
+        and for a thing no unlink takes (`stuck`)."""
+        return parent in self.ro or p in self.stuck
+
+    def give_rights_back(self, starts):
+        """find STARTS -xdev -mindepth 1 -type d -user R ! -perm -u+rwx -exec chmod u+rwx {} ; as the runner user:
+        only folders it owns (a link is never -type d), one file system."""
+        for t in starts:
+            self.order.append(f"chmod u+rwx in {t}")
+            for p in self.walk(t):
+                if self.owner_of(p) == "minions-runner" and p not in self.links:
+                    self.ro.discard(p)
+        return 0, ""
+
     def runner_find(self, a):
-        """find as the runner user, the three forms the uninstall uses (as findutils 4.9.0 does them)."""
+        """find as the runner user, the forms the uninstall uses (as findutils 4.9.0 does them)."""
         top = a[1]
         if a[2:] == ["-maxdepth", "0", "-printf", "%D %y\n"]:  # a start that is a link is the link itself (find -P)
             y = "l" if top in self.links else "d" if self.is_dir(top) else "f"
             return ((0, f"{self.dev_of(top)} {y}\n") if top in self.paths or top in self.links else
                     (1, f"find: '{top}': No such file or directory"))
+        if "chmod" in a:
+            return self.give_rights_back([top])
+        if "-prune" in a and a[-1].endswith("\\0"):
+            # R136 (faults 1 and 4): every record ends with a NUL; what the runner user did not make is named and not
+            # entered ("F"), what it still owns is named too ("O"): `! -user R -prune -printf F... -o -printf O...`
+            out = []
+            for p in self.walk(top, prune=True):
+                k = "O" if self.owner_of(p) == "minions-runner" else "F"
+                out.append(f"{k}\t{self.dev_of(p)}\t{self.owner_of(p)}\t{self.kind_of(p)}\t{p[len(top.rstrip('/')) + 1:]}\0")
+            return 0, "".join(out)
         def tops():  # what the runner user did not make, not entered; nor what is on another file system
             out = []
             for p in self.under(top):
@@ -3832,6 +3878,9 @@ class World:
                     continue  # -xdev; a link is never followed
                 if self.owner_of(parent) != "minions-runner" and parent != top:
                     failed = 1  # a folder of root's: its entries are not the runner user's to unlink
+                    continue
+                if self.unlink_refused(p, parent):
+                    failed = 1  # "cannot delete ...: Permission denied", as findutils 4.9.0 said it (the owner's trial)
                     continue
                 if p not in self.links and self.under(p):
                     failed = 1  # not empty: what stayed in it holds it
@@ -3864,6 +3913,8 @@ class World:
                         continue  # -xdev; a link is never followed
                     out.append(p_)
             return out
+        if "chmod" in a:
+            return self.give_rights_back(starts)
         if "-delete" in a:
             self.order.append("find -delete in /tmp")
             failed = 0
@@ -3874,21 +3925,25 @@ class World:
                 if parent not in tops and self.owner_of(parent) != R:
                     failed = 1  # a folder of someone else's: the runner user may not unlink in it
                     continue
+                if self.unlink_refused(p_, parent):
+                    failed = 1
+                    continue
                 if p_ not in self.links and self.under(p_):
                     failed = 1  # not empty
                     continue
                 self.paths.discard(p_)
                 self.links.discard(p_)
             return failed, ""
-        if "-print" in a and starts == list(tops):
+        end = "\0" if a[-1].endswith("\\0") or "-print0" in a else "\n"  # R136 (item 4): each record ends with a NUL
+        if ("-print" in a or "-print0" in a) and starts == list(tops):
             self.order.append("find -print in /tmp")
-            return 0, "".join(p_ + "\n" for p_ in walk() if self.owner_of(p_) == R)
-        if "-maxdepth" in a and a[-1] == "%u\t%p\n":
-            return 0, "".join(f"{self.owner_of(x)}\t{x}\n" for x in starts if x in self.paths)
+            return 0, "".join(p_ + end for p_ in walk() if self.owner_of(p_) == R)
+        if "-maxdepth" in a and a[-1] in ("%u\t%p\n", "%u\t%p\\0"):
+            return 0, "".join(f"{self.owner_of(x)}\t{x}{end}" for x in starts if x in self.paths)
         if "-mindepth" in a:
             held = {x for x in starts if x not in self.links and any(
                 q.rsplit("/", 1)[0] == x and self.owner_of(q) != R for q in self.paths)}
-            return 0, "".join(x + "\n" for x in sorted(held))
+            return 0, "".join(x + end for x in sorted(held))
         return 1, f"find: the fake does not know {a}"
 
     def is_dir(self, path):
@@ -3962,12 +4017,41 @@ class World:
             if "-r" in a:
                 self.gone("/home/minions-runner")
             return 0, ""
-        if a[:1] == ["find"] and "-uid" in a:  # R136: what stayed, handed to root once its user is gone
-            self.order.append(f"to root {a[1]}")
-            for p in [a[1], *self.under(a[1])]:
-                if self.owner_of(p) == "minions-runner" and not any(p.startswith(m + "/") for m in self.mounts):
+        if a[:1] == ["find"] and ("-uid" in a or "-nouser" in a):
+            # R136: root's find of what the runner user's number owns (the owner's fault 3: it prints each path it
+            # names, as findutils 4.9.0 does, a NUL after each with -print0); with chown, each is handed to root.
+            # Forms: a walk below a folder (-xdev; -mindepth 1 leaves the start itself out), or the exact starts
+            # (-maxdepth 0; `! -type l` leaves a link out); -nouser: owned by a number no user has now.
+            starts = []
+            for x in a[1:]:
+                if x.startswith(("-", "!")):
+                    break
+                starts.append(x)
+            end = "\0" if "-print0" in a or (a[-1].endswith("\\0")) else "\n"
+            hand = "chown" in a
+            self.order.append(("to root " if hand else "read for the number ") + " ".join(starts))
+            found = []
+            for s in starts:
+                if s not in self.paths and s not in self.links:
+                    continue
+                if "-maxdepth" in a:
+                    group = [s]
+                else:
+                    group = ([] if "-mindepth" in a else [s]) + self.walk(s)
+                for p in group:
+                    if "!" in a and p in self.links:
+                        continue
+                    mine = self.owner_of(p) == "minions-runner"
+                    if "-nouser" in a and (not mine or self.user):
+                        continue
+                    if mine:
+                        found.append(p)
+            for p in found:
+                if hand:
                     self.owner[p] = "root"
-            return 0, ""
+            if "-printf" in a:
+                return 0, "".join(f"{self.kind_of(p)}\t{p}{end}" for p in found)
+            return 0, "".join(p + end for p in found)
         if a[:1] == ["systemctl"] and argv[0] == "sudo":
             verb, rest = a[1], [x for x in a[2:] if not x.startswith("--")]
             gone = [u for u in rest if verb == "disable" and f"/etc/systemd/system/{u}" not in self.paths]
@@ -4127,8 +4211,8 @@ class G6(unittest.TestCase):
         gh, world, host = remove_setup()
         real2 = host._answer
         def left(argv, input=None):
-            if list(argv[5:6]) == ["find"] and argv[-1] == "-print":
-                return 0, "/tmp/kept-by-a-job\n"
+            if list(argv[5:6]) == ["find"] and argv[-1] == "-print0":  # R136 (item 4): each name ends with a NUL
+                return 0, "/tmp/kept-by-a-job\0"
             return real2(argv, input)
         host._answer = left
         code, lines = run_uninstall(gh, host)
@@ -4285,6 +4369,44 @@ class G6(unittest.TestCase):
             self.assertIn(f"`sudo rm {cron}`", x)
             self.assertIn("`sudo atrm 4`", x)
         self.assertEqual((len(census), len(warned)), (1, 1), lines)
+
+    def test_G6_17_a_stop_at_the_last_runner_names_a_step_that_finishes(self):
+        # R130 (the owner's item 7, 2026-11-25; the lane's own finding): the stops of the last uninstall of one
+        # repository said "run the same command again", and the same command found no runner of that repository and
+        # said there was nothing to uninstall, the user still there. A stop names a step that finishes: the same
+        # command, run again once what it says is settled, goes on to the user and ends with exit 0.
+        R, home = "minions-runner", f"/home/{M.RUNNER_USER}"
+        def crontab_once(world, host):
+            real, left = host._answer, [True]
+            def answer(argv, input=None):
+                if list(argv[2:5]) == ["crontab", "-l", "-u"] and left[0]:
+                    return 0, "* * * * * true\n"
+                return real(argv, input)
+            host._answer = answer
+            return lambda: left.__setitem__(0, False)
+        def home_unread_once(world, host):
+            real, left = host._answer, [True]
+            def answer(argv, input=None):
+                a = list(argv)
+                if a[:6] == ["sudo", "-n", "-u", R, "--", "find"] and a[6:7] == [home] and "-prune" in a and left[0]:
+                    return 1, "find: '/home/minions-runner/x': Permission denied\n"
+                return real(argv, input)
+            host._answer = answer
+            return lambda: left.__setitem__(0, False)
+        for name, make in (("a crontab that is still listed", crontab_once), ("its home not read", home_unread_once)):
+            gh, world, host = remove_setup(moved=False)
+            settle = make(world, host)
+            code, lines = run_uninstall(gh, host)
+            self.assertEqual(code, M.EXIT_STOP, (name, lines))
+            stop = [x for x in lines if x.startswith("stop ")]
+            self.assertTrue(stop and "run the same command again" in stop[0], (name, lines))
+            self.assertTrue(world.user, name)
+            settle()
+            code, lines = run_uninstall(gh, host)  # the step the stop names
+            self.assertEqual(code, M.EXIT_OK, (name, lines))
+            self.assertFalse(world.user, (name, lines))
+            self.assertNotIn(home, world.paths, (name, lines))
+            self.assertIn(f"ok the user {M.RUNNER_USER} and its home are deleted, read back", lines)
 
     def test_G6_18_a_unit_that_failed_is_not_left_loaded_after_uninstall(self):
         # R132: a failed oneshot unit stays loaded as "failed" after its file is deleted, until reset-failed (seen on
@@ -4887,13 +5009,35 @@ class G6(unittest.TestCase):
                 for p_ in named:
                     self.assertIn(p_ + " (", census[0], name)
                     self.assertEqual(world.owner_of(p_), "root", (name, p_))
-                self.assertIn("handed to root", census[0], name)
+                # the owner's fault 3: the whole sentence, with its count (the stand-in's root find prints what it hands)
+                self.assertIn(f"; {len(named)} of {len(named)} handed to root, as the user they belonged to is deleted",
+                              census[0], name)
                 self.assertTrue(lines[-1].startswith("ok this tool is off this computer; what stayed"), (name, lines[-1]))
             else:
                 self.assertEqual(census, [], (name, lines))
                 self.assertFalse([p_ for p_ in world.paths if p_ == J or p_.startswith(J + "/")], name)
             self.assertFalse([a for a in host.ran if a[:3] == ("sudo", "-n", "rm") and str(a[-1]).startswith("/tmp")],
                              name)  # root deletes nothing there
+        # The owner's fault 3: a link put where a listed folder was, between the read-back and the hand: root's re-read
+        # refuses it, so none is handed, the census says so, and that thing's owner is unchanged.
+        gh, world, host = remove_setup(moved=False)
+        world.paths |= {J, f"{J}/root.txt"}
+        world.owner.update({J: R, f"{J}/root.txt": "root"})
+        world.dirs.add(J)
+        world.plain.add(f"{J}/root.txt")
+        real = host._answer
+        def swapped(argv, input=None):
+            if list(argv[:3]) == ["sudo", "-n", "find"] and "-uid" in argv and "-maxdepth" in argv and "chown" in argv:
+                world.links.add(J)
+            return real(argv, input)
+        host._answer = swapped
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        census = [x for x in lines if x.startswith("ok census: in /tmp, /var/tmp, /dev/shm: kept: ")]
+        self.assertEqual(len(census), 1, lines)
+        self.assertIn(f"; none handed to root: {J} was read again as a link, so it was not followed and its owner was "
+                      "not changed", census[0])
+        self.assertEqual(world.owner_of(J), R)
 
     def test_G6_19_a_name_read_from_the_state_or_journal_is_checked_before_a_delete(self):
         # R136 (the owner's ruling 2026-11-25, item 4): a runner folder's name read from the state or from a journal
@@ -4926,6 +5070,11 @@ class G6(unittest.TestCase):
         code, lines = run_uninstall(gh, host, repo=None, everything=True)
         self.assertIn("/srv/target/data", world.paths)
         self.assertTrue([x for x in lines if FOLDER in x and "a link" in x], lines)
+        # the owner's item 6: the line says what was read, never "the runner's folders ... are deleted"
+        self.assertFalse([x for x in lines if "the runner's folders and its hooks are deleted" in x], lines)
+        self.assertTrue([x for x in lines if x.startswith(f"ok {FOLDER} was read as a link, not a folder: not followed, "
+                                                          "and nothing where it points is deleted; its hooks are deleted, "
+                                                          "read back")], lines)
         # A state that could not be read, and a journal that could not be read: a stop that names the file, nothing
         # changed, exit 2; nothing deleted on their word.
         for which in ("state", "journal"):
@@ -5028,14 +5177,18 @@ class G6(unittest.TestCase):
             self.assertFalse([x for x in lines if x.startswith("stop ")], (n, lines))
             census = [x for x in lines if x.startswith(f"ok census: the folder {home}: kept: ")]
             self.assertEqual(len(census), 1, (n, lines))
+            self.assertIn("it holds left.txt (a file of root), which the runner user did not make; that stays", census[0])
             if n == 0:
-                self.assertIn("it holds left.txt (a file of root), which the runner user did not make; that stays",
-                              census[0])
                 self.assertIn("userdel", world.order)
                 self.assertNotIn(f"{home}/.cache/x", world.paths)  # what the runner user made is deleted
-            else:
-                self.assertIn("this tool made that user and removed it; the folder holds what the runner user did not "
-                              f"make (the whole list is in {host.record_dir()}/left-behind.txt), so it stays", census[0])
+            else:  # R136 (the owner's fault 2): said again as the first run said it, from the person's record
+                self.assertTrue(census[0].endswith(f"found it: this tool's list in {host.record_dir()}/left-behind.txt)"),
+                                census[0])
+                if everything:
+                    self.assertIn(f"ok the folder {home} stays: the user minions-runner is not on this computer, the "
+                                  "folder is, and this tool deletes in a runner's home only as that user; this tool made "
+                                  "that user and removed it; the folder holds what the runner user did not make (the whole "
+                                  f"list is in {host.record_dir()}/left-behind.txt), so it stays", lines)
             self.assertIn(f"{home}/left.txt", world.paths, n)  # never deleted, by any run
             self.assertFalse([x for x in lines if "rm -rf" in x or "Your next step" in x], (n, lines))
             self.assertFalse([x for x in lines if "outside this tool" in x or "It is yours" in x], (n, lines))
@@ -5062,6 +5215,175 @@ class G6(unittest.TestCase):
         self.assertEqual(code, M.EXIT_OK, lines)
         self.assertNotIn(home, world.paths)
         self.assertIn(f"ok the user {M.RUNNER_USER} and its home are not on this computer, read back", lines)
+
+    def test_G6_19_a_read_only_tree_the_runner_user_made_goes_before_its_user(self):
+        # R136 (the owner's fault 1, 2026-11-25; GNU find 4.9.0 tried by the owner on a tree of the shape Go gives its
+        # module cache): the runner user's own folders with no write right for it. Its delete leaves them ("cannot
+        # delete ...: Permission denied"), and a read-back for what is not its own finds nothing. The runner user first
+        # gives itself back the rights on the folders it owns inside the folder being cleared (as itself, one file
+        # system, no link followed; root changes no mode), then deletes. In its own folder, the records folder, its
+        # home and a public place, each alone, both ways (--all, one repository): all of it goes, then the user.
+        R, J, home = "minions-runner", "/tmp/job-1", f"/home/{M.RUNNER_USER}"
+        places = {"the runner's own folder": f"{FOLDER}/_work/go", "the records folder": f"{M.records_dir_of(FOLDER)}/go",
+                  "the home": f"{home}/go", "a public place": f"{J}/go"}
+        for name, top in places.items():
+            for everything in (True, False):
+                gh, world, host = remove_setup(moved=False)
+                tree = [top, f"{top}/pkg", f"{top}/pkg/mod", f"{top}/pkg/mod/x@v1.0.0", f"{top}/pkg/mod/x@v1.0.0/go.mod"]
+                above = [J] if top.startswith("/tmp/") else [f"{FOLDER}/_work"] if top.startswith(FOLDER) else []
+                world.paths |= {*above, *tree}
+                world.dirs |= {*above, *tree[:-1]}
+                world.plain.add(tree[-1])
+                world.owner.update({p_: R for p_ in above + tree})
+                world.ro |= set(tree[2:4])  # dr-xr-xr-x, as in the owner's trial
+                code, lines = run_uninstall(gh, host, repo=None if everything else REPO, everything=everything)
+                what = (name, everything)
+                self.assertEqual(code, M.EXIT_OK, (what, lines))
+                self.assertFalse([x for x in lines if x.startswith("stop ")], (what, lines))
+                self.assertEqual([p_ for p_ in above + tree if p_ in world.paths], [], what)
+                self.assertFalse(world.user, what)
+                self.assertNotIn(home, world.paths, what)
+                self.assertEqual([p_ for p_ in world.paths if world.owner_of(p_) == R], [], what)
+                self.assertFalse([a for a in host.ran if a[:3] == ("sudo", "-n", "chmod")], "root changes no mode")
+        # A thing of the runner user's that no unlink takes, held by nothing foreign: the third answer, named; in the
+        # home and a public place the stop comes BEFORE userdel, so a second run finishes as that user. Then the same
+        # command again (what the stop names): exit 0, the user and the thing gone.
+        for name, held in (("the runner's own folder", f"{FOLDER}/_work/held.txt"), ("the home", f"{home}/held.txt"),
+                           ("the records folder", f"{M.records_dir_of(FOLDER)}/held.txt"), ("a public place", "/tmp/held.txt")):
+            gh, world, host = remove_setup(moved=False)
+            world.paths |= {held, *([f"{FOLDER}/_work"] if held.startswith(FOLDER) else [])}
+            world.plain.add(held)
+            world.owner[held] = R
+            world.stuck.add(held)
+            code, lines = run_uninstall(gh, host)
+            self.assertEqual(code, M.EXIT_STOP, (name, lines))
+            stop = [x for x in lines if x.startswith("stop ")]
+            self.assertTrue(stop and os.path.basename(held) in stop[0], (name, lines))
+            self.assertIn("run the same command again", stop[0], name)
+            self.assertTrue(world.user, (name, "the user is not deleted while a thing of its own sits there"))
+            self.assertNotIn("userdel", world.order, name)
+            world.stuck.clear()  # settled
+            code, lines = run_uninstall(gh, host)  # the step the stop names
+            self.assertEqual(code, M.EXIT_OK, (name, lines))
+            self.assertFalse(world.user, (name, lines))
+            self.assertNotIn(held, world.paths, name)
+            self.assertNotIn(home, world.paths, name)
+
+    def test_G6_19_a_later_run_says_what_stayed_as_the_first_run_did(self):
+        # R136 (the owner's fault 2, 2026-11-25, run on this stand-in at bb1218b): uninstall --all deletes the state, so
+        # a second run said a home that holds root's file was "yours" with a root rm -rf of it, and a records folder of
+        # ours was one "this tool did not write". At every later run what stayed is said as the first run said it
+        # (read only from this tool's own files in the person's record: left-behind.txt and the kept journal), and no run
+        # prints a delete command, or "yours", for a folder the record says holds what is not ours. Every (B) world, run
+        # three times both ways (--all three times; one repository, --all, --all), with and without the journal line a
+        # real setup leaves.
+        R, J, home = "minions-runner", "/tmp/job-1", f"/home/{M.RUNNER_USER}"
+        rec = M.records_dir_of(FOLDER)
+        worlds = {"a root file in the records folder": {f"{rec}/root.txt": ("root", "f")},
+                  "a root file in the runner's own folder": {f"{FOLDER}/_work": (R, "d"), f"{FOLDER}/_work/root.txt": ("root", "f")},
+                  "a root file in the home": {f"{home}/left.txt": ("root", "f")},
+                  "a root file in a job's folder in /tmp": {J: (R, "d"), f"{J}/root.txt": ("root", "f")}}
+        orders = {"--all three times": [(None, True)] * 3, "one repository, --all, --all": [(REPO, False), (None, True), (None, True)]}
+        for name, plant in worlds.items():
+            for order, runs in orders.items():
+                for unpack in (False, True):
+                    gh, world, host = remove_setup(moved=False)
+                    if unpack:
+                        host.files[os.path.join(host.state_dir(), "journal.log")] = f"2026-11-25T10:00:00Z unpack {FOLDER}\n"
+                    for p_, (who, y) in plant.items():
+                        world.paths.add(p_)
+                        world.owner[p_] = who
+                        (world.dirs if y == "d" else world.plain).add(p_)
+                    theirs = [p_ for p_, (who, _) in plant.items() if who != R]
+                    mine_before = {p_ for p_ in world.paths if world.owner_of(p_) == R}
+                    first = None
+                    for n, (repo, everything) in enumerate(runs, 1):
+                        what = (name, order, unpack, n)
+                        code, lines = run_uninstall(gh, host, repo=repo, everything=everything)
+                        self.assertEqual(code, M.EXIT_OK, (what, lines))
+                        self.assertFalse([x for x in lines if x.startswith("stop ")], (what, lines))
+                        self.assertTrue(set(theirs) <= world.paths, what)
+                        said = [x.split("; that stays")[0] for x in lines
+                                if x.startswith(("ok census: the folder ", "ok census: in /tmp"))]
+                        if n == 1:
+                            first = said
+                            self.assertTrue(first, (what, lines))
+                            handed = sorted(p_ for p_ in mine_before if p_ in world.paths and world.owner_of(p_) == "root")
+                            if handed and not name.endswith("/tmp"):
+                                counts = [int(m) for x in lines for m in re.findall(
+                                    r"\((\d+) of the runner user's there handed to root, as that user is deleted\)", x)]
+                                self.assertEqual(sum(counts), len(handed), (what, handed, lines))
+                            continue
+                        for x in first:  # what stayed, said again as the first run said it
+                            self.assertIn(x, said, (what, lines))
+                        for x in lines:  # no delete command and no "yours" for what the record says holds what is not ours
+                            if x.startswith(("ok census: your record of what this tool did", "ok census: your record folder")):
+                                continue
+                            self.assertNotIn("`", x, (what, x))
+                            self.assertNotIn("yours", x, (what, x))
+
+    def test_G6_19_a_name_with_a_line_feed_is_one_name(self):
+        # R136 (the owner's item 4, 2026-11-25, read in code): a name a job or another user chose, read from find by
+        # lines, was two items when it held a line feed; in a public place the second could be any text, reaching the
+        # census as an untrue line and root's find as an argument. Every find whose output carries a name that is not
+        # ours ends each record with a NUL and is split there; left-behind.txt's lines are cleaned as a printed line is
+        # (rule 31 B). A name with a line feed, a tab, a backtick and a dollar-parenthesis, in a (B) folder and in a
+        # public place.
+        R, home = "minions-runner", f"/home/{M.RUNNER_USER}"
+        odd_ = "a\nb\tc`d$(e)"
+        shown = "a?b c'd$ (e)"
+        jd = "/tmp/x\ny"
+        gh, world, host = remove_setup(moved=False)
+        world.paths |= {f"{home}/{odd_}", jd, f"{jd}/f"}
+        world.plain |= {f"{home}/{odd_}", f"{jd}/f"}
+        world.dirs.add(jd)
+        world.owner.update({f"{home}/{odd_}": "root", jd: R, f"{jd}/f": "root"})
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertFalse([x for x in lines if x.startswith("stop ")], lines)
+        homes = [x for x in lines if x.startswith(f"ok census: the folder {home}: kept: ")]
+        self.assertEqual(len(homes), 1, lines)
+        self.assertIn(f"it holds {shown} (a file of root)", homes[0])
+        public = [x for x in lines if x.startswith("ok census: in /tmp, /var/tmp, /dev/shm: kept: ")]
+        self.assertEqual(len(public), 1, lines)
+        self.assertIn("/tmp/x?y (a folder of the runner user's that holds what it did not make)", public[0])
+        self.assertIn("; 1 of 1 handed to root, as the user they belonged to is deleted", public[0])
+        self.assertEqual(world.owner_of(jd), "root")
+        handed = [a for a in host.ran if "chown" in a and "-maxdepth" in a]
+        self.assertTrue(handed and jd in handed[0] and "/tmp/x" not in handed[0], handed)  # the exact path, one argument
+        kept = host.files.get(f"{host.record_dir()}/left-behind.txt", "")
+        body = [x for x in kept.split("\n") if x and not x.startswith("# ")]
+        self.assertEqual(len(body), 2, kept)
+        for x in body:
+            self.assertFalse(set(x) & {"\t", "`"} or "$(" in x, x)
+
+    def test_G6_19_a_cut_at_the_hand_to_root_is_finished_by_the_next_run(self):
+        # R136 (the owner's item 5, 2026-11-25): the hand to root ran only in the run that deleted the user, with the
+        # number read before, and its find's code was not read; a run cut between userdel and the hand left things
+        # owned by a number no user has, and no later run knew it. The hand now comes BEFORE userdel (every process of
+        # the user is ended by then, and what is handed stays anyway); the home's own folder, which stays with what it
+        # holds, is handed after userdel by its number having no user (-nouser), which a later run reads again. A cut
+        # at each of those steps, then uninstall --all again: nothing of the runner user's number is left, exit 0.
+        R, J, home = "minions-runner", "/tmp/job-1", f"/home/{M.RUNNER_USER}"
+        cuts = {"the hand": lambda a: a[2:3] == ["find"] and "-uid" in a and "chown" in a,
+                "userdel": lambda a: a[2:3] == ["userdel"],
+                "the home's own hand": lambda a: a[2:3] == ["find"] and "-nouser" in a}
+        for name, cut in cuts.items():
+            gh, world, host = remove_setup(interrupt_on=cut, moved=False)
+            plant = {f"{FOLDER}/_work": R, f"{FOLDER}/_work/root.txt": "root", f"{home}/left.txt": "root", J: R,
+                     f"{J}/root.txt": "root"}
+            world.paths |= set(plant)
+            world.owner.update(plant)
+            world.dirs |= {f"{FOLDER}/_work", J}
+            world.plain |= {p_ for p_, w in plant.items() if w == "root"}
+            code = M.main(["uninstall", "--all"], host=host, out=Out(), gh=gh)
+            self.assertIn(code, (M.EXIT_INTERRUPTED, M.EXIT_OK), name)
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_OK, (name, lines))
+            self.assertFalse([x for x in lines if x.startswith("stop ")], (name, lines))
+            self.assertFalse(world.user, name)
+            self.assertEqual(sorted(p_ for p_ in world.paths if world.owner_of(p_) == R), [], name)
+            self.assertTrue({p_ for p_, w in plant.items() if w == "root"} <= world.paths, name)
 
     def test_G2_14_setup_with_a_kept_home_and_no_record_says_only_what_it_read(self):
         # Change 2 (case c): setup with the home there, the user not, and no record of this tool: the stop says what
@@ -5704,7 +6026,7 @@ class G6(unittest.TestCase):
         for match, ans, words in (
                 (lambda a: a[-1:] == ["atq"], (1, "Can't open /var/run/atd.pid to signal atd. No atd running?\n"),
                  "its at jobs (could not be read: atq answered code 1"),
-                (lambda a: "find" in a and a[-1] == "-print", (2, "find: '/tmp': Input/output error\n"),
+                (lambda a: "find" in a and a[-1] == "-print0", (2, "find: '/tmp': Input/output error\n"),
                  "(could not be read: find answered code 2")):
             gh, world, host = remove_setup()
             host._which.add("atq")
@@ -8457,7 +8779,8 @@ class ZRule31(unittest.TestCase):
                           "test_rule_31_vi_bent_values_through_every_command",
                           "test_rule_31_vi_not_text_on_the_way_in_with_and_without_a_language",
                           "test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback",
-                          "test_rule_31_vi_a_line_ends_at_a_line_feed_every_command_reads_one_item_as_one")
+                          "test_rule_31_vi_a_line_ends_at_a_line_feed_every_command_reads_one_item_as_one",
+                          "test_G6_19_a_name_with_a_line_feed_is_one_name")
 
     def test_rule_31_every_line_every_road_printed(self):
         bad, odd_starts, commands_seen = [], set(), 0
