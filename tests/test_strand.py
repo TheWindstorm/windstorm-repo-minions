@@ -24,6 +24,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import machine_guard  # noqa: E402  rule 17 (R142): first, so no test here reaches this machine
+import version_places  # noqa: E402  R194: the gates' reads of a version from a name, one place
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLAN = os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md")
@@ -326,17 +327,6 @@ class Hygiene(unittest.TestCase):
     def test_G9_10_main_carries_install_lines_only_pinned_to_a_released_tag(self):
         # Rules 15 and 16 (the maintainer's rulings, 2026-11-23): before a release, main's README has no install
         # lines; after it, every clone there names a version tag that exists. Runs the CI step itself, as written.
-        text = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
-        job = text[text.index("\n  release-place:"):]
-        lines = job.splitlines()
-        i = next(n for n, x in enumerate(lines) if x.strip() == "run: |")
-        indent = len(lines[i]) - len(lines[i].lstrip()) + 2
-        body = []
-        for x in lines[i + 1:]:
-            if x.strip() and len(x) - len(x.lstrip()) < indent:
-                break
-            body.append(x[indent:])
-        script = "set -e\n" + "\n".join(body) + "\n"
         url = "https://github.com/TheWindstorm/windstorm-repo-minions"
         cases = [  # (README text, tags on GitHub's copy, passes; None: GitHub's copy could not be read)
             ("No install lines here.\n", [], True),
@@ -348,28 +338,80 @@ class Hygiene(unittest.TestCase):
             ("`python3 -I x/minions.py setup O/N`\n", ["v0.1.0"], False),  # an install line with no pinned clone
             (f"`git clone --branch v0.1.0 {url}`\n", None, False),  # rule 6: could not be read is refused, said
         ]
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
-                                                                                         "GIT_CONFIG_NOSYSTEM")}
-        env.update(BRANCH="main", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
-                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
         for readme, tags, ok in cases:
-            with tempfile.TemporaryDirectory() as d:
-                with open(os.path.join(d, "README.md"), "w", encoding="utf-8") as f:
-                    f.write(readme)
-                run = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)
-                run("git", "init", "-q"); run("git", "add", "."); run("git", "commit", "-qm", "r")
-                run("git", "tag", "v0.1.0")  # here in every case: a tag only in the checkout must not count
-                origin = os.path.join(d, "origin.git")
-                run("git", "init", "-q", "--bare", origin)
-                for tag in tags or []:
-                    run("git", "push", "-q", origin, f"refs/tags/{tag}")
-                run("git", "remote", "add", "origin", origin if tags is not None else os.path.join(d, "gone.git"))
-                r = run("bash", "-c", script)
-                self.assertEqual(r.returncode == 0, ok, f"{readme!r} tags {tags}: {r.stdout}{r.stderr}")
-                if tags is None:
-                    self.assertIn("could not be read", r.stdout)
-                elif "--branch v0.1.0" in readme and not tags:
-                    self.assertIn("not a tag of this repository yet", r.stdout)
+            r = release_place(readme, tags)
+            self.assertEqual(r.returncode == 0, ok, f"{readme!r} tags {tags}: {r.stdout}{r.stderr}")
+            if tags is None:
+                self.assertIn("could not be read", r.stdout)
+            elif "--branch v0.1.0" in readme and not tags:
+                self.assertIn("not a tag of this repository yet", r.stdout)
+
+    def test_G9_16_a_gate_reads_a_version_only_where_it_stands_whole(self):
+        # Row R194: three places where a gate took a version, or this repository, from part of a word. Each form is
+        # planted where that gate reads it: the CI step on main's README, and the reads test_G9_8 makes of the
+        # README and the skill (tests/version_places.py, the one place both read through).
+        url = "https://github.com/TheWindstorm/windstorm-repo-minions"
+        cases = [  # (README text, tags on GitHub's copy, passes)
+            # (1) two clones on one line, one unpinned: a count of lines saw one clone, pinned
+            (f"`git clone --branch v0.1.0 {url}` or `git clone {url}`\n", ["v0.1.0"], False),
+            (f"`git clone --branch v0.1.0 {url}` or `git clone --branch v0.1.0 {url}`\n", ["v0.1.0"], True),
+            # (2) another repository whose name starts with this one's is not a pinned clone of this one
+            (f"`git clone --branch v0.1.0 {url}-other`\n", ["v0.1.0"], False),
+            (f"`git clone --branch v0.1.0 {url}s`\n", ["v0.1.0"], False),
+            (f"`git clone --branch v0.1.0 {url}.git`\n", ["v0.1.0"], True),  # this one's own address, with .git
+            (f"git clone --branch v0.1.0 {url}\n", ["v0.1.0"], True),  # the address at the line's end
+        ]
+        for readme, tags, ok in cases:
+            r = release_place(readme, tags)
+            self.assertEqual(r.returncode == 0, ok, f"{readme!r} tags {tags}: {r.stdout}{r.stderr}")
+        vp = version_places
+        self.assertEqual(vp.clone_options(f"`git clone --branch v0.1.0 {url}` or `git clone {url}`"),
+                         ["--branch v0.1.0", ""])
+        for other in (f"{url}-other", f"{url}s", f"{url}.github.io", f"{url}_x"):
+            self.assertEqual(vp.clone_options(f"`git clone --branch v0.1.0 {other}`"), [], other)
+            self.assertFalse(vp.clones_ours(f"`git clone {other}`"), other)
+        for own in (f"`git clone --branch v0.1.0 {url}`", f"`git clone --branch v0.1.0 {url}.git`",
+                    f"git clone --branch v0.1.0 {url}", f"(git clone --branch v0.1.0 {url})"):
+            self.assertEqual(vp.clone_options(own), ["--branch v0.1.0"], own)
+            self.assertTrue(vp.clones_ours(own), own)
+        # (3) a status heading names this version, never one that only starts with it
+        for heading in ("0.1.0-rc1, not released", "0.1.0+local", "0.1.0a", "0.1.01", "0.1.0.1", "0.1.0rc1"):
+            self.assertFalse(vp.heading_names(heading, "0.1.0"), heading)
+        for heading in ("0.1.0, released 2026-11-27", "0.1.0 (the first release)", "0.1.0"):
+            self.assertTrue(vp.heading_names(heading, "0.1.0"), heading)
+
+
+def release_place(readme, tags):
+    """Run the release-place CI step, as written in tests.yml, on main with this README; tags: those on GitHub's copy,
+    None when it cannot be read. A tag v0.1.0 is in the checkout in every case: a tag only there must not count."""
+    text = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+    job = text[text.index("\n  release-place:"):]
+    lines = job.splitlines()
+    i = next(n for n, x in enumerate(lines) if x.strip() == "run: |")
+    indent = len(lines[i]) - len(lines[i].lstrip()) + 2
+    body = []
+    for x in lines[i + 1:]:
+        if x.strip() and len(x) - len(x.lstrip()) < indent:
+            break
+        body.append(x[indent:])
+    script = "set -e\n" + "\n".join(body) + "\n"  # GitHub runs a step with no shell named as bash -e
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
+                                                                                     "GIT_CONFIG_NOSYSTEM")}
+    env.update(BRANCH="main", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "README.md"), "w", encoding="utf-8") as f:
+            f.write(readme)
+        run = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)
+        run("git", "init", "-q"); run("git", "add", "."); run("git", "commit", "-qm", "r")
+        run("git", "tag", "v0.1.0")
+        origin = os.path.join(d, "origin.git")
+        run("git", "init", "-q", "--bare", origin)
+        for tag in tags or []:
+            run("git", "push", "-q", origin, f"refs/tags/{tag}")
+        run("git", "remote", "add", "origin", origin if tags is not None else os.path.join(d, "gone.git"))
+        return run("bash", "-c", script)
+
 
 @atexit.register
 def _say_what_did_not_run():

@@ -24,6 +24,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 import machine_guard  # noqa: E402  rule 17 (R142): first, so no test here reaches this machine
+import version_places  # noqa: E402  R194: the gates' reads of a version from a name, one place
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -3026,22 +3027,22 @@ class G9Version(unittest.TestCase):
         # the tag, its release branch), so the line cannot drift at the next release.
         for rel in ("README.md", os.path.join("skills", "repo-minions", "SKILL.md")):
             with open(os.path.join(root, rel), encoding="utf-8") as f:
-                clones = re.findall(r"git clone ([^`]*?)https://github\.com/TheWindstorm/windstorm-repo-minions", f.read())
+                clones = version_places.clone_options(f.read())  # R194: one place for the gates' reads
             for opts in clones:
                 if M.VERSION == "0.0.0":
                     continue  # before the first release: main's README has no install lines (rule 15)
-                self.assertIn(opts.strip(), (f"--branch v{M.VERSION}", f"--branch release-{M.VERSION}"),
+                self.assertIn(opts, (f"--branch v{M.VERSION}", f"--branch release-{M.VERSION}"),
                               f"{rel}: a clone line names this version's tag or release branch, never main")
         # Rule 10 (the family's one version): the README's own status heading is one of the places. A README that
         # carries install lines says, in its status heading, the version they install; so 0.1.1 cannot ship with a
         # README that still says 0.1.0, or "not released" (found 2026-11-24 in the release README before the tag).
         with open(os.path.join(root, "README.md"), encoding="utf-8") as f:
             readme = f.read()
-        if M.VERSION != "0.0.0" and re.search(r"git clone [^`]*https://github\.com/TheWindstorm/windstorm-repo-minions", readme):
+        if M.VERSION != "0.0.0" and version_places.clones_ours(readme):
             status = re.search(r"^## Status: (.*)$", readme, re.M)
             self.assertIsNotNone(status, "README: a README with install lines has a status heading")
-            self.assertRegex(status.group(1), rf"^{re.escape(M.VERSION)}(?![0-9.])",
-                             "README: the status heading names the version its install lines install")
+            self.assertTrue(version_places.heading_names(status.group(1), M.VERSION),
+                            "README: the status heading names the version its install lines install")
 
 
 class G5(unittest.TestCase):

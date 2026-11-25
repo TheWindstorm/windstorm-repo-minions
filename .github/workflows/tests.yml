@@ -56,10 +56,12 @@ jobs:
               # Before a release, install lines live on the release branch only (rule 15). After it, main's README
               # may carry them, every clone pinned to a version tag that exists here (rule 16: never main).
               if ! grep -qE 'git clone|minions\.py (look|setup|move)' README.md; then echo "ok README on $BRANCH has no install lines"; exit 0; fi
-              clones=$(grep -cE 'git clone' README.md || true)
-              pinned=$(grep -cE 'git clone --branch v[0-9]+\.[0-9]+\.[0-9]+ https://github\.com/TheWindstorm/windstorm-repo-minions' README.md || true)
+              # Each clone is counted, not each line (R194: two on one line were one), and a pinned one is of this
+              # repository only: an optional .git, then no character a repository's name can hold.
+              clones=$({ grep -oE 'git clone' README.md || true; } | wc -l)
+              pinned=$({ grep -oE 'git clone --branch v[0-9]+\.[0-9]+\.[0-9]+ https://github\.com/TheWindstorm/windstorm-repo-minions(\.git)?([^A-Za-z0-9_.-]|$)' README.md || true; } | wc -l)
               tags=$(grep -oE 'git clone --branch v[0-9]+\.[0-9]+\.[0-9]+ ' README.md | awk '{print $4}' | sort -u)
-              if [ "$clones" = 0 ] || [ "$clones" != "$pinned" ]; then
+              if [ "$clones" -eq 0 ] || [ "$clones" -ne "$pinned" ]; then
                 grep -nE 'git clone|minions\.py (look|setup|move)' README.md
                 echo "::error::README on $BRANCH carries install lines; on main every clone names a released version tag (--branch vX.Y.Z)"; exit 1
               fi
