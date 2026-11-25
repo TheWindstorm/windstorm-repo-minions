@@ -251,7 +251,7 @@ class Strand(unittest.TestCase):
         del NOT_RUN_HERE[before:]
 
     def test_G9_14_a_run_that_ends_early_or_prints_a_pass_is_never_green(self):
-        """R169 (the gate recipe's eighth and ninth cases, 4:04 PM ET 11-24). Ninth: a test (or the tool under test,
+        """R169 (the gate recipe's eighth and ninth cases, 2026-11-24). Ninth: a test (or the tool under test,
         a parent leaving after a fork) calls os._exit(0): exit 0, no summary, and a gate in the same process never
         ran; seen green on this repository's own CI step before R169. Each other file now runs in its own process
         and counts only from the outcome written at its end: the early end fails the gate. Eighth: a test writes a

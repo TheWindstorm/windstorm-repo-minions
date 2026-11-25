@@ -55,7 +55,7 @@ def tells_of(lines):
             block = []
     return out
 
-# Rule 31 (v), the owner's 6:39 PM ET 11-24: a command's line is read where it is printed. Every Out a road prints to
+# Rule 31 (v), 2026-11-24: a command's line is read where it is printed. Every Out a road prints to
 # is kept here as printed, and ZRule31 (the last class) reads every line of every road the suite ran. The word checks
 # of the classes before it read the same output folded back: each "the command below" with its command in backticks.
 PRINTED: list = []  # (test id, Out), every Out made
@@ -1038,7 +1038,7 @@ def run_doctor(host, sha, **kw):
 
 class G2(unittest.TestCase):
     def test_G6_12_the_runner_says_the_skill_was_removed_and_the_way_off(self):
-        # The family's rule 8 (2026-11-23, 12:56 PM ET): a runner is what the person set up, so it goes on after
+        # The family's rule 8 (2026-11-23): a runner is what the person set up, so it goes on after
         # Claude Code's own plugin uninstall, and its own report says so, with the one command that takes it off.
         # R161 (rule 29 (e), 2026-11-24): a plugin is "removed" only when Claude Code's own list was read and names
         # it nowhere; an update (a new version folder, the old one marked, later gone) says nothing.
@@ -3988,7 +3988,7 @@ class G6(unittest.TestCase):
         self.assertIn("/tmp/kept-by-a-job", " ".join(lines))
 
     def test_G6_17_with_the_user_there_its_crontab_and_at_jobs_go_before_userdel_or_the_leave_stops(self):
-        # Change 4, the owner's 6:46 PM ET 11-24 point 2: this tool's own uninstall is never the road that leaves a
+        # Change 4, 2026-11-24: this tool's own uninstall is never the road that leaves a
         # crontab or an at job for the next user of that name (userdel leaves both, seen on run61). With the user
         # there, both are removed while crontab -r -u and atrm still answer, and read back; one that stays stops the
         # leave before userdel, named, the user kept.
@@ -4074,7 +4074,7 @@ class G6(unittest.TestCase):
             self.assertIn("`sudo atrm 4`", x)
             self.assertEqual(x.count("sudo atrm"), 1, "the running copy (=) is the same job, named once")
             self.assertIn("remove them first", x)
-            # the owner's 7:45 PM ET 11-24, thing 2: with no record that this tool made the user, what is true and
+            # 2026-11-24: with no record that this tool made the user, what is true and
             # the way on, never "open an issue" for something of the person's own
             self.assertNotIn("open an issue", x)
             self.assertIn("If they are something else of yours, they are yours: setup goes on once they are no longer "
@@ -4115,7 +4115,7 @@ class G6(unittest.TestCase):
         code, lines = run_setup(no_runner_gh(sha), host)
         said_ = [x for x in lines if x.startswith("warn not read: where cron and at keep their jobs")]
         self.assertTrue(said_, lines)
-        # the owner's 7:45 PM ET 11-24, thing 1: when it matters, in the line
+        # 2026-11-24: when it matters, in the line
         self.assertIn("this matters only where a user of that name was on this computer before", said_[0])
 
     def test_G6_30_uninstall_with_the_user_gone_names_what_it_left_scheduled(self):
@@ -4441,7 +4441,7 @@ class G6(unittest.TestCase):
         self.assertIn(SLICE_FILE, world.paths)
 
     def test_G6_27_every_unit_is_read_stopped_before_anything_is_removed(self):
-        # R167 (family rule 30, Linux, 2026-11-24 3:25 PM ET): a skill's uninstall said "off" and ended 0 while systemd
+        # R167 (family rule 30, Linux, 2026-11-24): a skill's uninstall said "off" and ended 0 while systemd
         # still held its service; ours read a systemctl that answered nothing (no manager reached, a timeout) as
         # "gone". Three answers (rule 6): a unit is read gone, stopped or running, or it could not be read; and
         # every unit of ours is stopped and READ stopped before anything is removed; not read stopped, nothing is.
@@ -4458,7 +4458,7 @@ class G6(unittest.TestCase):
                           ((0, "LoadState=not-found\nActiveState=inactive\n"), "gone"),
                           ((0, "LoadState=loaded\nActiveState=inactive\nFragmentPath=/etc/systemd/system/x.service\n"), "stopped"),
                           ((0, "LoadState=not-found\nActiveState=failed\n"), "stopped"),
-                          # change 3 (owner 3:51 PM ET): stopped only from the two words seen; another word is unread
+                          # change 3 (2026-11-24): stopped only from the two words seen; another word is unread
                           ((0, "LoadState=loaded\nActiveState=maintenance\n"), "unread"),
                           ((0, "LoadState=loaded\nActiveState=\u00abnew\u00bb\n"), "unread")):
             self.assertEqual(M.unit_read(H(ans), W_SVC)[0], want, ans)
@@ -4557,7 +4557,7 @@ class G6(unittest.TestCase):
         self.assertFalse(any(m == "DELETE" for m, p in gh.calls), gh.calls)
 
     def test_G6_27_an_absent_user_has_no_process_and_the_uninstall_finishes(self):
-        # R167 (owner 3:51 PM ET 11-24, change 2): pgrep answers exit 2 for a user that does not exist (seen). With a
+        # R167 (2026-11-24): pgrep answers exit 2 for a user that does not exist (seen). With a
         # runner in the record and the runner user absent (a setup cut before the user was made; a user removed by
         # hand), "could not be read" could never finish. Where the user reads absent, no process of it runs: none.
         # A user that could not be read stays could not be read.
@@ -4581,7 +4581,7 @@ class G6(unittest.TestCase):
         self.assertFalse([a for a in host.ran if a[:1] == ("pgrep",)], "R172: no pgrep for a user read absent")
 
     def test_G6_30_a_user_removed_outside_the_tool_leaves_its_home_named_and_the_leave_finishes(self):
-        # R167, R173 (FAULT 2, owner 5:14 PM ET 11-24, point 4; seen on a stock Ubuntu 24.04): the runner user removed by
+        # R167, R173 (2026-11-24; seen on a stock Ubuntu 24.04): the runner user removed by
         # hand, its home kept. Every read in that home was made AS that user, who was gone, so it was "could not be
         # read", counted as there, and uninstall stopped at the folder with "Run the same command again" (2 of 2).
         # Now: nothing is tried as that user, nothing inside its home is deleted, the leave goes to its end (GitHub's
@@ -4638,7 +4638,7 @@ class G6(unittest.TestCase):
         self.assertLess(x.index("unmount it first"), x.index("`sudo rm -rf"))
 
     def test_G6_30_a_home_left_by_this_tools_own_userdel_is_said_from_the_record(self):
-        # Change 2 (the owner's 6:19 PM ET 11-24, cases a and b): this tool's own userdel left the home (a file of
+        # Change 2 (2026-11-24): this tool's own userdel left the home (a file of
         # root's in it); the census said "the user was removed outside this tool", which the tool had not read, and the
         # record that it made the user was dropped. Now the why says what was read, and how it came about only from
         # the record (runner_home_left), in that run's census and in the next run's.
@@ -4690,7 +4690,7 @@ class G6(unittest.TestCase):
         self.assertLess(x.index("If you know"), x.index("If it is something else"))
 
     def test_G2_14_setup_refuses_a_home_left_by_a_user_removed_outside_the_tool(self):
-        # R173 (owner 5:14 PM ET 11-24, point 4; R130): with the runner user absent and its home there, setup went on
+        # R173 (2026-11-24; R130): with the runner user absent and its home there, setup went on
         # to useradd, which keeps a folder that is there, so a new user of that name took over what a job had left
         # in it. Now setup stops before any admin step, names the folder and the one whole command, and goes on once
         # that folder is gone.
@@ -4820,7 +4820,7 @@ class G6(unittest.TestCase):
         self.assertNotIn("admin rights", limit)
 
     def test_G7_19_githubs_refusal_is_named_by_what_it_was(self):
-        # Change 1 (the owner's 6:19 PM ET 11-24): github_next said "give the account admin rights" for a spent API
+        # Change 1 (2026-11-24): github_next said "give the account admin rights" for a spent API
         # limit (false twice: rights were not the refusal, and they change nothing). The limit is read first, for 403
         # and 429 alike; 401 is the saved login refused; 404 is no access, or the repository renamed or removed.
         class G:
@@ -4894,7 +4894,7 @@ class G6(unittest.TestCase):
                 self.assertIsNotNone(e, f"{name}: the world was meant to stop")
 
     def test_G6_27_the_slice_is_never_stopped_while_a_unit_in_it_runs(self):
-        # R167 (owner 3:51 PM ET 11-24, change 4; rule 30): a stop of the slice ends every unit in it, a running job
+        # R167 (2026-11-24; rule 30): a stop of the slice ends every unit in it, a running job
         # too, a runner unit whose record was lost included. Its own units are read first (systemd's SliceOf, and,
         # for a systemd that does not know that field, each unit of our names whose Slice= is ours); while one reads
         # running the slice is not stopped and its file stays; a read with no answer is the same refusal.
@@ -4929,7 +4929,7 @@ class G6(unittest.TestCase):
             self.assertIn(SLICE_FILE, world.paths)
 
     def test_G6_27_one_call_one_unit_and_each_unit_file_removed_by_hand(self):
-        # R167 (rule 30, ONE CALL, ONE UNIT; owner 4:24 PM ET 11-24): every systemctl call that acts on units names one
+        # R167 (rule 30, ONE CALL, ONE UNIT; 2026-11-24): every systemctl call that acts on units names one
         # unit; a stop is its own call by name, never only the --now of a disable (seen, systemd 255: `disable --now A
         # B` with A's file gone stopped neither, and the world answers so). Each unit file of ours is removed by hand
         # in turn under its running unit, and `uninstall --all` finishes in one run with every unit read gone.
@@ -4955,7 +4955,7 @@ class G6(unittest.TestCase):
         self.assertEqual([units(a) for a in reads], [["sleep.target"], ["suspend.target"]])
 
     def test_G6_27_no_process_read_is_made_without_the_runners_own_folder(self):
-        # R167 (owner 3:51 PM ET 11-24, answer 5): with a record that lost its folder (none of the tool's roads writes
+        # R167 (2026-11-24): with a record that lost its folder (none of the tool's roads writes
         # one so; a hand edit could), pgrep's pattern would have been "/bin/Runner.": every runner of the runner
         # user's, another repository's too, named as "of it". The folder is the repository's own; an empty one is
         # never read.
@@ -4973,7 +4973,7 @@ class G6(unittest.TestCase):
                 M.runner_pids(host, folder)
 
     def test_G6_27_the_copy_uninstall_runs_from_goes_last(self):
-        # R167 (owner 3:51 PM ET 11-24, answer 6): the skill tells the person to run `uninstall --all` from the copy
+        # R167 (2026-11-24): the skill tells the person to run `uninstall --all` from the copy
         # setup installed. That copy was deleted before the runner user, whose stops say "run the same command
         # again": a command that was gone. Now every stop names a copy that is still there; the copy goes last.
         real = M.tool_path
@@ -4995,7 +4995,7 @@ class G6(unittest.TestCase):
             M.tool_path = real
 
     def test_G6_28_a_refusal_on_standard_error_is_shown_in_its_own_words(self):
-        # R168 (owner 4:36 PM ET 11-24, words lost): where a line the person reads carries a program's answer, a
+        # R168 (2026-11-24, words lost): where a line the person reads carries a program's answer, a
         # refusal on standard error (standard output empty) is shown in its own words, never "not read" alone. One
         # refusal at each such line, in the world that reaches it.
         TIMER, HOME_R = f"{M.WATCH_UNIT}.timer", f"/home/{M.RUNNER_USER}"
@@ -5029,7 +5029,7 @@ class G6(unittest.TestCase):
         self.assertEqual(M.answer_or_words(M.Out("inactive\n", "")), "inactive")
 
     def test_G6_27_a_copy_left_by_a_first_uninstall_all_is_finished_by_the_next_run(self):
-        # R167 (owner 4:36 PM ET 11-24, changes 2 and 5): a first `uninstall --all` removed the state and then could
+        # R167 (2026-11-24): a first `uninstall --all` removed the state and then could
         # not delete the tool's copy (rm refused), or could not read whether it is gone; the second run, with no state
         # left, reaches the copy's removal again and finishes. Where it could not be read, the step names the clone
         # setup was run from, as a whole command line, and that step taken as printed finishes.
@@ -5070,7 +5070,7 @@ class G6(unittest.TestCase):
             self.assertTrue(any(x.endswith("the very last removal") for x in lines), (how, lines))
 
     def test_G6_29_the_words_the_tool_reads_are_never_in_the_persons_language(self):
-        # R172 (owner 4:36 PM ET 11-24, the language probe; seen on a stock Ubuntu 24.04 with language-pack-de and the
+        # R172 (2026-11-24, the language probe; seen on a stock Ubuntu 24.04 with language-pack-de and the
         # person's shell in German): id, stat, pgrep and sudo answered in German, setup stopped at its first step,
         # and uninstall with the runner user gone waited at every run. The real Host and GitHub are run here with the
         # programs stood in: each answers in German unless its own environment carries LC_ALL=C.UTF-8 and no
@@ -5180,7 +5180,7 @@ class G6(unittest.TestCase):
         self.assertEqual(sorted(listed - matched), [], "on docs/phrases.md, no longer matched in the code")
 
     def test_G6_28_a_warning_on_standard_error_is_never_part_of_an_answer(self):
-        # R168 (owner 4:01 PM ET 11-24; family rule 30's last paragraph, "a warning is not part of the answer"): every
+        # R168 (2026-11-24; family rule 30's last paragraph, "a warning is not part of the answer"): every
         # run through Host joined standard output and standard error, so a warning (seen: sudo's "unable to resolve
         # host", the command run and its exit passed on) reached every parse: setup stopped at "mode sudo: unable
         # to resolve host ... 750". A parse reads standard output; standard error is kept for the words shown. Each
@@ -5275,7 +5275,7 @@ class G6(unittest.TestCase):
         self.assertGreaterEqual(world.order[n:].count(f"stop {W_SVC}"), 2, world.order[n:])  # watch_off and the removal
 
     def test_G6_27_a_warning_of_sudo_is_never_taken_for_the_answer(self):
-        # R167 (owner 3:51 PM ET 11-24, change 1): sudo on a computer whose name does not resolve writes "sudo: unable to
+        # R167 (2026-11-24): sudo on a computer whose name does not resolve writes "sudo: unable to
         # resolve host NAME: ..." and runs the command, its exit passed on (seen: sudo 1.9.15p5, Ubuntu 24.04). Taken
         # for "could not be read", every absent path read "there": an uninstall that never finished. The answer is
         # the test's own mark; neither sudo's words nor its exit is taken for it.
@@ -5877,7 +5877,7 @@ class P1a(unittest.TestCase):
         self.assertIn(f"run `python3 -I {M.tool_path()} uninstall --all` there", out.getvalue().splitlines()[-1])
 
     def test_G8_20_a_printed_command_line_quotes_every_path_a_folder_with_a_space(self):
-        # R175 (owner 5:14 PM ET 11-24, point 6): every path in a printed command line is quoted for the shell, so
+        # R175 (2026-11-24): every path in a printed command line is quoted for the shell, so
         # a copy of the tool in a folder with a space in its name is one argument when the line is pasted as printed.
         spaced = "/home/you/my projects/windstorm-repo-minions/scripts/minions.py"
         W_SVC = f"{M.WATCH_UNIT}.service"
@@ -7380,7 +7380,7 @@ ODD_B_YML = ("name: rel\non:\n  push:\n    tags:\n      - 'v*'\njobs:\n  publish
              "    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n")
 
 
-# Rule 31 (a), the owner's 7:43 PM ET 11-24: workflow names that hold a line break, a carriage return, and a
+# Rule 31 (a), 2026-11-24: workflow names that hold a line break, a carriage return, and a
 # terminal's escape (erase the line, cursor up), each a publish job, so look tries to give a command that names it.
 ODD_NL = ".github/workflows/odd\nsudo id #.yml"
 ODD_CR = ".github/workflows/odd\rsudo id #.yml"
@@ -7470,7 +7470,7 @@ class Rule31(unittest.TestCase):
 
 
     def test_rule_31_v_a_text_one_run_keeps_and_a_later_run_prints_keeps_its_command_on_its_own_line(self):
-        # The owner's 6:39 PM ET 11-24: a text written to the record and shown again by another road. The watch keeps
+        # 2026-11-24: a text written to the record and shown again by another road. The watch keeps
         # its login step in minions.json; status, a later process with marks of its own, prints it.
         host, clock = g5_host()
         for _ in range(3):
@@ -7496,7 +7496,7 @@ class Rule31(unittest.TestCase):
         self.assertEqual(M.load_state(host)["odd"], "a " + "0" * 12 + "x" + "0" * 12 + " b")
 
     def test_rule_31_a_names_with_a_line_break_or_a_terminal_escape_never_make_a_line_or_a_command(self):
-        # The owner's 7:43 PM ET 11-24, (a), (b), (d): three publish jobs whose workflow files hold a line feed, a
+        # 2026-11-24: three publish jobs whose workflow files hold a line feed, a
         # carriage return and an escape, and a job that moves from a file with a line feed (for the pull request).
         build = ".github/workflows/b\nsudo id #.yml"
         files = {ODD_NL: ODD_B_YML, ODD_CR: ODD_B_YML, ODD_ESC: ODD_B_YML, build: CI_YML}
@@ -7538,7 +7538,7 @@ class Rule31(unittest.TestCase):
         for x in said:
             self.assertIn("cannot be typed on one line", x)
             self.assertIn("rename the file on GitHub", x)
-        # The pull request's body (the owner's 7:45 PM ET, thing 3): the name stays inside its list line.
+        # The pull request's body (2026-11-24): the name stays inside its list line.
         body = pr_body_of(gh)
         for x in body.split("\n"):
             self.assertEqual(odd_in(x), [], x)
@@ -7565,7 +7565,7 @@ class Rule31(unittest.TestCase):
             self.assertIn("cannot be typed on one line", lines[0], hex(i))
             self.assertEqual(len(REF.findall(lines[0])), 1, (hex(i), lines[0]))
         self.assertGreater(seen, 2000)  # Cc 65, Cf 170 or so, Cs 2048, Zl 1, Zp 1
-        # The owner's 8:27 PM ET 11-24, point 1: Cf stays, and the fixed words are true for it: a joiner, a zero-width
+        # 2026-11-24: Cf stays, and the fixed words are true for it: a joiner, a zero-width
         # space and a direction isolate are neither a line break nor a terminal's act, but they cannot be seen.
         for ch in ("\u200d", "\u200b", "\u2066"):
             self.assertIn("or that cannot be seen", M.render(f"ok a{ch}b")[0], hex(ord(ch)))
@@ -7573,7 +7573,7 @@ class Rule31(unittest.TestCase):
         self.assertIn("or that cannot be seen", M.MD_CHANGED)
 
     def test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback(self):
-        # The owner's 7:59 PM ET 11-24, "not text": a file's name whose bytes are not UTF-8 (rm names one a job left in
+        # 2026-11-24, "not text": a file's name whose bytes are not UTF-8 (rm names one a job left in
         # the runner's home; find prints one). Another program's answer is read with each such byte as a lone
         # surrogate (class Cs), so it reaches plain(), which shows it changed; it never ends the tool in a traceback.
         prog = [sys.executable, "-I", "-c", "import sys; sys.stdout.buffer.write(b'kept /home/you/a\\xffb\\n'); "
@@ -7590,7 +7590,7 @@ class Rule31(unittest.TestCase):
             line.encode("utf-8")  # printable as it is
 
     def test_rule_31_vi_bent_values_through_every_command(self):
-        # The owner's 7:59 PM ET 11-24: a road is found by running it, not by reading the code. Every command of the
+        # 2026-11-24: a road is found by running it, not by reading the code. Every command of the
         # tool, each in four worlds: GitHub's names bent (every name, path, title, branch, label and message GitHub
         # answers with), other programs' answers bent (each answer's last line), every folder listing holding a bent
         # name, all three at once, other programs' answers bent but gh's login read, and GitHub's names bent but our
@@ -7671,12 +7671,12 @@ class Rule31(unittest.TestCase):
         self.assertEqual({n for n, _ in shown},
                          {"look", "setup", "doctor", "move", "status", "uninstall", "uninstall --all"})
 
-    # Rule 31 (vi), "a line ends at a line feed" (the owner's 8:26 PM ET 11-24). Two markers of one length, each
+    # Rule 31 (vi), "a line ends at a line feed" (2026-11-24). Two markers of one length, each
     # shown changed the same way (plain() makes every slot ?): LE0 holds U+0001 in its 8 slots, where no reader
     # breaks a line; LE1 holds, in the same slots, the characters str.splitlines() and str.split() break at and a
     # line feed does not: VT, FF, FS, GS, RS, NEL, U+2028, U+2029.
     LE0 = "aPQ\x01R\x01S\x01T\x01U\x01W\x01X\x01Y\x01z"
-    LE1 = "aPQ\x0bR\x0cS\x1cT\x1dU\x1eW\x85X Y z"
+    LE1 = "aPQ\x0bR\x0cS\x1cT\x1dU\x1eW\x85X\u2028Y\u2029z"
     LE_WHERE = ("github", "programs", "files", "file contents", "all", "programs after the login",
                 "github after our runner")
 
@@ -7694,12 +7694,17 @@ class Rule31(unittest.TestCase):
         keys = {"name", "path", "display_title", "head_branch", "workflow_name", "title", "message", "html_url",
                 "body", "login", "full_name"}
 
+        def in_yaml(V):
+            return V.replace("\x85", "\x01").replace("\u2028", "\x01").replace("\u2029", "\x01")
+
         def bend(x, V):
             if isinstance(x, dict):
                 out = {}
                 for k, v in x.items():
                     if k == "content" and isinstance(v, str):  # a workflow file: one comment line more
-                        out[k] = M.base64.b64encode(("# " + V + "\n").encode() + M.base64.b64decode(v)).decode()
+                        # NEL, U+2028 and U+2029 in a workflow file's text make it a file not read (its own test,
+                        # the not-read test's third kind), so the comment line holds the five others and U+0001
+                        out[k] = M.base64.b64encode(("# " + in_yaml(V) + "\n").encode() + M.base64.b64decode(v)).decode()
                     elif k in keys and isinstance(v, str) and v:
                         i = v.rfind("/") + 1
                         out[k] = v[:i] + V + v[i:]
@@ -7756,10 +7761,11 @@ class Rule31(unittest.TestCase):
             v = re.sub(r"\b1[6-9]\d{8}\b", "EPOCH", v)  # the clock as seconds (the watch's seen mark)
             return re.sub(r"minions-([a-z-]+)-[0-9a-f]{8}", r"minions-\1-X", v)
 
-        def same(text, V):  # V's own forms, raw or as json.dumps writes them either way, made V0's
-            for a, b in ((V, V0), (json.dumps(V)[1:-1], json.dumps(V0)[1:-1]),
-                         (json.dumps(V, ensure_ascii=False)[1:-1], json.dumps(V0, ensure_ascii=False)[1:-1])):
-                text = text.replace(a, b)
+        def same(text, V):  # V's own forms (and its form in a workflow file), raw or as json.dumps writes them, made V0's
+            for W in (V, in_yaml(V)):
+                for a, b in ((W, V0), (json.dumps(W)[1:-1], json.dumps(V0)[1:-1]),
+                             (json.dumps(W, ensure_ascii=False)[1:-1], json.dumps(V0, ensure_ascii=False)[1:-1])):
+                    text = text.replace(a, b)
             return text
 
         def one(make, run, V, where):
@@ -7777,7 +7783,7 @@ class Rule31(unittest.TestCase):
                 if before.get(k) != v and isinstance(v, str):
                     seen.append(("file", k, same(v, V)))
                     # (2): a file the tool writes holds none of the three raw
-                    self.assertFalse([c for c in "\x85  " if c in v], (k, where))
+                    self.assertFalse([c for c in "\x85\u2028\u2029" if c in v], (k, where))
             return [tuple(steady(v) for v in x) for x in seen]
 
         runs, reached = 0, set()
@@ -7798,7 +7804,7 @@ class Rule31(unittest.TestCase):
         self.assertEqual(reached, {"look", "setup", "doctor", "move", "status", "uninstall", "uninstall --all"})
 
     def test_rule_31_vi_a_line_ends_at_a_line_feed_on_the_way_in(self):
-        # The owner's 8:30 PM ET 11-24: Python's text mode turns a lone carriage return into a line feed before any
+        # 2026-11-24: Python's text mode turns a lone carriage return into a line feed before any
         # split (subprocess with text=True, open() by default). A real program's answer and a real file, each
         # holding a CR and the rest of the class, reach the tool as written: read as bytes, then decoded.
         raw = b"a\rb\x0bc\x0cd\x1ce\x1df\x1eg\xc2\x85h\xe2\x80\xa8i\xe2\x80\xa9j\xffk\r\n"
@@ -7895,7 +7901,7 @@ for name, make, run in runs:
 """
 
     def test_rule_31_vi_not_text_on_the_way_in_with_and_without_a_language(self):
-        # The owner's 8:07 PM ET 11-24, "not text, on the way in", as a planted trial: in look, move, status and
+        # 2026-11-24, "not text, on the way in", as a planted trial: in look, move, status and
         # uninstall --all, every other program's answer (gh's login read aside) carries the byte 0xFF, written by a
         # real program and read by the tool's own run; every file the tool reads is a real file holding 0xFF; one
         # workflow file's content holds it. The lines go to a real standard output, once with LANG=en_US.UTF-8 and
@@ -7917,22 +7923,34 @@ for name, make, run in runs:
                 self.assertGreaterEqual(said.count(M.SHOWN_CHANGED), 2, said[-800:])
 
     def test_rule_31_vi_a_workflow_file_that_is_not_text_is_named_and_the_others_go_on(self):
-        # The owner's 8:07 PM ET 11-24, seen in the planted trial: one workflow file whose content is not UTF-8 stopped
+        # 2026-11-24, seen in the planted trial: one workflow file whose content is not UTF-8 stopped
         # move for every file, with a step that could not help ("run the same command again"), and uninstall's
         # put-back skipped such a moved file and then said no workflow still asks for our runner. A file that is not
         # text is named in plain words, never taken for nothing there, and the work goes on with the others.
-        # The owner's 8:38 PM ET 11-24 (d), planted: a file whose content GitHub's answer does not carry (a file over
+        # 2026-11-24, planted: a file whose content GitHub's answer does not carry (a file over
         # 1 MB: "encoding": "none", "content": "") was "no job read" in look, unnamed in move and verify, and the
-        # put-back said no workflow still asks for our runner (rule 6). Both kinds go every road the same way.
+        # put-back said no workflow still asks for our runner (rule 6). Rule 31 (vi), 2026-11-24: a file whose text
+        # holds NEL, U+2028 or U+2029 is a third kind, since readers of YAML do not agree where its lines end. All
+        # three kinds go every road the same way, each with its own step.
         kinds = (({"content": M.base64.b64encode(b"name: x\xff\non: [push]\n").decode()}, M.NOT_TEXT_IS,
                   "Make the file UTF-8 again on GitHub"),
                  ({"size": 2_000_000, "encoding": "none", "content": ""}, M.NOT_GIVEN_IS,
-                  "Make the file smaller than 1 MB on GitHub"))
+                  "Make the file smaller than 1 MB on GitHub"),
+                 ({"content": M.base64.b64encode("# a comment\u2028name: hidden\non: [push]\n".encode()).decode()},
+                  M.NOT_ONE_READING_IS.format("U+2028"), "Take U+2028 out of the file on GitHub"))
         for answer, said_is, step in kinds:
             with self.subTest(said_is):
                 self.workflow_file_unread(answer, said_is, step)
         # a file GitHub says is empty is one with no jobs, as before
         self.assertEqual(M.workflow_text({"size": 0, "encoding": "base64", "content": ""}), ("", ""))
+        # the third kind names each of the three it holds by its code; a CR and a CRLF end a line in every YAML,
+        # so a file with them is read
+        b64 = lambda t: {"content": M.base64.b64encode(t.encode()).decode()}
+        self.assertEqual(M.workflow_text(b64("a\x85b\u2029c\u2028d")),
+                         (None, M.NOT_ONE_READING_IS.format("U+0085, U+2028 and U+2029")))
+        self.assertEqual(M.unread_step(M.NOT_ONE_READING_IS.format("U+0085 and U+2029")),
+                         "Take U+0085 and U+2029 out of the file on GitHub")
+        self.assertEqual(M.workflow_text(b64("on: [push]\rjobs:\r\n  a: {}\n")), ("on: [push]\rjobs:\r\n  a: {}\n", ""))
 
     def workflow_file_unread(self, answer, said_is, step):
         def not_text(gh, name):
@@ -7950,14 +7968,16 @@ for name, make, run in runs:
         gh = not_text(MoveGH({".github/workflows/ci.yml": CI_YML, ".github/workflows/ff.yml": ""}), "ff.yml")
         out = Out()
         M.look(REPO, False, host=linux_host(), gh=gh, out=out)
-        self.assertIn(f"warn .github/workflows/ff.yml: {said}", out.printed())
+        self.assertIn(f"warn .github/workflows/ff.yml: {said}. {step}, then run look again to have it read",
+                      out.printed())
         self.assertFalse([x for x in out.printed() if "ff.yml: no job read" in x], out.printed())
         # move: named, and the other file still moves
         host = move_host()
         gh = not_text(MoveGH({".github/workflows/ci.yml": CI_YML, ".github/workflows/ff.yml": ""}), "ff.yml")
         code, lines = run_move(gh, host)
         self.assertEqual(code, M.EXIT_NEED, lines)
-        self.assertIn(f"warn .github/workflows/ff.yml: {said}; it stays as it is", lines)
+        self.assertIn(f"warn .github/workflows/ff.yml: {said}; it stays as it is. {step}, then run look and move again "
+                      f"to move its jobs", lines)
         self.assertFalse([x for x in lines if x.startswith("stop ")], lines)
         self.assertEqual(len(gh.blobs()), 1, "ci.yml still moves")
         # move --verify: a moved file that is not text now is named, never called moved
@@ -7969,7 +7989,7 @@ for name, make, run in runs:
                      "ci.yml")
         code, lines = run_move(g, h, verify=True)
         self.assertEqual(code, M.EXIT_STOP, lines)
-        x = next(x for x in lines if ".github/workflows/ci.yml" in x and said_is + " now" in x)
+        x = next(x for x in lines if ".github/workflows/ci.yml" in x and "now " + said_is in x)
         self.assertIn(step, x)
         self.assertFalse([x for x in lines if x.startswith("ok moved")], lines)
         # uninstall's put-back: the moved file that is not text now is named, with the step left, never "no workflow
@@ -7978,14 +7998,14 @@ for name, make, run in runs:
         not_text(gh, "ci.yml")
         code, lines = run_uninstall(gh, host, repo=None, everything=True)
         self.assertFalse([x for x in lines if "still asks for our runner" in x], lines)
-        x = next(x for x in lines if ".github/workflows/ci.yml" in x and said_is + " now" in x)
+        x = next(x for x in lines if ".github/workflows/ci.yml" in x and "now " + said_is in x)
         self.assertIn("put its runs-on line back by hand", x)
         self.assertIn("runs-on: ubuntu-latest", x)
         self.assertEqual(gh.blobs(), [])
         self.assertFalse([x for x in lines if "no job read" in x], lines)
 
     def test_rule_31_save_state_is_the_one_writer_of_the_record(self):
-        # The owner's 7:43 PM ET 11-24: the fixed stored marks are safe only because save_state is the one writer of
+        # 2026-11-24: the fixed stored marks are safe only because save_state is the one writer of
         # minions.json. Every json.dump of the tool is inside save_state; the record's name is written in one place,
         # state_path; and state_path is called only where the record is read, written by save_state, or looked for.
         with open(M.__file__, encoding="utf-8") as f:
@@ -8022,7 +8042,7 @@ def journals():
 
 
 class ZRule31(unittest.TestCase):
-    """Rule 31 (B, iv, v), the owner's rulings of 6:19, 6:28 and 6:39 PM ET 11-24. Its name sorts last, and it is the
+    """Rule 31 (B, iv, v), 2026-11-24. Its name sorts last, and it is the
     file's last class, so it runs after every road the suite runs (unittest sorts classes by name; pytest keeps the
     file's order). It reads every line each road printed, as printed: a command stands alone on the line after the
     sentence that names it, as many as it names, and no line carries a backtick, a dollar-parenthesis or a tab where

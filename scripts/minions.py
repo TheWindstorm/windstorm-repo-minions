@@ -38,14 +38,14 @@ import urllib.request
 
 VERSION = "0.1.0"
 
-# Family rule 31 (B), (iv), (v), the owner's 6:19, 6:28 and 6:39 PM ET 11-24: no line this tool prints or logs carries
+# Family rule 31 (B), (iv), (v), 2026-11-24: no line this tool prints or logs carries
 # a backtick or a dollar-parenthesis; a command the person is to type stands alone on a line of its own, its last
 # character the line's last, on every road that prints it. A command is marked where it is written, between C0 and C1,
 # and render() puts it on its own line at the moment it is printed, so a clause another road adds after it stays in the
 # sentence. The marks carry a token drawn fresh each run and are never printed, so a value this tool did not write (a
 # job's name, a branch, another program's words) cannot make a command of its own. What is left in a sentence that is
 # a backtick, a dollar sign before a parenthesis or a tab came from such a value: it is shown changed, and said so.
-# Rule 31 (vi), the owner's 7:43 PM ET 11-24: nor can such a value make a LINE. Every character a line breaks on or a
+# Rule 31 (vi), 2026-11-24: nor can such a value make a LINE. Every character a line breaks on or a
 # terminal acts on is shown changed in a sentence, decided by its Unicode class (ODD_CATEGORIES), never by a list; a
 # command that would carry one is not printed at all, and its sentence says why and what is left.
 _MARK = secrets.token_hex(6)
@@ -110,23 +110,42 @@ SHOWN_CHANGED = ("(shown changed: a value in this line that this tool did not wr
                  "be seen, printed here as ', $ (, a space or ?)")
 # Rule 31 (vi): the class, by Unicode category: control characters (C0 and C1 with line feed, carriage return, ESC,
 # backspace and DEL; tab too, printed as a space), format characters (the bidi overrides that make a terminal show a
-# line in another order, and joiners and zero-width spaces, which cannot be seen: the owner's 8:27 PM ET 11-24, Cf
-# stays), lone surrogates (which cannot even be printed), and U+2028 and U+2029.
+# line in another order, and joiners and zero-width spaces, which cannot be seen: Cf
+# stays, 2026-11-24), lone surrogates (which cannot even be printed), and U+2028 and U+2029.
 ODD_CATEGORIES = ("Cc", "Cf", "Cs", "Zl", "Zp")
 NOT_TYPABLE = ("a command not given here, because a value it must carry holds a character a line breaks on or a "
                "terminal acts on, or that cannot be seen, so it cannot be typed on one line (shown changed: {}); that "
                "value is to be renamed to one without such a character first")
 
 
-# Rule 31 (vi), "not text, on the way in" (the owner's 8:07 PM ET 11-24): a workflow file whose content is not UTF-8
+# Rule 31 (vi), "not text, on the way in" (2026-11-24): a workflow file whose content is not UTF-8
 # is named in these words by every road that reads one, never taken for no file, and the others go on.
 NOT_TEXT_IS = "its content is not text (it is not UTF-8)"
 NOT_TEXT = NOT_TEXT_IS + ", so this tool neither reads nor changes it"
-# Rule 6, the owner's 8:38 PM ET 11-24 (d): GitHub's contents answer carries no content for a file over 1 MB
+# Rule 6, 2026-11-24: GitHub's contents answer carries no content for a file over 1 MB
 # ("encoding": "none"); its empty text is not a file with no jobs. Named as a file that is not text is, each road in
 # its own words, with its own step.
 NOT_GIVEN_IS = "GitHub did not give its content in its answer (it does not, for a file over 1 MB)"
-UNREAD_STEP = {NOT_TEXT_IS: "Make the file UTF-8 again on GitHub", NOT_GIVEN_IS: "Make the file smaller than 1 MB on GitHub"}
+# Rule 31 (vi), 2026-11-24: YAML 1.2 ends a line only at LF, CR and CRLF, but older YAML readers (libyaml and those
+# built on it) also end one at NEL, U+2028 and U+2029, and which of the two GitHub's own reader does is not seen. This
+# tool acts on what it reads in a workflow file (which job moves, which publishes, which line it edits), so where its
+# reading and GitHub's may differ it does not act: a file whose text holds one of the three is not read, named with
+# the character by its code. A CR and a CRLF end a line in every YAML and are read as lines (yaml_lines).
+LINE_ENDS_DISPUTED = "\x85\u2028\u2029"
+NOT_ONE_READING_IS = "its text holds {}, and readers of this file do not agree where its lines end"
+
+
+def unread_step(why: str) -> str:
+    """The step for a workflow file this tool does not read, by why (rule 31 (vi), rule 6)."""
+    if why == NOT_TEXT_IS:
+        return "Make the file UTF-8 again on GitHub"
+    if why == NOT_GIVEN_IS:
+        return "Make the file smaller than 1 MB on GitHub"
+    return f"Take {and_list(re.findall(r'U[+][0-9A-F]{4}', why))} out of the file on GitHub"
+
+
+def and_list(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
 def workflow_text(fd: object) -> tuple[str | None, str]:
@@ -137,9 +156,11 @@ def workflow_text(fd: object) -> tuple[str | None, str]:
             (not fd.get("content") and (fd.get("size") or 0) > 0):
         return None, NOT_GIVEN_IS
     try:
-        return base64.b64decode(fd.get("content", "")).decode("utf-8"), ""
+        text = base64.b64decode(fd.get("content", "")).decode("utf-8")
     except (ValueError, UnicodeDecodeError):
         return None, NOT_TEXT_IS
+    held = [f"U+{ord(c):04X}" for c in LINE_ENDS_DISPUTED if c in text]
+    return (None, NOT_ONE_READING_IS.format(and_list(held))) if held else (text, "")
 
 
 def odd(text: str) -> bool:
@@ -161,7 +182,7 @@ def plain(text: str) -> tuple[str, bool]:
     return out, out != text
 
 
-# Rule 31 (vi), "a line ends at a line feed" (the owner's 8:26 PM ET 11-24): str.splitlines() also breaks at CR, VT,
+# Rule 31 (vi), "a line ends at a line feed" (2026-11-24): str.splitlines() also breaks at CR, VT,
 # FF, FS, GS, RS, NEL, U+2028 and U+2029, and str.split() and str.strip() with no argument take those as blanks. So a
 # value of others read by those is two items, or loses its end. Another program's answer and a file others write are
 # read by lines_of() and words_of(): a line ends at a line feed only, a word at a space, a tab or a line feed only. (A CR
@@ -360,7 +381,7 @@ def c_language(env) -> dict:
     return out
 
 
-# Rule 7 (THE SAME STOP MUST NOT COME BACK; A WAIT THAT MAY NOT END, 5:27 PM ET 11-24): a stop says "run it again" only
+# Rule 7 (THE SAME STOP MUST NOT COME BACK; A WAIT THAT MAY NOT END, 2026-11-24): a stop says "run it again" only
 # with what can be different then. A read that did not answer names what must change first; a stop after a wait
 # names what it waited for and how long, and what to do when the same lines come back.
 def settle_first(cmd: str = "run the same command again") -> str:
@@ -378,7 +399,7 @@ def spent(gh, s: int) -> bool:
 
 
 def github_next(s: int, repo: str, cmd: str = "run the same command again", gh=None) -> str:
-    """Rule 7: GitHub's answer, by its code. The API limit is read first (the owner's 6:19 PM ET 11-24 change 1): a
+    """Rule 7: GitHub's answer, by its code. The API limit is read first (2026-11-24): a
     403 or 429 that GitHub gave for a spent limit says the limit and its time, never rights. A 401 is the saved login
     refused; a 404 is no access to the repository, or it was renamed or removed; any other 403 is rights. Anything
     else may clear by itself."""
@@ -477,8 +498,8 @@ class Host:
 
     def run(self, argv: list[str], timeout: int = 20) -> tuple[int, str]:
         """R168: the answer is what the program wrote on standard output; standard error is kept beside it (Out).
-        R172: in the C language, so the words read are the same whatever the person's language. Rule 31 (vi), the
-        owner's 7:59 PM ET 11-24: an answer that is not UTF-8 (a file's name a job left) is read with each such byte
+        R172: in the C language, so the words read are the same whatever the person's language. Rule 31 (vi),
+        2026-11-24: an answer that is not UTF-8 (a file's name a job left) is read with each such byte
         as a lone surrogate, never a traceback; plain() shows it changed where it is printed. Every subprocess.run of
         this tool that reads an answer does the same."""
         env = self.gh_env() if argv[:1] == ["gh"] else c_language(os.environ)  # R144
@@ -858,7 +879,7 @@ PRINTED_COMMANDS = {
     "sudo gpasswd -d {} {}":
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner user put in a group by hand): "
         "doctor's line run as printed; doctor then read it kept",
-    # R167 (FAULT 2, owner 5:14 PM ET 11-24, point 4): rehearsed on a stock machine (vm/run60), typed by hand as
+    # R167 (2026-11-24): rehearsed on a stock machine (vm/run60), typed by hand as
     # printed, with links planted inside the home pointing at canaries outside, every canary read untouched after
     "sudo rm -rf --one-file-system /home/{}":
         "2026-11-24, a stock Ubuntu 24.04.5 virtual machine (coreutils 9.4): the runner user made as setup makes it, "
@@ -1941,7 +1962,8 @@ def check_workflows(gh: GitHub, repo: str, survey_: dict, rep: Report) -> list[d
         fs, fd = gh.api("GET", f"repos/{repo}/contents/{f['path']}")
         text, why = workflow_text(fd)
         if fs == 200 and text is None:
-            rep.warn(f"{f['path']}: {why}, so this tool neither reads nor changes it")
+            rep.warn(f"{f['path']}: {why}, so this tool neither reads nor changes it. {unread_step(why)}, then run "
+                     f"look again to have it read")
             continue
         if fs != 200:
             rep.warn(f"{f['path']}: could not read (GitHub answered HTTP {fs})")
@@ -2063,7 +2085,7 @@ def load_state(host: Host) -> dict:
     if not isinstance(d, dict):
         return {}
     d = _marks_moved(d, _STORED, (C0, C1))
-    # R167 (owner 3:51 PM ET 11-24, answer 5): a runner's folder is its repository's own (setup's rule, and every
+    # R167 (2026-11-24): a runner's folder is its repository's own (setup's rule, and every
     # record the tool writes carries it); a record that lost it (a hand edit) gets it back here, so no road reads
     # processes or paths with an empty folder
     for key in ("runners", "setting_up"):
@@ -2075,7 +2097,7 @@ def load_state(host: Host) -> dict:
 
 def save_state(host: Host, data: dict) -> None:
     """minions.json: which repositories, which runners, the last looks. Nothing secret. 0600, written whole.
-    Rule 31 (v), the owner's 7:43 PM ET 11-24: this is the one writer of minions.json, and it is what makes the fixed
+    Rule 31 (v), 2026-11-24: this is the one writer of minions.json, and it is what makes the fixed
     stored marks safe: every text goes through _marks_moved here, which takes out any mark character a value brought
     with it, so a fixed mark in the file was written by this tool. A second writer would let a value make a command;
     test_rule_31_save_state_is_the_one_writer_of_the_record holds that there is none."""
@@ -2455,7 +2477,7 @@ def runner_gone(host: Host) -> bool:
 
 
 def kept_home_command() -> str:
-    """R167 (owner 5:14 PM ET 11-24, point 4): the one whole command for a home whose user is gone, as printed. Its
+    """R167 (2026-11-24): the one whole command for a home whose user is gone, as printed. Its
     sighting in PRINTED_COMMANDS is the rehearsal on a stock machine, typed by hand (G8.16)."""
     return f"{C0}sudo rm -rf --one-file-system /home/{RUNNER_USER}{C1}"  # the name has no character a shell reads
 
@@ -2484,7 +2506,7 @@ def kept_home_step(host: Host) -> str:
 
 
 def kept_home_made(host: Host) -> bool:
-    """Change 2 (the owner's 6:19 PM ET 11-24): whether this tool's record says it made the user whose home is kept:
+    """Change 2 (2026-11-24): whether this tool's record says it made the user whose home is kept:
     runner_user_made, or runner_home_left (this tool's own userdel left that home, and its record says so)."""
     known = load_state(host)
     return bool(known.get("runner_user_made") or known.get("runner_home_left"))
@@ -2516,7 +2538,7 @@ def kept_home_next(host: Host, then: str = "", made: bool | None = None) -> str:
             f"{kept_home_step(host)}{after}. If it is something else of yours, move it away" + (f" first{after}" if then else ""))
 
 
-# Change 4 (the owner's 6:19 PM ET 11-24 point 4; seen on a stock Ubuntu 24.04.5, vm/run61): userdel, with or without
+# Change 4 (2026-11-24; seen on a stock Ubuntu 24.04.5, vm/run61): userdel, with or without
 # -r, leaves the user's crontab and at jobs. cron runs a crontab by the user's NAME and at runs a job as the NUMBER that
 # owns its file, and useradd gives the same number again, so a new user of that name runs both.
 # Where each kind of system keeps them (as its packages ship them): only Debian's, on Ubuntu 24.04.5, has been seen.
@@ -2529,7 +2551,7 @@ AT_FILE = re.compile(r"^[a-z=]([0-9a-f]{5})[0-9a-f]{8}$")  # at's own file name:
 def left_schedules(host: Host) -> tuple[list[tuple[str, str]], list[str]]:
     """Change 4: with the runner user read absent, what it scheduled that a new user of its name would run, read as
     root by name and by number, no words: (what, the step that removes it) for each, and what could not be read.
-    Each of the two has three answers (the owner's 6:46 PM ET 11-24, point 1). "No cron" and "no at" are read only
+    Each of the two has three answers (2026-11-24). "No cron" and "no at" are read only
     from that spool folder's own absence; a system whose layout this tool does not know is "could not be read". The
     crontab is read by its file (crontab -l -u answers "user unknown" for a gone user, exit 1, so it cannot be
     asked); at's jobs are the files whose owner number has no user (find -nouser), each job's number from the file's
@@ -2616,7 +2638,7 @@ def runner_user_is_ours_or_absent(host: Host, rep: Report) -> bool:
         return False
     home = f"/home/{RUNNER_USER}"
     if kind == "absent":
-        # R167 (FAULT 2, owner 5:14 PM ET 11-24, point 4; R130): a home there with its user read absent (removed by hand, or by this tool with something left in it). A
+        # R167 (2026-11-24; R130): a home there with its user read absent (removed by hand, or by this tool with something left in it). A
         # new user of that name would be given that folder and what a job left in it (useradd keeps a folder that is
         # there). Read as you (a folder in /home), so before any admin step; nothing is touched.
         t = host.there(home)
@@ -2641,7 +2663,7 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
         # (the spool folders are closed to the person), so here, after the one admin ask, never in the first steps.
         found, unread = left_schedules(host)
         if unread and os_release_id(host) not in SPOOLS:
-            # the owner's 6:46 PM ET 11-24 point 1: never "none" on the third answer, said in a line of its own. A
+            # 2026-11-24: never "none" on the third answer, said in a line of its own. A
             # layout this tool does not know cannot be settled by any step, so it is said and setup goes on (rule 7)
             rep.warn(f"not read: {unread[0]}. What an earlier user named {RUNNER_USER} left there (a crontab, an at "
                      "job) would run as the user setup makes now; this matters only where a user of that name was on "
@@ -3716,7 +3738,7 @@ def runner_pgrep(host: Host, *rest: str) -> list[str]:
 def runner_pids(host: Host, folder: str, part: str = "Runner.") -> list[int]:
     """Processes of THIS runner (its own folder's programs), by exact PID. Read only; never a broad kill. Raises
     PidsUnread when pgrep could not answer: never taken for "no process"."""
-    # R167 (owner 3:51 PM ET 11-24, answer 5): with no folder the pattern would be "/bin/Runner.", every runner of
+    # R167 (2026-11-24): with no folder the pattern would be "/bin/Runner.", every runner of
     # the runner user's, another repository's too: no process read is ever made without this runner's own folder
     if not folder.startswith(RUNNERS_HOME) or len(folder) <= len(RUNNERS_HOME) or "/.." in folder:
         raise PidsUnread(f"no runner folder is known ({folder!r}), so no process is read for it")
@@ -5251,7 +5273,8 @@ def read_workflow_files(gh: GitHub, repo: str, ref: str | None, rep: Report,
                         not_text: dict[str, str] | None = None) -> list[tuple[str, str]] | None:
     """The workflow files and their text. A file GitHub would not give is a stop; one whose content is not text, or
     whose content GitHub's answer does not carry (rule 6), is left out and put in not_text with why (NOT_TEXT_IS or
-    NOT_GIVEN_IS), for the caller to name in its own words (rule 31 (vi)), and the others go on."""
+    NOT_GIVEN_IS), or whose text holds a character readers of YAML do not agree is a line end (NOT_ONE_READING_IS),
+    for the caller to name in its own words (rule 31 (vi)), and the others go on."""
     q = f"?ref={ref}" if ref else ""
     s, d = gh.api("GET", f"repos/{repo}/contents/.github/workflows{q}")
     if s == 404:
@@ -5380,7 +5403,7 @@ MD_CHANGED = ("(shown changed: a name in this line that this tool did not write 
 
 
 def md_line(line: str) -> str:
-    """Rule 31 (vi), Markdown's side (the owner's 7:45 PM ET 11-24): a line of the pull request's body stays one line;
+    """Rule 31 (vi), Markdown's side (2026-11-24): a line of the pull request's body stays one line;
     a character of ODD_CATEGORIES in it is shown changed, and the line says so."""
     out = "".join("?" if unicodedata.category(c) in ODD_CATEGORIES else c for c in line)
     return out if out == line else f"{out} {MD_CHANGED}"
@@ -5420,7 +5443,8 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     if files is None:
         return rep.code()
     for path, why in sorted(not_text.items()):
-        rep.warn(f"{path}: {why}, so this tool neither reads nor changes it; it stays as it is")
+        rep.warn(f"{path}: {why}, so this tool neither reads nor changes it; it stays as it is. {unread_step(why)}, "
+                 f"then run look and move again to move its jobs")
     survey_ = entry.get("survey") or {}
     system, machine = survey_.get("system") or host.system(), survey_.get("machine") or host.machine()
     inc = set(include or [])
@@ -5496,8 +5520,8 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
     listed: dict | None = None
     for path, wanted_jobs in sorted(mv["files"].items()):
         if path in not_text:
-            rep.stop(f"{path}: {not_text[path]} now, so whether its moved jobs ran on a computer of yours cannot be "
-                     f"read, and they are not called moved. {UNREAD_STEP[not_text[path]]}, then run "
+            rep.stop(f"{path}: now {not_text[path]}, so whether its moved jobs ran on a computer of yours cannot be "
+                     f"read, and they are not called moved. {unread_step(not_text[path])}, then run "
                      f"{C0}move {repo} --verify{C1} again")
             all_ok = False
             continue
@@ -5725,7 +5749,7 @@ def unit_read(host: Host, unit: str) -> tuple[str, str]:
         return "gone", act
     if act in ("inactive", "failed"):
         return "stopped", act
-    # R167 (owner 3:51 PM ET 11-24, change 3): stopped is said only from the two words seen; any other word (one a
+    # R167 (2026-11-24): stopped is said only from the two words seen; any other word (one a
     # later systemd adds, too) is named and could not be read
     return "unread", f"systemctl answered ActiveState={act[:60]}, a word this tool does not read as stopped"
 
@@ -6185,7 +6209,7 @@ def put_back(gh: GitHub, host: Host, repo: str, data: dict, rep: Report) -> None
     for path, jobs in sorted((mv.get("files") or {}).items()):
         if path in not_text:
             before = "; ".join(f"job {j['id']}: {j['runs_on'].strip(BLANKS)}" for j in jobs if j.get("runs_on")) or "not recorded"
-            rep.warn(f"{path}: {not_text[path]} now, so this tool does not put its moved runs-on line back: put its "
+            rep.warn(f"{path}: now {not_text[path]}, so this tool does not put its moved runs-on line back: put its "
                      f"runs-on line back by hand (before move it was, {before})")
             continue
         text = changed.get(path, files.get(path))
@@ -6270,7 +6294,7 @@ def remove_shared(host: Host, rep: Report) -> bool:
     else:
         kept_here = [x for x in (f"{RECORDS_ROOT}/{n}" for n in names if n != os.path.basename(SEEN_ROOT))
                      if not keep_jobs_record(host, x, rep)]
-    # R167 (owner 3:51 PM ET 11-24, answer 6): the tool's copy (HOOKS_ROOT) is the one the person is told to run
+    # R167 (2026-11-24): the tool's copy (HOOKS_ROOT) is the one the person is told to run
     # uninstall from (the skill's own words); it goes LAST (remove_copy), so every step that stops before it names a
     # copy that is still there
     for path in [SEEN_ROOT] if kept_here else [RECORDS_ROOT]:
@@ -6303,7 +6327,7 @@ def journal_copy_removal(host: Host) -> None:
 
 
 def remove_copy(host: Host, rep: Report, src: dict) -> bool:
-    """R167 (owner 3:51 PM ET 11-24, answer 6): the tool's copy and the job hooks, the very last removal of
+    """R167 (2026-11-24): the tool's copy and the job hooks, the very last removal of
     `uninstall --all`: the skill tells the person to run uninstall from this copy, so nothing that may stop comes
     after it. A copy still there names itself; one not read names the clone the person set up from."""
     if exists_as_root(host, HOOKS_ROOT):
@@ -6322,7 +6346,7 @@ def remove_copy(host: Host, rep: Report, src: dict) -> bool:
 
 
 def copy_gone_step(src: dict) -> str:
-    """R167 (owner 4:36 PM ET 11-24, change 2): the step when the installed copy may be gone, as a whole command line:
+    """R167 (2026-11-24): the step when the installed copy may be gone, as a whole command line:
     the clone setup was run from (kept by setup, R161), or this running copy when it is not the installed one. A
     plugin's version folder is never named (rule 29): Claude Code's own skill is the step. With neither known, the
     installed copy's own line, said as what to try if that copy is still there."""
@@ -6353,7 +6377,7 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         return False
     home = f"/home/{RUNNER_USER}"
     if kind == "absent":
-        # R167 (FAULT 2, owner 5:14 PM ET 11-24, point 4): the user reads absent and its home is there. Nothing is tried as
+        # R167 (2026-11-24): the user reads absent and its home is there. Nothing is tried as
         # it, and nothing inside its home is deleted (rule 28: no root delete in its place); the leave goes on to its
         # end, and the home is named as what stayed, with why and the one whole command (rule 8, rule 7).
         found, unread = left_schedules(host)  # change 4: named as what stayed, never deleted as a gone user's
@@ -6523,7 +6547,7 @@ def last_line(out: str) -> str:
 
 
 def answer_or_words(out: str) -> str:
-    """R168 (owner 4:36 PM ET 11-24, words lost): a program's answer for a line the person reads; where it gave none
+    """R168 (2026-11-24, words lost): a program's answer for a line the person reads; where it gave none
     on standard output, "not read" with its own last line (its refusal is on standard error), never "not read" alone."""
     return out.strip(BLANKS) or ("not read: " + (last_line(out)[:160] or "nothing"))
 
@@ -6533,7 +6557,7 @@ def first_words(rc: int, out: str) -> str:
 
 
 def slice_running_units(host: Host) -> tuple[list[str] | None, str]:
-    """R167 (owner 3:51 PM ET 11-24, change 4; rule 30): a stop of the slice ends every unit in it, a job too. So its
+    """R167 (2026-11-24; rule 30): a stop of the slice ends every unit in it, a job too. So its
     own units are read first: the list of those that read running, or None and why when that could not be read.
     Its units are systemd's own list of them (SliceOf, seen on systemd 255; an older systemd that does not know it
     prints nothing for it) and every unit of our names whose Slice= is ours (a runner whose record was lost)."""
@@ -7004,7 +7028,7 @@ def tool_path() -> str:
 
 
 def tool_cmd() -> str:
-    """R167 (owner 5:14 PM ET 11-24, point 6): the command that runs this copy, its path quoted for the shell, so a
+    """R167 (2026-11-24): the command that runs this copy, its path quoted for the shell, so a
     folder with a space in its name is one argument when the line is typed or pasted as printed."""
     return f"python3 -I {shlex.quote(tool_path())}"
 
