@@ -2459,6 +2459,20 @@
    "issue": 372,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R192",
+   "seen": "2026-11-25, on a stock Ubuntu 24.04.5 virtual machine, seen by the maintainer: after an uninstall --all cut short (stopped once its journal said the runner was removed), status said only that no runner of this tool is on the computer, while the runner's account, the watch's units, the slice and the tool's own copy were still there; the step it printed was a placeholder (look <owner/repo>, then setup <owner/repo>). Setup run again in that state ended with exit code 0, and a job then ran on the runner (row R150). Not yet seen: uninstall --all run again in that same state.",
+   "promise": "Where anything of this tool remains on the computer without a runner, status names what remains and the one next step that finishes the removal, and never prints a placeholder as a step. A test cuts the removal at each of its steps and reads status in each state; seen once on a stock machine.",
+   "codon": "G5.28",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 380,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

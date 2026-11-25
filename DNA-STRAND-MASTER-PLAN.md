@@ -297,6 +297,7 @@ nothing.
 | G5.25 | The watch and `status` say each reason by its kind (row R160): no login the tool's gh can read (said, with the one step; no call is sent, and no answer to a call without a login is read as anything); HTTP 404 with a login (the repository is not there for this login: renamed, deleted, or its access lost); no answer at all (the network). A runner list that was not read is never "does not list it". | `test_G5_25_the_watch_and_status_say_each_reason_by_its_kind` |
 | G5.26 | status reads each program setup stored (row R163, due 0.1.1): the watch's python3, every folder in its unit's PATH and the hooks' programs are read as there and runnable, each said by name when not; and setup says in one line when a program it stores was found in a folder named by a version (a version manager's), which an update can take away. | planned: test_G5_26_status_reads_each_stored_program |
 | G5.27 | The watch's unit carries the person's login name and PATH folders whole, as systemd's grammar takes one value, or setup refuses before the first write in one line naming the value and what to choose instead (row R190, due 0.1.1; family rule 31 (v.1)). | planned: test_G5_27_the_watch_unit_carries_its_values_whole_or_refuses |
+| G5.28 | `status` names what of this tool remains without a runner after a removal cut short, and the one next step that finishes the removal; it never prints a placeholder as a step (row R192, due 0.1.1). | planned: test_G5_28_status_names_what_remains_after_a_cut_removal |
 
 ### G6 Uninstall
 
