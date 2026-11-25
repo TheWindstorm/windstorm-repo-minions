@@ -2529,6 +2529,20 @@
    "issue": 389,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R203",
+   "seen": "2026-11-25, seen by the maintainer on a copy of the tool: a workflow file whose plain jobs: key has no job under it (nothing after it, or only a comment). look says of it that no job was read; move names it nowhere on the terminal, and its run goes on with the other files as if the file were not there.",
+   "promise": "move says on the terminal, for a workflow file it read and found no job in, what look says of it: that no job was read in that file. Such a file was read, so it is not listed on the move pull request's page among the files not read, and nothing of it is written.",
+   "codon": "G3.12",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 391,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
