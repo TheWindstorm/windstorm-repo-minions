@@ -564,7 +564,7 @@ class G1(unittest.TestCase):
         gh = StandIn(rows)
         code, lines = look(gh, linux_host(), start=True)
         self.assertEqual(code, M.EXIT_STOP)
-        self.assertTrue(any(x.startswith("stop start test: " + as_said(M.ZERO_JOB_WORDS)) for x in lines), lines)
+        self.assertTrue(any(x.startswith("stop start test: " + as_said(M.zero_job_words(REPO))) for x in lines), lines)
         self.assertIn(("DELETE", f"repos/{REPO}/git/refs/heads/BRANCH"), gh.calls)
         # 3. An error after the branch is made (no run ever appears): the branch is still deleted.
         gh = StandIn(self.start, overrides={("GET", f"repos/{REPO}/actions/runs?branch=BRANCH&per_page=5"):
@@ -669,7 +669,7 @@ class G1(unittest.TestCase):
                           runs={("podman", "ps"): (0, "my-db\n")})
         _, lines = look(StandIn(self.recent), host)
         self.assertIn("warn 1 port open to the network here: 443", lines)
-        self.assertIn("warn 1 container(s) of yours running: not named here (`look <owner/repo> --show-names` names "
+        self.assertIn(f"warn 1 container(s) of yours running: not named here (`look {REPO} --show-names` names "
                       "them)", lines)  # G1.16: named only on the person's own flag
         self.assertTrue(any("serves something live" in x for x in lines), lines)
         self.assertEqual(M.listening_ports(TCP), {443}, "loopback and non-listening sockets are not counted")
@@ -733,7 +733,7 @@ class G1(unittest.TestCase):
         self.assertIn("warn 2 container(s) running on this computer's shared container service "
                       "(not named: they may be another person's)", lines)
         self.assertFalse(any("shop-db" in x or "someone-else" in x or "box-q" in x for x in lines), lines)
-        self.assertIn("warn 1 other runner service(s) of yours here: not named here (`look <owner/repo> --show-names` "
+        self.assertIn(f"warn 1 other runner service(s) of yours here: not named here (`look {REPO} --show-names` "
                       "names them)", lines)
         self.assertIn("warn 1 other runner service(s) here that do not run as you (not named)", lines)
         self.assertTrue(any("serves something live" in x for x in lines), lines)
@@ -1204,7 +1204,7 @@ class G2(unittest.TestCase):
             code, lines = run_doctor(host, sha)
             line = next(x for x in lines if "the watch runs version" in x)
             self.assertTrue(line.startswith("warn ") and "the watch runs the older code" in line, line)
-            self.assertIn("`setup <owner/repo>` again puts this version's copy in place", line)
+            self.assertIn(f"`setup {REPO}` again puts this version's copy in place", line)
             self.assertTrue(lines[-1].startswith("stop ") and "the watch's copy of the tool" in lines[-1], lines[-1])
             self.assertTrue(any("the watch runs the older code" in x for x in status()))
             # The step that line names is true: setup again on the installed runner puts this version's copy in
@@ -2738,15 +2738,16 @@ class G4(unittest.TestCase):
             lines = look(StandIn(page), host)[1]
             tells = tells_of(lines)
             if what:
-                self.assertTrue(any(x.startswith(f"warn this computer has a {what}: " + as_said(M.LAPTOP_WORDS)) for x in lines),
+                self.assertTrue(any(x.startswith(f"warn this computer has a {what}: " + as_said(M.laptop_words(REPO))) for x in lines),
                                 (what, lines))
-                self.assertIn(f"This computer has a {what}: " + as_said(M.LAPTOP_WORDS) + ".", tells)
+                self.assertIn(f"This computer has a {what}: " + as_said(M.laptop_words(REPO)) + ".", tells)
             else:
                 self.assertIn("ok no battery and no lid: not a laptop", lines)
                 self.assertFalse([x for x in tells if "laptop" in x])
-        self.assertEqual(as_said(M.LAPTOP_WORDS), "a laptop takes jobs only while it is awake, on the network and (by default) "
-                                         "on mains power; `resume <owner/repo> --on-battery-too` lets it take jobs "
-                                         "on battery as well")
+        self.assertEqual(as_said(M.laptop_words(None)), "a laptop takes jobs only while it is awake, on the network and "
+                                         "(by default) on mains power; `resume OWNER/REPO --on-battery-too` lets it take "
+                                         "jobs on battery as well (with your repository's name (owner/name) in place of "
+                                         "OWNER/REPO)")
 
     def test_G11_2_on_battery_the_runners_are_held(self):
         def laptop(host, plugged):
@@ -2831,8 +2832,10 @@ class G4(unittest.TestCase):
         self.assertEqual(e.exception.code, M.EXIT_USAGE)
         words = as_said(M.limits_in_words(M.slice_limits({"cores": 8, "mem": 16 * gib})))
         self.assertEqual(words, "jobs here get at most 4 of this computer's 8 processors and 60 % of its memory "
-                                "(9.6 GB); the one way to change that is `setup <owner/repo> --limits "
-                                "<processors>,<memory %>`")
+                                "(9.6 GB); the one way to change that is `setup OWNER/REPO --limits "
+                                "PROCESSORS,PERCENT`, with the number of processors and the percent of memory in place "
+                                "of PROCESSORS and PERCENT, and your repository's name (owner/name) in place of "
+                                "OWNER/REPO")
         # One processor (the owner's ruling, 2026-11-23): "1 of 1", said plainly, never refused.
         words = as_said(M.limits_in_words(M.slice_limits({"cores": 1, "mem": 8 * gib})))
         self.assertTrue(words.startswith("jobs here get at most 1 of this computer's 1 processor and 60 % "), words)
@@ -3769,7 +3772,8 @@ class G5(unittest.TestCase):
         named = [x for x in lines if x.startswith("warn job 'check'")]
         self.assertEqual(named, ["warn job 'check' of .github/workflows/ci.yml (run 555, started 22:40:00Z) was stopped by this computer's memory "
                                  "limit (4.0 GB), not by your code failing; GitHub shows it as failed. The one way to "
-                                 f"change the limit: `setup {REPO} --limits <processors>,<memory %>`. To run it again, once: "
+                                 f"change the limit: `setup {REPO} --limits PROCESSORS,PERCENT`, with the number of processors and the "
+                                 "percent of memory in place of PROCESSORS and PERCENT. To run it again, once: "
                                  f"`status {REPO} --rerun 9001`."])
         # R93: the limit said is the one it was killed under; limits changed after that never rewrite it.
         d = M.load_state(host)
@@ -6770,7 +6774,7 @@ class P1a(unittest.TestCase):
         host = linux_host(files={"/sys/class/power_supply/BAT0/type": "Battery\n"},
                           dirs={"/sys/class/power_supply": ["BAT0"]})
         lines = look(StandIn(load("look-recent-runs.jsonl")), host)[1]
-        self.assertIn("This computer has a battery: " + as_said(M.LAPTOP_WORDS) + ".", tells_of(lines))
+        self.assertIn("This computer has a battery: " + as_said(M.laptop_words(REPO)) + ".", tells_of(lines))
         # They come after the reading, all together, so an agent says them before setup.
         first = min(i for i, x in enumerate(lines) if TELL.match(x))
         self.assertTrue(all(TELL.match(x) for x in lines[first:-1]), lines[first:])
@@ -6885,6 +6889,89 @@ class P1a(unittest.TestCase):
             self.assertEqual(shlex.split(as_said(step).strip("`")), ["python3", "-I", spaced, "uninstall", "--all"])
             self.assertEqual(shlex.split(as_said(M.copy_gone_step({})).strip("`")), ["python3", "-I", spaced, "uninstall",
                                                                            "--all"])
+
+    def test_G8_23_a_printed_step_never_holds_a_name_in_angle_brackets(self):
+        # R193 (family rule 7, the maintainer's ruling 2026-11-25): a printed step is taken as printed. Where the tool
+        # knows the repository, the step carries it as one shell word; where it does not, the step holds the plain
+        # word OWNER/REPO, the line's own words say to put the name there, and a paste as printed ends in this tool's
+        # own stop line, never in a shell's.
+        # (1) every string the tool can print (docstrings left out): no name in angle brackets anywhere
+        import ast
+        with open(M.__file__, encoding="utf-8") as f:
+            src = f.read()
+        docs, tree = set(), ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)) and node.body \
+                    and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
+                docs.add(id(node.body[0].value))
+        found = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs:
+                found += [(node.lineno, m) for m in re.findall(r"<[a-z][a-z0-9 /%:_.-]*>", node.value)]
+        self.assertEqual(found, [], "a name in angle brackets in a string the tool prints")
+        # (2) the placeholder itself, pasted with any command that takes a repository: the tool's own stop line,
+        # before anything is read or changed
+        for argv in (["look", "OWNER/REPO"], ["setup", "OWNER/REPO"], ["drain", "OWNER/REPO"], ["resume", "OWNER/REPO"],
+                     ["status", "OWNER/REPO"], ["move", "OWNER/REPO"], ["doctor", "OWNER/REPO"],
+                     ["uninstall", "OWNER/REPO"]):
+            host, out = FakeHost(), Out()
+            code = M.main(argv, host=host, out=out, gh=StandIn({}))
+            lines = out.getvalue().splitlines()
+            self.assertEqual(code, M.EXIT_STOP, (argv, lines))
+            self.assertTrue(lines and lines[0].startswith("stop OWNER/REPO is the placeholder of a step this tool "
+                                                          "printed"), (argv, lines))
+            self.assertEqual(host.ran, [], f"{argv}: something was run")
+            self.assertEqual(os.listdir(host.state_dir()), [], f"{argv}: something was written")
+        def steps(text):
+            return [shlex.split(c) for c in M._COMMAND.findall(text)]
+        def pasted(argv):  # a step as printed, run: the tool's own answer (its stop line, or its parser's refusal)
+            out, err = Out(), io.StringIO()
+            with mock.patch("sys.stderr", err):
+                try:
+                    code = M.main(argv, host=FakeHost(), out=out, gh=StandIn({}))
+                except SystemExit as e:
+                    code = e.code
+            return code, out.getvalue() + err.getvalue()
+        lim = M.slice_limits({"cores": 4, "mem": 8 * 1024 ** 3})
+        host = FakeHost()
+        host.read = lambda p: None
+        known = {
+            "look --start-test": M.zero_job_words(REPO), "look --show-names": None,
+            "resume --on-battery-too": M.laptop_words(REPO), "setup --limits": M.limits_in_words(lim, REPO),
+            "setup (the watch's copy)": M.copy_version_line(host, REPO)[1],
+            "move --include-job": M.pr_body([], [], [("w.yml", "deploy now", "it deploys")], [], repo=REPO),
+        }
+        # (3) a known repository: the step carries it as one shell word
+        for what, text in known.items():
+            if text is None:
+                continue
+            got = steps(text) or [shlex.split(c) for c in re.findall(r"`(move [^`]+)`", text)]
+            self.assertTrue(got, (what, text))
+            self.assertEqual(got[0][1], REPO, (what, text))
+            self.assertNotIn("OWNER/REPO", text, what)
+        self.assertEqual(shlex.split(re.findall(r"`(move [^`]+)`", known["move --include-job"])[0])[2:],
+                         ["--include-job", "w.yml:deploy now"])
+        # (4) not known: the plain word, the line's own words saying to put the name there, and the paste as printed
+        # ends in this tool's own refusal
+        unknown = [M.zero_job_words(None), M.laptop_words(None), M.limits_in_words(lim, None),
+                   M.copy_version_line(host, None)[1]]
+        for text in unknown:
+            self.assertIn("OWNER/REPO", text)
+            self.assertIn("your repository's name (owner/name) in place of OWNER/REPO", text)
+            for argv in steps(text):
+                code, said = pasted(argv)
+                if "--limits" in argv:
+                    self.assertEqual(code, M.EXIT_USAGE, said)
+                    self.assertIn("write --limits PROCESSORS,PERCENT", said)
+                else:
+                    self.assertEqual(code, M.EXIT_STOP, said)
+                    self.assertTrue(said.startswith("stop OWNER/REPO is the placeholder"), said)
+        # status on a computer with no runner of ours: its step holds the plain word and says to put the name there
+        out = Out()
+        M.status(None, host=FakeHost(), gh=StandIn({}), out=out)
+        said = out.getvalue()
+        self.assertIn("look OWNER/REPO", said)
+        self.assertIn("your repository's name (owner/name) in place of OWNER/REPO", said)
 
     def test_G7_15_each_line_on_the_persons_screen_is_one_sentence_and_the_count_is_bound(self):
         # The owner's word (2026-11-23): twelve lines is a lot to read, so each is one plain sentence, and the count
@@ -7104,8 +7191,9 @@ class P1a(unittest.TestCase):
                                    "the last minute, and it may go on like this until GitHub's own time limit. Your "
                                    "two ways out: cancel it (on GitHub, from the run's page: "
                                    "https://github.com/example-org/example-repo/actions/runs/45100), or "
-                                   "give jobs more memory: `setup example-org/example-repo --limits <processors>,"
-                                   "<memory %>`")
+                                   "give jobs more memory: `setup example-org/example-repo --limits PROCESSORS,"
+                                   "PERCENT`, with the number of processors and the percent of memory in place of "
+                                   "PROCESSORS and PERCENT")
         # The held count stops rising (the job got its memory, or ended): no longer held, not named.
         run_cmd(M.watch, host=host, gh=StatusGH(busy=True))
         self.assertNotIn("memory_held", M.load_state(host)["runners"][REPO])
@@ -7645,7 +7733,7 @@ class G8Words(unittest.TestCase):
                                  isinstance(x, ast.Name) and x.id in ("C0", "C1") or
                                  isinstance(x, ast.Call) and isinstance(x.func, ast.Name) and x.func.id == "cmd")
                 if words.strip() == "start test:":
-                    continue  # its words are ZERO_JOB_WORDS, checked below
+                    continue  # its words are zero_job_words(), checked below
                 # R155: a line that opens with another program's command in backticks (`systemctl daemon-reload`
                 # failed: ...) named no step, yet its backtick passed as one. The command it quotes is not a step.
                 if not self.NEXT.search(re.sub(r"^\s*`[^`]*`", "", words)):
@@ -7653,7 +7741,7 @@ class G8Words(unittest.TestCase):
         self.assertEqual(lacking, [])
         for built in (M.settle_first(), M.came_back("x", "y", "z"), M.github_next(500, REPO), M.github_next(403, REPO),
                       M.unit_next("u", ("unread", "w"), "c"), M.unit_next("u", ("running", "active"), "c"),
-                      M.ZERO_JOB_WORDS, M.public_words(REPO, {"time": "t"}),
+                      M.zero_job_words(REPO), M.zero_job_words(None), M.public_words(REPO, {"time": "t"}),
                       M.memory_floor_line(REPO, {"MemoryMax": 1, "pct": 60, "mem": 2 * 1024 ** 3, "cores": 1}),
                       M.memory_floor_line(REPO, {"MemoryMax": 1, "pct": 60, "mem": 16 * 1024 ** 3, "cores": 1})):
             self.assertTrue(self.NEXT.search(as_said(built)), built)
@@ -8043,7 +8131,7 @@ class RuleTwo(unittest.TestCase):
                 self.assertTrue([x for x in st if x.startswith("warn what systemd made of") and "could not be read" in x], st)
         # a setting of the person's own in the watch's unit (a drop-in with a proxy address holding a
         # password, made up here): named by name only, a warn, never a stop; no line holds its value. A SECOND entry
-        # for the PATH this tool set (the later one wins at start) is a stop, and still no value is printed.
+        # for the PATH this tool set is a stop, said by its count only, and still no value is printed.
         secret = "made-up-secret-7f3a"
         for label, extra, kind in (("the person's own variable", f"HTTPS_PROXY=http://me:{secret}@proxy:3128", "warn"),
                                    ("a second PATH", f"PATH=/home/you/{secret}:/usr/bin", "stop")):
@@ -8109,6 +8197,22 @@ class RuleTwo(unittest.TestCase):
         self.assertEqual(kind, "unread", why)
         self.assertIn("the manager's bus gave no unit object for minions-watch.service", why)
         self.assertTrue(limits and all(t == M.BUS_WAIT_S for t in limits), limits)
+        # LoadUnit answers, a property call does not within its limit: "could not be read" again, and that call too
+        # had the limit
+        host, calls = FakeHost(), []
+        real_run = host.run
+        def late_property(argv, timeout=20):
+            if tuple(argv[:3]) == M.BUS:
+                calls.append((argv[3], timeout))
+                if argv[3] == "call":
+                    return 0, json.dumps({"type": "o", "data": ["/org/freedesktop/systemd1/unit/minions_2dwatch_2eservice"]})
+                return 127, M.Out("", f"Command {argv!r} timed out after {timeout} seconds")
+            return real_run(argv, timeout)
+        host.run = late_property
+        kind, why, own = M.unit_as_meant(host, "minions-watch.service", M.watch_meant("you", "/usr/bin"))
+        self.assertEqual(kind, "unread", why)
+        self.assertIn("the manager's bus gave no ExecStart for minions-watch.service", why)
+        self.assertEqual(calls, [("call", M.BUS_WAIT_S), ("get-property", M.BUS_WAIT_S)], calls)
         # a systemd older than the one whose busctl gives JSON: "could not be read", and the line says why
         host = FakeHost()
         host.runs[M.BUS] = lambda argv, input=None: (1, "busctl: unrecognized option '--json=short'")

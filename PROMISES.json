@@ -2415,6 +2415,20 @@
    "issue": 378,
    "moved_why": "Moved into 0.1.0 by the maintainer's word, 2026-11-25: a first release never goes out with such a place.",
    "moved_by_person": "the maintainer"
+  },
+  {
+   "id": "R193",
+   "seen": "2026-11-25, read in the code by the maintainer: steps this tool prints held a name in angle brackets (look <owner/repo> --start-test, setup <owner/repo> --limits <processors>,<memory %>, resume <owner/repo> --on-battery-too and others), also where the tool knew the repository's name. A shell takes angle brackets for its own, so a step pasted as printed ended in the shell's own error, never in the tool's.",
+   "promise": "Where the tool knows the value, the step carries it as one shell word; where it does not, no line the tool prints as a step holds an angle bracket: the placeholder is a plain word (OWNER/REPO, and PROCESSORS,PERCENT for the limits) and the line's own words say what to put there, so that a paste as printed ends in the tool's own refusal and never in a shell's. A test reads every string the tool can print, and the steps it prints in each state, and refuses one that holds a name in angle brackets.",
+   "codon": "G8.23",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G8_23_a_printed_step_never_holds_a_name_in_angle_brackets",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 381,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
