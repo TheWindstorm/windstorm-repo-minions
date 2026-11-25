@@ -2501,6 +2501,20 @@
    "issue": 386,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R199",
+   "seen": "2026-11-25, tried by the maintainer on a copy of the version test's reads: three spellings of a clone are not seen as a clone at all, so the test passes them in silence: git clone with two spaces between its words, git -C FOLDER clone, and gh repo clone OWNER/NAME.",
+   "promise": "The version test anchors on what cannot be spelled another way, this repository's own name: every code line of the README and the skill that holds its owner/name (letter case ignored) is a clone the test reads and checks, or a line of a shape on a short list of the test's own (such as the catalog line or a link), or the test fails naming the line.",
+   "codon": "G9.17",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 387,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
