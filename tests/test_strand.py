@@ -374,6 +374,28 @@ class Hygiene(unittest.TestCase):
                     f"git clone --branch v0.1.0 {url}", f"(git clone --branch v0.1.0 {url})"):
             self.assertEqual(vp.clone_options(own), ["--branch v0.1.0"], own)
             self.assertTrue(vp.clones_ours(own), own)
+            self.assertEqual(vp.clones_not_read(own), [], own)
+        # Every clone has three answers, never two (the maintainer's principle, 2026-11-25): this repository whole, read
+        # and checked with the letter case of host, owner and name ignored; an address listed in OTHERS; or NOT READ,
+        # and the version test fails naming the line. A sentence's closing marks end the address.
+        for form in (f"run git clone --branch v0.1.0 {url}.", f"run git clone --branch v0.1.0 {url}. Then look",
+                     f"run git clone --branch v0.1.0 {url}.git.", f"run git clone --branch v0.1.0 {url}... then",
+                     "`git clone --branch v0.1.0 https://github.com/thewindstorm/windstorm-repo-minions`",
+                     "`git clone --branch v0.1.0 https://GITHUB.COM/TheWindstorm/windstorm-repo-minions`",
+                     "`git clone --branch v0.1.0 git@github.com:TheWindstorm/windstorm-repo-minions.git`",
+                     "`git clone --branch v0.1.0 ssh://git@github.com/TheWindstorm/windstorm-repo-minions`"):
+            self.assertEqual(vp.clone_options(form), ["--branch v0.1.0"], form)
+            self.assertTrue(vp.clones_ours(form), form)
+            self.assertEqual(vp.clones_not_read(form), [], form)
+        # two clones on one line with no code span between them are two, never one
+        two = f"run git clone --branch v0.1.0 {url} or git clone {url}"
+        self.assertEqual(vp.clone_options(two), ["--branch v0.1.0", ""])
+        # not this repository whole, not listed: not read, and named by its line, never skipped
+        for other in (f"{url}-other", f"{url}s", f"{url}.github.io", f"{url}_x",
+                      "https://github.com/TheWindstorm/windstorm-pit-board", "a git clone of it"):
+            text = f"`git clone --branch v0.1.0 {other}`" if "://" in other else other
+            self.assertEqual(vp.clone_options(text), [], other)
+            self.assertEqual(vp.clones_not_read(text), [text], other)  # the line as it stands, named
         # (3) a status heading names this version, never one that only starts with it
         for heading in ("0.1.0-rc1, not released", "0.1.0+local", "0.1.0a", "0.1.01", "0.1.0.1", "0.1.0rc1"):
             self.assertFalse(vp.heading_names(heading, "0.1.0"), heading)

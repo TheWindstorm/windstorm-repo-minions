@@ -3063,7 +3063,10 @@ class G9Version(unittest.TestCase):
         # the tag, its release branch), so the line cannot drift at the next release.
         for rel in ("README.md", os.path.join("skills", "repo-minions", "SKILL.md")):
             with open(os.path.join(root, rel), encoding="utf-8") as f:
-                clones = version_places.clone_options(f.read())  # R194: one place for the gates' reads
+                text = f.read()
+            clones = version_places.clone_options(text)  # R194: one place for the gates' reads
+            # three answers, never two: ours whole, a listed other, or the test fails naming the line (R194)
+            self.assertEqual(version_places.clones_not_read(text), [], f"{rel}: a clone this test cannot read as ours")
             for opts in clones:
                 if M.VERSION == "0.0.0":
                     continue  # before the first release: main's README has no install lines (rule 15)
