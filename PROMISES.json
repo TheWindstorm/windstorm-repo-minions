@@ -2491,7 +2491,7 @@
   {
    "id": "R198",
    "seen": "2026-11-25, seen by the maintainer on a copy of the tool: two workflow file names for which no printed step moves the publishing job. A name that begins with a dash: the step as printed ends in the tool's own usage stop (argument --include-job: expected one argument, exit 64). A name holding a backtick: the move pull request's page shows each step in a code span and the backtick cuts it, so the step a person copies from GitHub's page is not the step printed.",
-   "promise": "For every workflow file name the tool prints a step for, the step as printed, and as copied from the pull request's page, moves that one job; where no step can, none is printed and the line says to rename the file, as for a name no command can name.",
+   "promise": "For every workflow file name the tool prints a step for, the step as printed, and as copied from the pull request's page, moves that one job; where no step can, none is printed and the line says to rename the file, as for a name no command can name. On the pull request's page every name the tool did not write is kept inside its code span, in every list of the page (the jobs moved, the jobs left, the publishing jobs, the jobs already here), not only in a step.",
    "codon": "G3.9",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
