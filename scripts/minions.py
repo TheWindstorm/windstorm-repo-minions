@@ -5815,16 +5815,19 @@ def leave_folders(host: Host, rep: Report | None = None) -> list[tuple[str, str,
     in it is ours. "tool": only this tool writes there (as root, or as you): ours is what it wrote, by exact name
     (a name to "file" or "dir"); anything else stays with the folders above it. "runner": a job can write there (as
     the runner user): ours is what the runner user owns; anything else stays. The test walks this list."""
-    bases = sorted({os.path.basename(f.rstrip("/")) for f in known_folders(host, rep)}.union({
-        # R136 (fault 2): a runner's folders an earlier uninstall left (the person's record says so) are still ours by
-        # name in the folders above them, though the state that named them is gone
-        os.path.basename(f) for f, k in ((f, stayed_shape(f)) for f in stayed_on_record(host)[0])
-        if f != f"/home/{RUNNER_USER}" and k == "runner" or os.path.dirname(f) == HOOKS_ROOT}))
+    known = {os.path.basename(f.rstrip("/")) for f in known_folders(host, rep)}
+    # R136 (fault 2; the owner's change 3, LIMIT): a runner's folders an earlier uninstall left (left-behind.txt in the
+    # person's record) are still ours by name in this tool's two root-owned folders: in HOOKS_ROOT/<name>, the two
+    # fixed hook files, and that folder; in RECORDS_ROOT, a folder of that name. Each folder only by rmdir (EMPTY); no
+    # other file by that name (seen/<name> is not), and nothing in a folder a job could write
+    told = {os.path.basename(f) for f, k in ((f, stayed_shape(f)) for f in stayed_on_record(host)[0])
+            if f != f"/home/{RUNNER_USER}" and k == "runner" or os.path.dirname(f) == HOOKS_ROOT} - known
+    bases = sorted(known.union(told))
     hooks = {"job-started.sh": "file", "job-completed.sh": "file"}
     out = [(f, "runner", {}) for f in known_folders(host, rep)]
     out += [(records_dir_of(f), "runner", {}) for f in known_folders(host, rep)]
     out += [(f"{HOOKS_ROOT}/{b}", "tool", hooks) for b in bases]
-    out += [(SEEN_ROOT, "tool", {b: "file" for b in bases})]
+    out += [(SEEN_ROOT, "tool", {b: "file" for b in sorted(known)})]
     out += [(RECORDS_ROOT, "tool", {"seen": "dir", **{b: "dir" for b in bases}})]
     out += [(f"/home/{RUNNER_USER}", "runner", {})]
     out += [(HOOKS_ROOT, "tool", {"minions.py": "file", **{b: "dir" for b in bases}})]
@@ -5915,14 +5918,17 @@ def clear_folder(host: Host, path: str, kind: str, names: dict, rep: Report) -> 
 
 
 def give_rights_back(host: Host, starts: list[str]) -> None:
-    """R136 (the owner's fault 1, LIMIT): as the runner user only, only on folders it owns inside each start, one file
-    system, no link followed (find -P; -type d is never a link); `;` so a folder is opened only after its right is back."""
-    as_runner(host, ["find", *starts, "-xdev", "-mindepth", "1", "-type", "d", "-user", RUNNER_USER, "!", "-perm",
-                     "-u+rwx", "-exec", "chmod", "u+rwx", "{}", ";"])
+    """R136 (the owner's fault 1, LIMIT, widened 2026-11-25: the folder being cleared is included): as the runner user
+    only, only on folders it owns, each start and what is inside it, one file system, no link followed (find -P: a
+    start that is a link is the link itself, and -type d never matches a link); `;` so a folder is opened only after
+    its right is back. A start of root's (/tmp, /var/tmp, /dev/shm) is not the runner user's, so it is not changed."""
+    as_runner(host, ["find", *starts, "-xdev", "-type", "d", "-user", RUNNER_USER, "!", "-perm", "-u+rwx", "-exec",
+                     "chmod", "u+rwx", "{}", ";"])
 
 
-HANDED_ONLY = {"handed", "public_handed", "public_links", "home_not_handed"}  # R136: what root was handed is not, alone,
-# what stayed for not being ours (the runner user's own kept records, handed so no number without a user owns them)
+HANDED_ONLY = {"handed", "public_handed", "public_unlisted", "public_listed", "home_not_handed"}
+# R136: what root was handed is not, alone, what stayed for not being ours (the runner user's own kept records,
+# handed so no number without a user owns them)
 LEFT_BEHIND = "left-behind.txt"  # R136: in the person's record, the whole list of what stayed at each uninstall
 
 
@@ -5967,8 +5973,11 @@ def stayed_shape(folder: str) -> str:
 def stayed_on_record(host: Host) -> tuple[dict, str]:
     """R136 (the owner's fault 2, 2026-11-25): what stayed at an earlier uninstall, as left-behind.txt says it (this
     tool's own file in the person's record; uninstall --all deletes the state, the record stays): {folder: (time,
-    [what])}, each folder as its latest uninstall named it, and why it could not be read (the third answer). Words
-    only: nothing is deleted or changed on its word. No file: {} (today's words for what no record names stand)."""
+    [what])}, each folder as its latest uninstall named it, and why it could not be read (the third answer). A source
+    of names (the owner's change 3): a line not of the shape of a folder this tool empties is not read; by a name read
+    here root removes only the two fixed hook files (job-started.sh, job-completed.sh) and an EMPTY folder of that
+    name, inside this tool's two root-owned folders (leave_folders); nothing in a folder a job could write. A file there
+    that could not be read stops the leave before anything changes (names_unread). No file: {} (today's words stand)."""
     text, why = host.read_checked(left_behind_path(host))
     if why:
         return {}, why
@@ -6174,7 +6183,7 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
             if answer == "stays":
                 foreign_stayed(rep, path, kind, what)
             elif answer == "unread":
-                left.append(f"{path} ({'; '.join(what)})")
+                left.append(f"{path} ({'; '.join(w.replace(' (read back after its delete)', '') for w in what)})")
             elif answer == "link":
                 linked.append(path)
     if left:
@@ -6800,6 +6809,7 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-delete"])
         rc, out = as_runner(host, ["find", *PUBLIC_TMP, "-xdev", "-user", RUNNER_USER, "-print0"])  # item 4: NUL
         files = [x for x in nul_items(out) if x.startswith(tuple(t + "/" for t in PUBLIC_TMP))]
+        rep.stayed["public_listed"] = files  # R136 (change 2): the census says what root's walk found beyond this list
         # R167: find exits 1 when a folder it may not enter was met (systemd's private folders in /tmp, on any stock
         # system), and still lists the rest; any other exit is not a list
         if rc not in (0, 1):
@@ -6923,9 +6933,9 @@ def hand_to_root(host: Host, uid: str, rep: Report) -> list[str]:
     owned by the runner user's number, which a later account could be given, each such thing is handed to root. Below
     the home (not the home's own folder: hand_home_to_root), the records root and each folder that stayed: find -xdev,
     following no link, and chown -h by -execdir, which hands chown the name in its own folder, never a whole path through
-    folders another user may own. In the public places: only the exact paths listed, each read once more in the same
-    call as not a link and of that number. Each hand is read back; what is still of that number (a link aside, never
-    followed, named) is answered, and the caller does not delete the user. Answers what failed, [] when none did."""
+    folders another user may own. In the public places: one walk from each of their own tops (the owner's change 2).
+    Each hand is read back (a link is handed itself, never followed); what is still of that number is answered, and
+    the caller does not delete the user. Answers what failed, [] when none did."""
     if not uid or not uid.isdigit():
         return [f"its number could not be read ({uid or 'nothing'}), so nothing of it could be handed to root"]
     home = f"/home/{RUNNER_USER}"
@@ -6952,24 +6962,31 @@ def hand_to_root(host: Host, uid: str, rep: Report) -> list[str]:
             for x in got:
                 at = next((f for f in stayed if x == f or x.startswith(f + "/")), path)
                 handed[at] = handed.get(at, 0) + 1
-    public = [p_ for p_, _ in rep.stayed.get("public") or []]
-    if public:
-        rc, out = sudo(host, ["find", *public, "-maxdepth", "0", "!", "-type", "l", "-uid", uid, "-print0", "-execdir",
-                              "chown", "-h", "root:root", "{}", "+"])
-        rep.stayed["public_handed"] = [x for x in nul_items(out) if x in public]
-        rc2, still = sudo(host, ["find", *public, "-maxdepth", "0", "-uid", uid, "-printf", "%y\t%p\\0"])
-        if rc2 not in (0, 1):  # 1: a listed path gone since, or one not read: what is left is read below
-            failed.append(f"whether its things in {', '.join(PUBLIC_TMP)} are handed to root could not be read (find "
+    # R136 (the owner's change 2, 2026-11-25): the public places are walked from their own tops, root's folders, one
+    # walk each, one file system, no link followed: below a start, find opens each folder by its name from its parent's
+    # own handle, without following a link, and -execdir runs chown from that handle; so no path root hands chown
+    # passes through a folder of another user's (a start path given by name would, by a second open the trace showed).
+    # What is of the runner user's number there is handed (a link itself, never its target); nothing is deleted and
+    # nothing of another number changed; read back by the same walk with no -execdir.
+    tops_ = [t for t in PUBLIC_TMP if root_test(host, t)]
+    if tops_:
+        rc, out = sudo(host, ["find", *tops_, "-xdev", "-uid", uid, "-print0", "-execdir", "chown", "-h", "root:root",
+                              "{}", "+"])
+        gave = [x for x in nul_items(out) if x.startswith(tuple(t + "/" for t in tops_))]
+        rc2, still = sudo(host, ["find", *tops_, "-xdev", "-uid", uid, "-print0"])
+        left = [x for x in nul_items(still) if x.startswith(tuple(t + "/" for t in tops_))]
+        if rc2 != 0:
+            failed.append(f"whether its things in {', '.join(tops_)} are handed to root could not be read (find "
                           f"answered code {rc2}: {tail(still) or 'nothing'})")
+        elif left:
+            more = f" and {len(left) - LEFT_ON_SCREEN} more" if len(left) > LEFT_ON_SCREEN else ""
+            failed.append(f"its things {', '.join(plain(x)[0] for x in left[:LEFT_ON_SCREEN])}{more} in "
+                          f"{', '.join(tops_)} could not be handed to root (find answered code {rc}: "
+                          f"{tail(out) or 'nothing'})")
         else:
-            links, kept = [], []
-            for x in nul_items(still):
-                y, _, p_ = x.partition("\t")
-                (links if y == "l" else kept).append(p_)
-            rep.stayed["public_links"] = [p_ for p_ in links if p_ in public]
-            if [p_ for p_ in kept if p_ in public]:
-                failed.append(f"its things {', '.join(p_ for p_ in kept if p_ in public)} could not be handed to root "
-                              f"(find answered code {rc}: {tail(out) or 'nothing'})")
+            listed = set(rep.stayed.get("public_listed") or [])
+            rep.stayed["public_handed"] = gave
+            rep.stayed["public_unlisted"] = [x for x in gave if x not in listed]
     if handed:
         rep.stayed["handed"] = handed
     return failed
@@ -7276,20 +7293,20 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     for src, f in rep.stayed.get("refused") or []:  # R136 (item 4): a name that failed its check, named
         rep.ok(f"census: {f!r}, named as a runner's folder in {src}: not the shape of a folder this tool makes "
                f"(directly in {RUNNERS_HOME}, no '..'), so it is not deleted, and nothing in it or by its name is")
-    if public:  # R136 (item 2): only what holds, or sits in, a thing the runner user did not make; root deleted nothing
+    gave = rep.stayed.get("public_handed") or []
+    unlisted = rep.stayed.get("public_unlisted") or []
+    if public or gave:  # R136 (item 2; change 2): what stayed of the runner user's there, and root's walk's hand
         more = f" and {len(public) - LEFT_ON_SCREEN} more" if len(public) > LEFT_ON_SCREEN else ""
-        gave = rep.stayed.get("public_handed") or []
-        links = rep.stayed.get("public_links") or []
-        one = len(links) == 1
-        rep.ok(f"census: in {PUBLIC_KEY}: kept: "
-               + ", ".join(f"{p_} ({w})" for p_, w in public[:LEFT_ON_SCREEN]) + more
-               + "; that stays" + (f" (the whole list is in {listed})" if listed and more else "")
-               + (f"; {len(gave)} of {len(public)} handed to root, as the user they belonged to is deleted" if gave
-                  else "; none handed to root" + ("" if links else " (none was still of that user's number when read again)"))
-               + ((("; " if gave else ": ") + f"{', '.join(links)} {'was' if one else 'were'} read again as a link, so "
-                   f"{'it was' if one else 'they were'} not followed and {'its' if one else 'their'} owner was not "
-                   "changed") if links else ""))
-    elif PUBLIC_KEY in earlier:  # R136 (fault 2): said again from the record; root reads nothing there to say it
+        rep.ok(f"census: in {PUBLIC_KEY}: "
+               + ("kept: " + ", ".join(f"{p_} ({w})" for p_, w in public[:LEFT_ON_SCREEN]) + more + "; that stays"
+                  + (f" (the whole list is in {listed})" if listed and more else "") + "; " if public else "")
+               + (f"{plural(len(gave), 'thing')} of the runner user's number handed to root, as that user is deleted"
+                  + (", " + ("it was" if len(gave) == 1 else f"{len(unlisted)} of them were") + " not in that user's "
+                     f"own listing (it could not read where {'it sits' if len(unlisted) == 1 else 'they sit'})"
+                     if unlisted else "")
+                  if gave else "nothing of the runner user's number was left there to hand to root (root's walk, "
+                  "read back)"))
+    if not (public or gave) and PUBLIC_KEY in earlier:  # R136 (fault 2): said again from the record; root reads nothing there to say it
         stamp, what = earlier[PUBLIC_KEY]
         more = f" and {len(what) - LEFT_ON_SCREEN} more" if len(what) > LEFT_ON_SCREEN else ""
         rep.ok(f"census: in {PUBLIC_KEY}: kept: {', '.join(what[:LEFT_ON_SCREEN])}{more}; that stays (as the uninstall of "
