@@ -2457,6 +2457,20 @@
    "issue": 383,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R197",
+   "seen": "2026-11-25, read in the code by the maintainer: move took each --include-job word only as something to look for among its jobs. A word that names no job of the repository (a mistyped file or job name, or a path where the file's own name goes) was said nowhere: move opened its pull request as if the word had not been given, and the publishing job the person meant stayed where it was.",
+   "promise": "An --include-job word that matches no job is never passed in silence. move stops before its first write (no branch, no pull request), names each word that matched nothing (shown changed where it holds a character a terminal acts on), and gives the one step, look, which prints the exact step for each job that moves only with such a word. A word that names a job that would move anyway is matched and says nothing. Only the words of --include-job gain this check. A test gives the path form as GitHub shows a workflow file, a mistyped name, a good word beside a bad one and a word holding a backtick: each stops, and nothing is written.",
+   "codon": "G3.8",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 385,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

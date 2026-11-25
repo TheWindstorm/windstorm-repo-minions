@@ -2273,6 +2273,38 @@ class G3(unittest.TestCase):
         self.assertIn("rename the file on GitHub to a name without it, then run", line)
         self.assertIn(f"`look {REPO}`", line)
 
+    def test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write(self):
+        # Row R197 (read in the code by the maintainer, 2026-11-25): a word of --include-job that matched no job was
+        # passed in silence, and move opened its pull request as if it had not been given. Now it stops before the
+        # first write: no branch, no pull request; each unmatched word named (shown changed where it holds a
+        # character a terminal acts on), and look as the one step, the command last on its line.
+        for words, bad in (([".github/workflows/release.yml:publish"], [".github/workflows/release.yml:publish"]),
+                           (["relase.yml:publish"], ["relase.yml:publish"]),
+                           (["release.yml:publish", "deploy.yml:sit"], ["deploy.yml:sit"]),
+                           (["deploy.yml:sit", "relase.yml:publish", "deploy.yml:sit"], ["deploy.yml:sit", "relase.yml:publish"]),
+                           (["rel`ease.yml:publish"], ["rel'ease.yml:publish"])):
+            gh = MoveGH(self.FILES)
+            out = Out()
+            code = M.move(REPO, host=move_host(), gh=gh, out=out, include=words)
+            printed = out.printed()
+            self.assertEqual(code, M.EXIT_STOP, printed)
+            self.assertEqual(gh.writes, [], words)  # nothing is opened: no branch, no commit, no pull request
+            self.assertFalse([c for c in gh.calls if c[0] != "GET"], words)
+            (stop,) = [x for x in printed if x.startswith("stop ")]
+            n = len(bad)
+            self.assertIn(f"--include-job: {n} word{'s' if n > 1 else ''} given {'match' if n > 1 else 'matches'} "
+                          f"no job of {REPO} ({', '.join(bad)})", stop)
+            self.assertIn("no pull request was opened", stop)
+            self.assertNotIn("release.yml:publish,", stop.replace("relase.yml:publish", ""))  # the good word is not named
+            self.assertEqual(printed[-1], f"look {REPO}", printed)  # the one step, alone and last
+            self.assertEqual("(shown changed" in stop, "`" in words[0], stop)
+        # a word that names a job that would move anyway is matched and says nothing; the pull request is opened
+        gh = MoveGH(self.FILES)
+        code, lines = run_move(gh, move_host(), include=["ci.yml:test"])
+        self.assertEqual(code, M.EXIT_NEED, lines)
+        self.assertFalse([x for x in lines if "--include-job" in x or "ci.yml:test" in x], lines)
+        self.assertTrue(any(p.endswith("/pulls") for _, p, _ in gh.writes))
+
     def test_G3_7_verify_counts_a_job_on_another_computer_of_ours(self):
         # Seen 2026-11-23 (run I, row R114): two computers of ours served one repository; the other one took the
         # moved job and verify said it did not move. A runner of ours elsewhere counts, and is named; one GitHub no
@@ -9568,7 +9600,8 @@ class ZRule31(unittest.TestCase):
                           "test_rule_31_vi_an_answer_that_is_not_text_is_read_and_shown_changed_never_a_traceback",
                           "test_rule_31_vi_a_line_ends_at_a_line_feed_every_command_reads_one_item_as_one",
                           "test_G6_19_a_name_with_a_line_feed_is_one_name",
-                          "test_G8_23_the_move_pages_step_moves_that_one_job")  # R193: a file name planted with U+200B
+                          "test_G8_23_the_move_pages_step_moves_that_one_job",  # R193: a file name planted with U+200B
+                          "test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write")  # R197: a backtick
 
     def test_rule_31_every_line_every_road_printed(self):
         bad, odd_starts, commands_seen = [], set(), 0

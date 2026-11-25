@@ -5763,6 +5763,19 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     survey_ = entry.get("survey") or {}
     system, machine = survey_.get("system") or host.system(), survey_.get("machine") or host.machine()
     inc = set(include or [])
+    # R197: a word of --include-job that matches no job's key is never passed in silence. It stops here, before the
+    # first write (no branch, no pull request), naming each such word, with the one step: look prints each job's step.
+    # A word that names a job that would move anyway is matched and says nothing; no other option gains a check.
+    keys = {include_key(path, job["id"]) for path, text in files for job in read_workflow(text)}
+    unmatched = [w for w in dict.fromkeys(include or []) if w not in keys]
+    if unmatched:
+        n = len(unmatched)
+        rep.stop(f"--include-job: {n} word{'s' if n > 1 else ''} given {'match' if n > 1 else 'matches'} no job of "
+                 f"{repo} (" + ", ".join(w or "an empty word" for w in unmatched) + "), so nothing was changed and no "
+                 "pull request was opened. A word is a workflow file's own name (never its path), a colon and the "
+                 "job's id; look prints the exact step for each job that moves only with your word: "
+                 f"{C0}look {repo_word(repo)}{C1}")
+        return rep.code()
     moved, left, publish, here, changed, plan = [], [], [], [], {}, {}
     for path, text in files:
         triggers = read_triggers(text)
