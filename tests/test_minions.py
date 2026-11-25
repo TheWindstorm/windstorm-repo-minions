@@ -2298,6 +2298,31 @@ class G3(unittest.TestCase):
             self.assertNotIn("release.yml:publish,", stop.replace("relase.yml:publish", ""))  # the good word is not named
             self.assertEqual(printed[-1], f"look {REPO}", printed)  # the one step, alone and last
             self.assertEqual("(shown changed" in stop, "`" in words[0], stop)
+        # a word for a job in a workflow file this run could not read (not UTF-8) is not known to match no job, and
+        # the stop says so for that word; a plain typo beside it still matches no job; one stop, look's step last
+        gh = MoveGH({".github/workflows/ci.yml": CI_YML, ".github/workflows/ff.yml": ""})
+        real = gh.api
+
+        def api(method, path, body=None):
+            if method == "GET" and path.split("?")[0].endswith("/contents/.github/workflows/ff.yml"):
+                gh.calls.append((method, path))
+                return 200, {"content": M.base64.b64encode(b"name: x\xff\non: [push]\n").decode()}
+            return real(method, path, body)
+        gh.api = api
+        out = Out()
+        code = M.move(REPO, host=move_host(), gh=gh, out=out, include=["ff.yml:build", "ci.yml:tset"])
+        printed = out.printed()
+        self.assertEqual(code, M.EXIT_STOP, printed)
+        self.assertEqual(gh.writes, [])
+        self.assertFalse([c for c in gh.calls if c[0] != "GET"])
+        (stop,) = [x for x in printed if x.startswith("stop ")]
+        self.assertIn(f"--include-job: 1 word given matches no job of {REPO} (ci.yml:tset); and 1 word given names a "
+                      "workflow file this run could not read (ff.yml:build), so whether it names a job there is not "
+                      "known (the line above for that file says why, and its step)", stop)
+        self.assertNotIn("ff.yml:build)", stop.split("; and ")[0])  # never "matches no job" for the unread file
+        warn = next(i for i, x in enumerate(printed) if x.startswith(f"warn .github/workflows/ff.yml: {M.NOT_TEXT_IS}"))
+        self.assertLess(warn, printed.index(stop))
+        self.assertEqual(printed[-1], f"look {REPO}", printed)
         # a word that names a job that would move anyway is matched and says nothing; the pull request is opened
         gh = MoveGH(self.FILES)
         code, lines = run_move(gh, move_host(), include=["ci.yml:test"])
