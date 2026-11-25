@@ -2473,6 +2473,34 @@
    "issue": 380,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R196",
+   "seen": "2026-11-25, read in the code by the maintainer: where a person's own drop-in sets a variable the watch's unit sets (its PATH), systemd's list holds that variable once, with the value written last, which is the person's. Setup's and status's read-back then stop with \"its PATH entry is not the value this tool wrote\" and print no value; the line names systemctl cat for the unit as its step, does not say how many drop-in files stand on the unit, and ends with uninstall --all as the step if the line comes back the same.",
+   "promise": "The stop names the variable and how many drop-in files stand on the unit, never a value. Its step is the manager's own listing of the unit and its drop-ins, a line made of this tool's own unit name. It never sends the person to uninstall, or to run setup again where setup would write the same file, over a setting of their own.",
+   "codon": "G5.29",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 384,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R198",
+   "seen": "2026-11-25, seen by the maintainer on a copy of the tool: two workflow file names for which no printed step moves the publishing job. A name that begins with a dash: the step as printed ends in the tool's own usage stop (argument --include-job: expected one argument, exit 64). A name holding a backtick: the move pull request's page shows each step in a code span and the backtick cuts it, so the step a person copies from GitHub's page is not the step printed.",
+   "promise": "For every workflow file name the tool prints a step for, the step as printed, and as copied from the pull request's page, moves that one job; where no step can, none is printed and the line says to rename the file, as for a name no command can name.",
+   "codon": "G3.9",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 386,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
