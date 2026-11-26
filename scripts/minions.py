@@ -3781,13 +3781,14 @@ def unit_now(host: Host, unit: str) -> tuple[str, str, bool]:
 def own_unit_files(host: Host) -> tuple[list[str] | None, str]:
     """R210: the unit files of this tool's naming forms on this computer, read from systemd's list of unit FILES: a
     unit that is disabled and does not run is often not loaded, so not in list-units (seen on systemd 255). Read with
-    systemd's own legend, whose last line counts what it listed ("N unit files listed.", on standard output, exit 0,
-    or exit 1 for none, as systemd 255 answers): three answers, the names; none; None with why, when that line is not
-    there (a warning on standard error is never read as the answer)."""
+    systemd's own legend, whose last line counts what it listed ("N unit files listed.", on standard output): that
+    line is the answer, at exit 0 and at exit 1 alike (seen on systemd 249, 255 and 259: exit 1 for none, exit 0 for
+    some; exit 0 with none listed is read as none too). Three answers: the names; none (0 listed); None with why, at
+    any other exit or with no such line (a warning on standard error is never read as the answer)."""
     rc, out = host.run(systemctl("list-unit-files", "actions.runner.*", "minions*"))
     rows = [x for x in lines_of(out) if x.strip(BLANKS)]
     m = re.fullmatch(r"(\d+) unit files? listed\.", rows[-1].strip(BLANKS)) if rows else None
-    if rc in (0, 1) and m and (int(m.group(1)) == 0) == (rc == 1):
+    if rc in (0, 1) and m:
         names = sorted({words_of(x)[0] for x in rows[:-1] if not x.startswith("UNIT FILE")})
         if len(names) <= int(m.group(1)):
             return names, ""

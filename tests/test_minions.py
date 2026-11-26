@@ -12095,6 +12095,40 @@ class G6Lost(unittest.TestCase):
                                              "the user minions-runner. 1 process of the user minions-runner runs now"),
                         lines[-1])
 
+    def test_G6_38_the_unit_files_read_is_systemd_s_count_line_at_exit_0_and_at_exit_1(self):
+        # systemd's count line is the answer whichever of exit 0 and exit 1 it ends with (systemd 249, 255 and 259
+        # end 1 for none; an older one may end 0): "0 unit files listed." is none, "N unit files listed." the names.
+        # Any other exit, or no count line, is not read. Both exits for none give every command the same lines.
+        one = ("UNIT FILE STATE VENDOR PRESET\nactions.runner.example-org-example-repo.minions-box-1.service "
+               "disabled enabled\n\n1 unit files listed.\n")
+        unit = "actions.runner.example-org-example-repo.minions-box-1.service"
+        cases = [((1, LUF_NONE), []), ((0, LUF_NONE), []), ((0, one), [unit]), ((1, one), [unit]),
+                 ((2, LUF_NONE), None), ((0, ""), None), ((1, ""), None),
+                 ((1, "Failed to connect to bus: No such file or directory\n"), None),
+                 ((0, "UNIT FILE STATE VENDOR PRESET\n" + unit + " disabled enabled\n"), None)]
+        for answer, names in cases:
+            with self.subTest(answer=answer):
+                host, _sha = setup_host(runs={("systemctl", "list-unit-files"): answer})
+                got, why = M.own_unit_files(host)
+                self.assertEqual(got, names, why)
+                self.assertEqual(why == "", names is not None, why)
+        commands = {
+            "status": lambda h, o: M.status(REPO, host=h, gh=StatusGH(), out=o),
+            "doctor": lambda h, o: M.doctor(None, host=h, gh=StatusGH(), out=o, interactive=True),
+            "uninstall REPO": lambda h, o: M.uninstall(REPO, host=h, gh=StatusGH(), out=o, interactive=True),
+            "uninstall --all": lambda h, o: M.uninstall(None, everything=True, host=h, gh=StatusGH(), out=o,
+                                                        interactive=True),
+        }
+        for name, run in commands.items():
+            with self.subTest(command=name):
+                seen = []
+                for rc in (1, 0):
+                    host, _sha = setup_host(runs={("systemctl", "list-unit-files"): (rc, LUF_NONE)})
+                    out = Out()
+                    seen.append((run(host, out), out.getvalue()))
+                self.assertNotIn("Not read", seen[1][1])
+                self.assertEqual(seen[1], seen[0])
+
     def test_G6_38_a_unit_s_two_reads_have_three_answers_each(self):
         # Whether it runs now (is-active) and whether it starts at a restart (is-enabled): yes, no, or not read,
         # with what systemctl answered; an answer that is not one of the known words is never taken for no, and
