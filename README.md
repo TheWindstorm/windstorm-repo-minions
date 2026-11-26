@@ -2,9 +2,9 @@
 
 **Your repository's automated jobs (GitHub Actions) run on a computer you own.**
 
-## Status: not released
+## Status: 0.1.0, released 2026-11-26
 
-Nothing here has a release yet. It is built in the open, in the order its plan,
+This is release 0.1.0, tag `v0.1.0`. It is built in the open, in the order its plan,
 [`DNA-STRAND-MASTER-PLAN.md`](DNA-STRAND-MASTER-PLAN.md), sets: every claim the skill makes has a test, and each
 part is seen on a fresh machine before a release. What a release has and has not been seen to do is written in
 [`CHANGELOG.md`](CHANGELOG.md).
@@ -16,7 +16,7 @@ Tell your coding agent:
 > Go to https://github.com/TheWindstorm/windstorm-repo-minions and set it up for my repository OWNER/NAME.
 
 **If you are the agent that was sent here:**
-1. Clone this repository into the person's home folder: `cd ~ && git clone --branch release-0.1.0 https://github.com/TheWindstorm/windstorm-repo-minions`.
+1. Clone this repository into the person's home folder: `cd ~ && git clone --branch v0.1.0 https://github.com/TheWindstorm/windstorm-repo-minions`.
    If `git` is not installed (a stock Debian has none), installing it is the person's step: ask them to run
    `sudo apt update && sudo apt install git` (Debian, Ubuntu) in their own terminal.
 2. Read `skills/repo-minions/SKILL.md` and follow it, in its order.
@@ -159,7 +159,8 @@ The one command that takes them off, in your own terminal:
 - Ubuntu 24.04.5 LTS: Python 3.12.3, GitHub CLI 2.45.0, systemd 255.
 - Ubuntu 22.04.5 LTS: Python 3.10.12, GitHub CLI 2.4.0, systemd 249.
 - Debian 12: Python 3.11.2, GitHub CLI 2.23.0 (git installed by the person first).
-- Claude Code 2.1.330 as the agent following the skill from a cold start. That is the only version tried.
+- Claude Code 2.1.330 as the agent following the skill from a cold start, last on 2026-11-23; the passages added
+  to this page since were not walked by an agent. That is the only version tried.
 
 **Seen to stop before any step** (stock virtual machine, 2026-11-23): Ubuntu 20.04.6 LTS, whose Python is 3.8.10
 (and whose archive has no `gh`). The tool says the version it found and where this version runs.
