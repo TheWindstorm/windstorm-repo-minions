@@ -28,8 +28,8 @@ the cap (row R94).
   after uninstall (row R132).
 - No line says the job hook refuses a job without saying a job that already ran here can switch that hook off; the
   watch, which runs as you, is the gate (row R133).
-- A file of yours in the tool's folders, or a `minions-runner` the tool did not make, no longer stops `uninstall`:
-  it stays, named in the census as yours with why, and uninstall finishes (row R136).
+- A file of yours in the tool's folders, or a `minions-runner` the tool's record does not show it made, no longer
+  stops `uninstall`: it stays, named in the census with why, and uninstall finishes (row R136).
 - Setup says which system packages were added while the runner's own dependency script ran (read from the
   system's package list before and after it), and `uninstall --all` names them as kept: they are installed for the
   whole system, and another program may use them by then (row R139).
@@ -109,6 +109,15 @@ the cap (row R94).
   `setup` gives the step that ends that stop for its kind (for the person's own file: move it, never remove it).
   `uninstall --delete-record` names the kept files before the word is typed. Before, those lines were deleted
   with the folder and nothing was said (row R209).
+- On a computer that holds what carries the tool's own names (its runner user, a runner service of its naming
+  form, their folders) and no record of the tool here names it, no line says the tool did not make it or that it
+  is yours: each says what was read. `status`, `doctor`, `drain`, `resume`, `uninstall` of a repository and `setup`
+  stop before any change, naming whether that service runs now and starts at a restart, the repository its name
+  carries (GitHub may still list a runner for it), the README's list of what the tool makes on a computer and where
+  GitHub lists runners. No step deletes the runner user while such a service is here or a process of that user runs.
+  `uninstall --all` says before it starts what it will leave, and no longer ends saying the tool is off
+  this computer while such a service stays. Before, `status` sent the person to `setup`, whose step deleted a
+  user whose runner was running (row R210).
 - Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
   path of Claude Code's own list of plugins and the plugin's name, never its version folder, and the tool says the
   skill was removed from Claude Code only when that list was read and names it nowhere: an update of the plugin says
