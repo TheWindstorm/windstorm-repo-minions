@@ -26,7 +26,16 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: |
-          for t in tests/test_*.py; do python "$t" -v || exit 1; done
+          # R169 (the gate recipe's ninth case): a test process that ends early with exit 0 (os._exit, a parent
+          # leaving after a fork) writes no summary: green only with each file's own "Ran" and "OK" lines, and the
+          # gate's own last line, which it writes only after its whole run has ended
+          set -o pipefail
+          for t in tests/test_*.py; do
+            log="$RUNNER_TEMP/$(basename "$t").log"
+            python "$t" -v 2>&1 | tee "$log" || exit 1
+            grep -qE '^Ran [0-9]+ tests? in ' "$log" && grep -qE '^OK( \(.*\))?$' "$log" || { echo "::error::$t ended without its runner's summary: a run that ends early is not a pass"; exit 1; }
+          done
+          tail -n 1 "$RUNNER_TEMP/test_strand.py.log" | grep -qE '^gate: passed: ' || { echo "::error::the gate's own last line is not there: it did not run to its end"; exit 1; }
   release-place:
     runs-on: ubuntu-24.04
     steps:
@@ -44,10 +53,24 @@ jobs:
               if [ -n "$other" ]; then echo "::error::$BRANCH differs from main outside README, changelog and manifest:"; echo "$other"; exit 1; fi
               echo "ok $BRANCH differs from main only in: $(git diff --name-only origin/main HEAD | tr '\n' ' ')" ;;
             *)
-              if grep -nE 'git clone|minions\.py (look|setup|move)' README.md; then
-                echo "::error::README on $BRANCH carries install lines; before a release they live on the release branch only"; exit 1
+              # Before a release, install lines live on the release branch only (rule 15). After it, main's README
+              # may carry them, every clone pinned to a version tag that exists here (rule 16: never main).
+              if ! grep -qE 'git clone|minions\.py (look|setup|move)' README.md; then echo "ok README on $BRANCH has no install lines"; exit 0; fi
+              # Each clone is counted, not each line (R194: two on one line were one), and a pinned one is of this
+              # repository only: an optional .git, then no character a repository's name can hold.
+              clones=$({ grep -oE 'git clone' README.md || true; } | wc -l)
+              pinned=$({ grep -oE 'git clone --branch v[0-9]+\.[0-9]+\.[0-9]+ https://github\.com/TheWindstorm/windstorm-repo-minions(\.git)?([^A-Za-z0-9_.-]|$)' README.md || true; } | wc -l)
+              tags=$(grep -oE 'git clone --branch v[0-9]+\.[0-9]+\.[0-9]+ ' README.md | awk '{print $4}' | sort -u)
+              if [ "$clones" -eq 0 ] || [ "$clones" -ne "$pinned" ]; then
+                grep -nE 'git clone|minions\.py (look|setup|move)' README.md
+                echo "::error::README on $BRANCH carries install lines; on main every clone names a released version tag (--branch vX.Y.Z)"; exit 1
               fi
-              echo "ok README on $BRANCH has no install lines" ;;
+              # Rule 6: each tag is read from this repository on GitHub: there, not there, or could not be read.
+              for t in $tags; do
+                if ! seen=$(git ls-remote --tags origin "refs/tags/$t"); then echo "::error::README on $BRANCH clones $t; this repository's tags could not be read, so it is refused"; exit 1; fi
+                if [ -z "$seen" ]; then echo "::error::README on $BRANCH clones $t, which is not a tag of this repository yet"; exit 1; fi
+              done
+              echo "ok README on $BRANCH carries install lines pinned to released tags: $(echo $tags)" ;;
           esac
   skill-spec:
     runs-on: ubuntu-24.04
