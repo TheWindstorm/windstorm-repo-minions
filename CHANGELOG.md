@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.1.0 (the tag's day, New York)
+## 0.1.0 (2026-11-26)
 
 The first release. Linux with systemd; one private repository per computer. Every row due in 0.1.0 in
 `PROMISES.json` has its test, and each row says whether, where and how it was seen on a real machine. They were
 seen on stock virtual machines (Ubuntu 24.04.5, Ubuntu 22.04.5, Debian 12) against a private repository, with
-Claude Code 2.1.330 following the skill from a cold start. Not seen yet, by name: a laptop (battery, lid, its own
+Claude Code 2.1.330 following the skill from a cold start, last on 2026-11-23; the passages added to the README
+since were not walked by an agent. Not seen yet, by name: a laptop (battery, lid, its own
 sleep, a change of network); an account whose GitHub Actions start no jobs; GitHub's own removal of a runner after
 14 days offline; a repository really turned public with a runner on it; GitHub's API limit running out while the
 tool works; other Linux distributions, macOS and Windows. The four rows built and tested for a laptop or such an
