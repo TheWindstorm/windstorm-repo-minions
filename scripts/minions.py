@@ -20,8 +20,12 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime as dt
+import errno
+import fcntl
+import functools
 import getpass
 import grp
+import hashlib
 import html
 import json
 import os
@@ -31,8 +35,11 @@ import re
 import secrets
 import shlex
 import shutil
+import socket
+import stat
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import urllib.request
@@ -73,7 +80,7 @@ def placed(repo: str | None) -> str:
 # G8.3: every way a command can end. The worst line decides among 0, 2, 3 and 4.
 EXIT_OK, EXIT_FAILED, EXIT_STOP, EXIT_NEED, EXIT_WAIT, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 64, 130
 LINE_KINDS = ("ok", "warn", "stop", "need you", "waiting", "tell the person")
-COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain", "doctor", "uninstall")  # built so far, in G8.3's order
+COMMANDS = ("look", "setup", "move", "status", "watch", "resume", "drain", "doctor", "restore", "uninstall")  # built so far, in G8.3's order
 RUNNER_USER = "minions-runner"
 # R143 (rule 2, part 1): the runner's own config.sh, at registration and at removal, runs with an environment this tool
 # builds, by name: nothing of the person's shell crosses, whatever sudo on this computer is set to keep. LANG is
@@ -95,6 +102,7 @@ NO_BUS = "unix:path=/nonexistent/windstorm-repo-minions-no-session-bus"
 SLICE = "minions.slice"
 DROPIN = "50-minions.conf"
 LOOK_MAX_AGE_S = 3600
+DOWNLOAD_MAX_S = 1200  # R208 (o): the runner's download, whole, ends within this
 ADMIN_LIKE_GROUPS = {"sudo", "admin", "wheel", "docker", "root", "lxd", "libvirt"}
 COST_URL = "https://docs.github.com/en/billing/concepts/product-billing/github-actions"
 # G7.13 (R109): the block's cost line is a pointer only; the sentence read, with its date, is look's own line.
@@ -715,6 +723,32 @@ class Host:
         with open(os.path.join(self.record_dir(), name), "a" if append else "w", encoding="utf-8") as f:
             f.write(text)
 
+    def keep_private(self, name: str, data: bytes) -> str:
+        """R209: a new file of the person's record, theirs alone from its first byte (600, in a 700 folder), never
+        written over (FileExistsError when the name is taken), never through a link. Returns its path."""
+        os.makedirs(self.record_dir(), mode=0o700, exist_ok=True)
+        path = os.path.join(self.record_dir(), name)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view):]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return path
+
+    def record_names(self) -> list[str]:
+        try:
+            return os.listdir(self.record_dir())
+        except OSError:
+            return []
+
+    def read_private(self, path: str) -> bytes:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        with os.fdopen(fd, "rb") as f:
+            return f.read()
+
     def record_count(self) -> tuple[int, int] | None:
         """(files, lines) in the record; (0, 0) when there is none; None when it could not be read (rule 6)."""
         d = self.record_dir()
@@ -742,10 +776,32 @@ class Host:
         except (EOFError, OSError):
             return ""
 
-    def fetch_to(self, url: str, path: str, timeout: int = 300) -> None:
+    def fetch_to(self, url: str, path: str, timeout: int = 60, whole_s: int = 0) -> None:
+        """R208 (the owner's o): the whole download ends within DOWNLOAD_MAX_S plus one read's wait (`timeout`), so a
+        line that trickles never holds a command without end. Each read is ONE read of the socket (read1), its wait
+        the time left, never more than `timeout`: a read of a fixed size could wait `timeout` for each byte."""
+        limit = whole_s or DOWNLOAD_MAX_S
+        end = time.monotonic() + limit
+        late = TimeoutError(f"the download took longer than {max(1, limit // 60)} minute{'s' if limit >= 120 else ''}, "
+                            "so it was stopped (a slow line); nothing of it is used")
         req = urllib.request.Request(url, headers={"User-Agent": "windstorm-repo-minions/" + VERSION})
         with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:
-            shutil.copyfileobj(r, f)
+            sock = getattr(getattr(getattr(r, "fp", None), "raw", None), "_sock", None)
+            while True:
+                left = end - time.monotonic()
+                if left <= 0:
+                    raise late
+                if sock is not None:
+                    sock.settimeout(max(0.05, min(timeout, left)))
+                try:
+                    chunk = r.read1(1 << 16)
+                except (TimeoutError, socket.timeout):
+                    if time.monotonic() >= end:
+                        raise late from None
+                    raise
+                if not chunk:
+                    break
+                f.write(chunk)
 
     def disk_free(self, path: str) -> tuple[int, int] | None:
         try:
@@ -991,6 +1047,23 @@ PRINTED_COMMANDS = {
         "with userdel and its home kept; the line typed by hand as printed, the password at sudo's prompt: "
         "exit 0, the home gone, every canary read the same before and after. With a disk mounted inside, it skipped "
         "that disk (exit 1), so the line names a mount first",
+    # R206 (2026-11-26): setup's step for a runner .env that could not be read; filled from the stock-machine run
+    "sudo chown -h {} {} && sudo -u {} chmod u+rw {}":
+        "2026-11-26, a stock Ubuntu 24.04.5 virtual machine (coreutils 9.4), steered (the runner user and its folder "
+        "made as setup makes them, a .env planted): setup's own .env reader printed the stop, and its line was typed "
+        "by hand as printed, the password at sudo's prompt, for a .env of root's at 600 and one of the runner user's "
+        "at 000: exit 0, the file the runner user's at 600, its bytes the same by sha256, read as the runner user",
+    "sudo -u {} mv -n -T -- {} {}":
+        "2026-11-26, the same machine and steering: setup's own .env reader printed the stop and its line was typed "
+        "by hand as printed, for a .env that is a link the runner user made (to /etc/hostname) and one that is a "
+        "folder of root's: exit 0, .env no longer there, the link or folder kept whole under the dated name printed, "
+        "the link's target the same by sha256",
+    "mv -n -T -- {} {}":  # R208: the lock file's path set aside
+        "2026-11-26, a stock Ubuntu 24.04.5 virtual machine (coreutils 9.4), steered (a folder planted at the lock's "
+        "path in a home whose path holds a space): status printed the stop and its line was typed by hand as "
+        "printed: exit 0, the folder kept whole under the dated name, and status then went past the lock. With the "
+        "printed name made to exist first, mv said it was not replacing it and ended 1, nothing moved; the next "
+        "stop printed a name still free, and that line as printed ended 0, the made file untouched",
     "sudo kill {}":
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner's unit blanked in the state and its "
         "service file moved aside by hand): uninstall's line with the one PID, run as printed; no process of it left",
@@ -2195,23 +2268,90 @@ def ensure_state_dir(host: Host) -> str:
     return d
 
 
-def load_state(host: Host) -> dict:
+RECORD_COPY = "minions.copy.json"  # R205: the record's second copy, written whole after it at each change
+RECORD_ASIDE = re.compile(r"minions(\.copy)?\.json\.unread-\d{8}T\d{6}Z(-\d+)?")  # R205: what restore set aside, never deleted
+# R205: the parts of the record this tool reads as objects; a record with one of another kind is not this tool's
+RECORD_OBJECTS = ("runners", "setting_up", "moves", "looks", "watch", "gh")
+RECORD_ENTRIES = ("runners", "setting_up", "moves", "looks")
+
+
+class RecordUnread(Exception):
+    """R205 (family rule 6): the record is there and could not be read. Nothing decides on it, nothing writes over
+    it: the command that meets it stops (record_guard), naming the file and where its read stopped."""
+
+    def __init__(self, path: str, why: str):
+        super().__init__(f"{path} ({why})")
+        self.path, self.why = path, why
+
+
+def copy_path(host: Host) -> str:
+    return os.path.join(host.state_dir(), RECORD_COPY)
+
+
+def read_record_file(path: str) -> tuple[dict | None, str | None]:
+    """R205 (rule 6): one reader, three answers: (record, None) read; (None, None) not there; (None, why) could not be
+    read. `why` says where the read stopped (0 bytes, cut short or not the format at a line and column, not UTF-8 at
+    a byte, a part of another kind, cannot be opened), never a value from the file."""
     try:
-        with open(state_path(host), encoding="utf-8") as f:
-            d = json.load(f)
-    except (OSError, ValueError):
-        return {}
+        with open(path, "rb") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return None, None
+    except IsADirectoryError:
+        return None, "a folder, not a file"
+    except OSError as e:
+        return None, f"cannot be opened: {e.strerror or type(e).__name__}"
+    if not raw:
+        return None, "0 bytes"
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        return None, f"not UTF-8 text at byte {e.start}"
+    try:
+        d = json.loads(text)
+    except json.JSONDecodeError as e:
+        cut = e.pos >= len(text.rstrip(BLANKS)) or e.msg.startswith("Unterminated string")  # it ends inside one
+        return None, f"{'cut short' if cut else 'not the format'} at line {e.lineno} column {e.colno}"
     if not isinstance(d, dict):
+        return None, "not this tool's record: not an object"
+    for k in RECORD_OBJECTS:
+        if d.get(k) is not None and not isinstance(d[k], dict):
+            return None, f"not this tool's record: its part {k} is not an object"
+    for k in RECORD_ENTRIES:
+        if any(not isinstance(v, dict) for v in (d.get(k) or {}).values()):
+            return None, f"not this tool's record: an entry of its part {k} is not an object"
+    return d, None
+
+
+def load_state(host: Host) -> dict:
+    """The record, read whole. Not there: {} (nothing made here yet). There and could not be read: RecordUnread,
+    never {} (R205, family rule 6: a damaged record must never read as 'this tool made nothing here')."""
+    path = state_path(host)
+    d, why = read_record_file(path)
+    if why:
+        raise RecordUnread(path, why)
+    if d is None:
         return {}
     d = _marks_moved(d, _STORED, (C0, C1))
     # R167 (2026-11-24): a runner's folder is its repository's own (setup's rule, and every
     # record the tool writes carries it); a record that lost it (a hand edit) gets it back here, so no road reads
     # processes or paths with an empty folder
     for key in ("runners", "setting_up"):
-        for repo, mine in (d.get(key) or {}).items() if isinstance(d.get(key), dict) else ():
-            if isinstance(mine, dict) and not mine.get("folder") and re.fullmatch(r"[^/]+/[^/]+", str(repo)):
+        for repo, mine in (d.get(key) or {}).items():
+            if not mine.get("folder") and re.fullmatch(r"[^/]+/[^/]+", str(repo)):
                 mine["folder"] = runner_folder(repo)
     return d
+
+
+def set_aside(path: str, now: dt.datetime) -> str:
+    """R205: a file of the record that could not be read goes to a dated name beside it, never deleted."""
+    base = f"{path}.unread-{now.strftime('%Y%m%dT%H%M%SZ')}"
+    new, n = base, 1
+    while os.path.lexists(new):
+        n += 1
+        new = f"{base}-{n}"
+    os.rename(path, new)
+    return new
 
 
 def save_state(host: Host, data: dict) -> None:
@@ -2219,15 +2359,835 @@ def save_state(host: Host, data: dict) -> None:
     Rule 31 (v), 2026-11-24: this is the one writer of minions.json, and it is what makes the fixed
     stored marks safe: every text goes through _marks_moved here, which takes out any mark character a value brought
     with it, so a fixed mark in the file was written by this tool. A second writer would let a value make a command;
-    test_rule_31_save_state_is_the_one_writer_of_the_record holds that there is none."""
+    test_rule_31_save_state_is_the_one_writer_of_the_record holds that there is none.
+    R205 (family rule 6): a record that is there and could not be read is never written over (RecordUnread). The same
+    text then goes whole to the second copy, minions.copy.json, after the record: the road back (`restore`) when the
+    record is damaged. A copy that could not be read is set aside under a dated name first, never written over.
+    R208: written only while this process holds the lock (record_guard); status, when another holds it, saves
+    nothing. Called outside any command (the suite's own planting), it takes the lock for this one write. Each write
+    goes through a temporary name of this writer's own (its process id and 8 random hex digits)."""
+    if not lock_mine():
+        if _LOCK["readonly"]:
+            return  # R208 (the owner's condition d): status, while another holds the record, saves nothing
+        if _GUARD["depth"]:
+            raise UnlockedSave("the record was to be written without this tool's lock (R208); nothing was written")
+        fd, why = lock_open(host)
+        if fd is None:
+            raise OSError(f"{lock_path(host)}: {why}")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        _LOCK["fd"] = fd
+        try:
+            return save_state(host, data)
+        finally:
+            lock_free()
     ensure_state_dir(host)
     path = state_path(host)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(_marks_moved(data, (C0, C1), _STORED), f, indent=1, sort_keys=True)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    _, why = read_record_file(path)
+    if why:
+        raise RecordUnread(path, why)
+    stored = _marks_moved(data, (C0, C1), _STORED)
+    copy = copy_path(host)
+    for target in (path, copy):  # the record first, whole; then its copy, whole
+        if target == copy and read_record_file(copy)[1]:
+            set_aside(copy, host.now())
+        tmp = f"{target}.tmp-{os.getpid()}-{secrets.token_hex(4)}"  # R208: this writer's own
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(stored, f, indent=1, sort_keys=True)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, target)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+
+README_MAKES = ("https://github.com/TheWindstorm/windstorm-repo-minions#what-it-makes-on-a-computer")  # R205
+README_MAKES_HEAD = "What it makes on a computer"
+def watch_unread() -> str:
+    """R205 (the owner's point 3): what the watch does not do for the runners while its record could not be read."""
+    return ("While this stands, the watch reads nothing for the runners here: it does not read whether a "
+                f"repository is still private, so the job hook here refuses each job once the watch's last read of it "
+                f"is {SEEN_PASSES} passes old {HOOK_CAVEAT}; it takes no runner off GitHub when a repository turns "
+                "public (the hook refuses those jobs too); and it does not watch memory, disk or battery")
+
+
+def copy_time(path: str) -> str:
+    try:
+        return stamp(dt.datetime.fromtimestamp(os.stat(path).st_mtime, dt.timezone.utc))
+    except OSError:
+        return "a time that could not be read"
+
+
+def no_road_words(copy: str, cwhy: str | None) -> str:
+    """R205 (the owner's condition 3): both copies unreadable, or no copy: no road in the tool, said plainly."""
+    return (f"its second copy, {copy}, " + (f"could not be read either ({cwhy})" if cwhy else "is not there")
+            + ", so this tool cannot tell from this computer what it made here, and it has no road of its own back, "
+            "it changes nothing here while this stands. Your way out is by hand: check the README's section "
+            f"\"{README_MAKES_HEAD}\" ({README_MAKES}) lists every place this tool makes on a computer, and GitHub lists a "
+            "repository's runners in its Settings, under Actions, then Runners")
+
+
+def no_road_stop(path: str, why: str, copy: str, cwhy: str | None) -> str:
+    return f"could not read {path} ({why}): this tool's record of what it made here; {no_road_words(copy, cwhy)}"
+
+
+def copy_words(host: Host) -> str:
+    """R205: the road back, as the copy reads (three answers); the copy's own time, and what is not in it."""
+    copy = copy_path(host)
+    data, cwhy = read_record_file(copy)
+    if data is None:
+        return no_road_words(copy, cwhy) + ". "
+    return (f"its second copy, {copy}, reads whole; it was written at {copy_time(copy)} (its file's own time), and "
+            "anything this tool made here after that time is not in it (a run cut between the two writes leaves it "
+            "one change behind). Your next step puts that copy in the record's place and keeps the file that could "
+            f"not be read beside it under a dated name, never deleted; then run the same command again: {cmd('restore')}. ")
+
+
+def record_unread_words(host: Host, path: str, why: str, begun: bool) -> str:
+    head = (f"could not read {path} ({why}): this tool's record of what it made here, so nothing is deleted on its "
+            "word, nothing is decided or written on it" + (f". It read whole when this command began; the steps before this one are done "
+                                     f"(the journal's last step: {last_journal_step(host)}), and nothing more is done"
+                                     if begun else ", and nothing was changed"))
+    return f"{head}; {copy_words(host)}{watch_unread()}"
+
+
+def last_watch_said(host: Host) -> str | None:
+    """R205 (the owner's point 3): the watch's last line in the journal, which is append-only: read (its text), not
+    there or could not be read (None: then the line is said again, never kept back)."""
+    try:
+        with open(os.path.join(host.state_dir(), "journal.log"), encoding="utf-8", errors="replace") as f:
+            said_ = [x.rstrip(BLANKS).split(" ", 1)[1] for x in f if x.split(" ", 2)[1:2] == ["watch"]]
+    except (OSError, IndexError):
+        return None
+    return said_[-1] if said_ else None
+
+
+def record_stop(host: Host, out, path: str, why: str, command: str, begun: bool) -> int:
+    rep = Report(out)
+    if command == "watch":
+        # The watch's line is said when the state begins and when it changes, never at each pass without end.
+        detail = f"its record could not be read: {path} ({why})"
+        if last_watch_said(host) == plain(f"watch {detail}")[0]:
+            return EXIT_OK
+        try:
+            journal(host, "watch", detail)
+        except OSError:
+            pass  # a journal that cannot be written: the line is said here, and again at the next pass
+    rep.stop(record_unread_words(host, path, why, begun))
+    return rep.code()
+
+
+_GUARD = {"depth": 0}
+# R208: one lock per home. A command that changes the record holds it from its first read to its end (record_guard);
+# nothing stands in the lock file and nothing is decided by it: the kernel holds the lock (flock) and says who holds it
+LOCK_NAME = "minions.lock"
+LEND_NAME = "minions.lend"  # R208 (the owner's condition h): the holder's socket while it starts a watch pass
+LEND_ACCEPT_S = 1.0  # the lender's listener looks this often whether its pass has ended
+LEND_CONNECT_S = 5  # the watch's ask of a lend: a lender that does not answer within this is "could not be asked"
+_LEND = {"sock": None, "thread": None, "took": False, "end": None}
+LOCK_WAIT_S = 60  # a command run by hand waits this long for another of this tool's commands to end
+LOCK_SAY_AFTER_S = 3  # and says what it waits for after this long
+LOCK_POLL_S = 0.25
+_LOCK = {"fd": None, "lent": False, "readonly": False, "held_by": "", "made": ()}
+
+
+def lock_path(host: Host) -> str:
+    return os.path.join(host.state_dir(), LOCK_NAME)
+
+
+def lend_path(host: Host) -> str:
+    return os.path.join(host.state_dir(), LEND_NAME)
+
+
+def lock_mine() -> bool:
+    return _LOCK["fd"] is not None
+
+
+def lock_open(host: Host) -> tuple[int | None, str | None]:
+    """R208: the lock file, opened once and never followed: (fd, None), or (None, why the lock could not be asked).
+    The same fd is held while waiting, so a home removed meanwhile is never made again by the waiter."""
+    path = lock_path(host)
+    made_dir = not os.path.isdir(host.state_dir())
+    try:
+        ensure_state_dir(host)
+    except OSError as e:
+        return None, f"its folder cannot be made: {e.strerror or type(e).__name__}"
+    flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+    try:
+        try:
+            fd = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+            _LOCK["made"] = (path, host.state_dir() if made_dir else "")  # taken away again if nothing else is made
+        except FileExistsError:
+            fd = os.open(path, flags)
+    except OSError as e:
+        return None, ("a link, not a file" if e.errno == errno.ELOOP else "a folder, not a file"
+                      if e.errno == errno.EISDIR else f"cannot be opened: {e.strerror or type(e).__name__}")
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        return None, "not a plain file"
+    return fd, None
+
+
+def lock_try(fd: int) -> tuple[str, str]:
+    """R208 (the owner's condition a): three answers: ("taken", ""), ("held", ""), ("unasked", why)."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return "taken", ""
+    except BlockingIOError:
+        return "held", ""
+    except OSError as e:
+        return "unasked", f"the lock could not be asked: {e.strerror or type(e).__name__}"
+
+
+def lock_same(fd: int, path: str) -> bool:
+    """R208 (the owner's condition g): the file locked is still the file at that path."""
+    try:
+        a, b = os.fstat(fd), os.stat(path, follow_symlinks=False)
+    except OSError:
+        return False
+    return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
+def lock_holder(fd: int) -> tuple[int | None, str]:
+    """R208: who holds the lock, as the kernel says: a FLOCK line of /proc/locks on this file's inode number, kept only
+    when that process's own descriptor of this very file holds it (its /proc/PID/fd read by stat: device and inode
+    as stat gives them; that descriptor's fdinfo carries the FLOCK line). No device number of /proc/locks is compared: on btrfs it is not the one stat gives (the owner, l). Its
+    command: the first word of its own argument list that is one of this tool's commands (never an argument).
+    (None, "") when it cannot be named; nothing is decided by the name, it is only said."""
+    try:
+        st = os.fstat(fd)
+        with open("/proc/locks", encoding="ascii", errors="replace") as f:
+            pids = [int(x[4]) for x in (line.split() for line in f)
+                    if len(x) > 5 and x[1] == "FLOCK" and x[4].isdigit() and x[5].rsplit(":", 1)[-1] == str(st.st_ino)]
+    except (OSError, ValueError):
+        return None, ""
+    pid = next((p for p in dict.fromkeys(pids) if p != os.getpid() and holds_open(p, st)), None)
+    name = ""
+    if pid:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                argv = [w.decode("utf-8", "replace") for w in f.read().split(b"\0")]
+            name = next((w for w in argv[1:] if w in COMMANDS), "")
+        except OSError:
+            pass
+    return pid, name
+
+
+def holds_open(pid: int, st: os.stat_result) -> bool:
+    """R208 (the owner, after the btrfs run): the process holds THIS file's lock: one of its own descriptors is this
+    file (device and inode as stat gives them) and that descriptor's /proc/PID/fdinfo carries a FLOCK line. A process
+    that only has the file open (another command waiting at it) is never named, whatever else it holds."""
+    try:
+        for n in os.listdir(f"/proc/{pid}/fd"):
+            try:
+                o = os.stat(f"/proc/{pid}/fd/{n}")
+                if (o.st_dev, o.st_ino) != (st.st_dev, st.st_ino):
+                    continue
+                with open(f"/proc/{pid}/fdinfo/{n}", encoding="ascii", errors="replace") as f:
+                    if any(line.startswith("lock:") and " FLOCK " in line for line in f):
+                        return True
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return False
+
+
+def holder_words(fd: int) -> str:
+    pid, name = lock_holder(fd)
+    if pid is None:
+        return "another process, which this tool could not name"
+    return f"this tool's {name}, process {pid}" if name else f"process {pid}"
+
+
+def lock_free() -> None:
+    """R208: the lock let go. A lock file this command made, in a folder that holds nothing else at its end, is taken
+    away first, still held (and the folder, when this command made it): a stop before the first write leaves nothing
+    on a fresh home. A command waiting on it then finds the file gone and starts over (lock_take)."""
+    fd, made = _LOCK["fd"], _LOCK["made"]
+    if fd is not None:
+        if made and not _LOCK["lent"] and lock_same(fd, made[0]):
+            try:
+                if os.listdir(os.path.dirname(made[0])) == [LOCK_NAME]:
+                    os.unlink(made[0])
+                    if made[1]:
+                        os.rmdir(made[1])
+            except OSError:
+                pass
+        # Only closed, never unlocked: a lock handed over (the lend) is one lock held at both ends, free only when
+        # both have closed it, so neither end's close frees the other's hold (the owner's world 4)
+        os.close(fd)
+    _LOCK.update(fd=None, lent=False, readonly=False, held_by="", made=())
+
+
+def lend_at(host: Host) -> tuple[int, str]:
+    """R208 (the owner's world 1): a socket's path is bound by at most 107 bytes; the lend is reached through the
+    state folder opened by itself (/proc/self/fd/N/minions.lend), so a home of any length binds and connects."""
+    d = os.open(host.state_dir(), os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    return d, f"/proc/self/fd/{d}/{LEND_NAME}"
+
+
+def lend_peer_ok(pid: int) -> bool:
+    """R208 (the owner's world 2): the one who asks is the pass this command started: a process of the watch's own
+    service (its control group, as the kernel says) running this tool's watch."""
+    try:
+        with open(f"/proc/{pid}/cgroup", encoding="utf-8", errors="replace") as f:
+            groups = [line.rstrip("\n").split(":", 2)[-1] for line in f]
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            argv = [w.decode("utf-8", "replace") for w in f.read().split(b"\0")]
+    except OSError:
+        return False
+    return any(g.endswith(f"/{WATCH_UNIT}.service") for g in groups) and "watch" in argv[1:]
+
+
+def lend_pass(host: Host) -> str:
+    """R208 (the owner's conditions h, l, m and the four worlds of the lend): the watch pass this command starts and
+    waits for runs under its lock. The holder listens on a socket of its own, minions.lend in the state folder
+    (closed to others, mode 700; the socket made 600 from its first moment), and hands its own lock to the one
+    pass that asks and is the watch's own service, of this same account (SCM_RIGHTS: the pass then holds the same
+    lock, so the lock is free only when both have closed it; a lender killed while the pass writes frees nothing).
+    The lender writes nothing while the pass runs: it waits in `systemctl start` and then reads that the pass has
+    ended (install_watch). Any other who asks gets nothing, and the journal says so. No process id and no
+    /proc/locks are needed. What stands at the path: nothing, made; a socket (a lend a killed lender left: stale,
+    since this command holds the lock), taken away and made again; a file, a folder or a link, never followed or
+    taken: the stop names it. Returns why the lend could not be made ("" when it was)."""
+    if _LOCK["fd"] is None or _LOCK["lent"]:
+        return ""
+    path = lend_path(host)
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISSOCK(st.st_mode):
+            return ("a link, not a socket of this tool's" if stat.S_ISLNK(st.st_mode) else "a folder, not a socket "
+                    "of this tool's" if stat.S_ISDIR(st.st_mode) else "a file, not a socket of this tool's")
+        os.unlink(path)  # stale: a lend stands only while its lender holds the lock, and this command holds it
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        return f"cannot be read: {e.strerror or type(e).__name__}"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+    old = os.umask(0o177)
+    d = None
+    try:
+        d, at = lend_at(host)
+        sock.bind(at)
+        sock.listen(4)
+    except OSError as e:
+        sock.close()
+        return f"cannot be made: {e.strerror or type(e).__name__}"
+    finally:
+        os.umask(old)
+        if d is not None:
+            os.close(d)
+    sock.settimeout(LEND_ACCEPT_S)
+    end = threading.Event()
+    _LEND.update(sock=sock, took=False, end=end)
+
+    def serve() -> None:
+        while not end.is_set():
+            try:
+                conn, _ = sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            with conn:
+                try:
+                    pid, uid = peer_of(conn)
+                    if uid != os.getuid() or not lend_peer_ok(pid):
+                        journal(host, "lend-refused", f"process {pid} of user id {uid} asked for this tool's lock, "
+                                "and it is not the watch's pass this command started: it got nothing")
+                        continue
+                    socket.send_fds(conn, [b"L"], [_LOCK["fd"]])
+                    _LEND["took"] = True
+                    return  # one pass takes it
+                except OSError:
+                    continue
+
+    t = threading.Thread(target=serve, daemon=True)
+    _LEND["thread"] = t
+    t.start()
+    return ""
+
+
+def peer_of(conn: socket.socket) -> tuple[int, int]:
+    cred = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)  # struct ucred: pid, uid, gid
+    return int.from_bytes(cred[0:4], sys.byteorder), int.from_bytes(cred[4:8], sys.byteorder)
+
+
+def lend_back(host: Host) -> bool:
+    """The lend taken back after the pass this command started ended: True when a pass took it."""
+    sock, t, end = _LEND["sock"], _LEND["thread"], _LEND["end"]
+    if sock is None:
+        return False
+    end.set()
+    if t is not None:
+        t.join(LEND_ACCEPT_S * 3)
+    sock.close()
+    lend_clear(lend_path(host))
+    took = _LEND["took"]
+    _LEND.update(sock=None, thread=None, took=False, end=None)
+    return took
+
+
+def lend_clear(path: str) -> None:
+    """A lend at its path is taken away only when it is a socket (this tool's own kind); anything else stays."""
+    try:
+        if stat.S_ISSOCK(os.lstat(path).st_mode):
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+def lend_take(host: Host, fd: int) -> tuple[str, str]:
+    """R208 (the owner's m): the watch asks for a lend while the lock is held. Three answers: ("taken", ""), the
+    lock is now this pass's too; ("none", why), no lend stands or no one listens (a lend a killed lender left);
+    ("unasked", why). The lock handed over is checked to be the very file this pass opened (n)."""
+    path = lend_path(host)
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return "none", ""
+    except OSError as e:
+        return "unasked", f"the lend could not be read: {e.strerror or type(e).__name__}"
+    if not stat.S_ISSOCK(st.st_mode):
+        return "unasked", f"{path} is not a socket of this tool's"
+    c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+    c.settimeout(LEND_CONNECT_S)
+    d = None
+    try:
+        d, at = lend_at(host)
+        c.connect(at)
+        _, fds, _, _ = socket.recv_fds(c, 8, 1, socket.MSG_CMSG_CLOEXEC)
+    except (ConnectionRefusedError, FileNotFoundError):
+        return "none", "a lend left by a command that has ended"
+    except OSError as e:
+        return "unasked", f"the lend could not be asked: {e.strerror or type(e).__name__}"
+    finally:
+        c.close()
+        if d is not None:
+            os.close(d)
+    if not fds:
+        return "none", "the lend was not handed to this pass"
+    lfd = fds[0]
+    for extra in fds[1:]:
+        os.close(extra)
+    os.set_inheritable(lfd, False)
+    a, b = os.fstat(lfd), os.fstat(fd)
+    if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino) or not lock_same(lfd, lock_path(host)):
+        os.close(lfd)
+        return "unasked", "the lock handed over is not this home's lock file"
+    _LOCK.update(fd=lfd, lent=True)
+    return "taken", ""
+
+
+def held_passes(host: Host) -> int:
+    """R208: the watch's passes skipped since its last pass that read (the journal is append-only: the held lines
+    after the last "watch" line)."""
+    n = 0
+    try:
+        with open(os.path.join(host.state_dir(), "journal.log"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                word = line.split(" ", 2)[1:2]
+                n = 0 if word == ["watch"] else n + 1 if word == ["watch-held"] else n
+    except OSError:
+        return 0
+    return n
+
+
+def held_after(host: Host, step: str) -> bool:
+    """R208: a skipped pass journaled after this command's own step (the journal's last line of that step)."""
+    seen = False
+    try:
+        with open(os.path.join(host.state_dir(), "journal.log"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                rest = line.split(" ", 1)[1:2]
+                seen = False if rest and rest[0].rstrip(BLANKS) == step else (
+                    seen or line.split(" ", 2)[1:2] == ["watch-held"])
+    except OSError:
+        return False
+    return seen
+
+
+def journal_size(host: Host) -> int:
+    try:
+        return os.path.getsize(os.path.join(host.state_dir(), "journal.log"))
+    except OSError:
+        return 0
+
+
+def my_hold_skipped(host: Host, since: int) -> int:
+    """R208 (the owner's o, 3): the watch's passes this command's own hold made it skip: the skipped-pass lines
+    journaled after `since` (the journal's size when this command began) that name this process as the holder."""
+    mine = f"process {os.getpid()} holds this tool's record"
+    try:
+        with open(os.path.join(host.state_dir(), "journal.log"), "rb") as f:
+            f.seek(since)
+            return sum(1 for b in f if b" watch-held " in b and mine.encode() in b)
+    except OSError:
+        return 0
+
+
+def say_my_hold_skipped(host: Host, out, since: int) -> None:
+    n = my_hold_skipped(host, since)
+    if not n:
+        return
+    Report(out).warn(
+        f"while this command held this tool's record, the watch skipped {n} of its passes (the journal names each)"
+        + (f"; at {SEEN_PASSES} in a row it ended failed, and meanwhile the job hook here refused a job once the "
+           f"watch's last read of its repository was {SEEN_PASSES} passes old ({cmd('status')} names any job it "
+           "refused, to run again)" if n >= SEEN_PASSES else "")
+        + ". Nothing else is for you to do: the watch's next pass reads again by itself")
+
+
+def last_whole_pass(host: Host) -> str:
+    d, _ = read_record_file(state_path(host))
+    return str(((d or {}).get("watch") or {}).get("time") or "") or "none yet"
+
+
+def watch_held(host: Host, out, fd: int, lend_why: str = "") -> int:
+    """R208 (the owner's condition b): the watch never waits. This pass is skipped, and its journal line says so; a
+    watch with no whole pass for SEEN_PASSES passes in a row ends failed and says why, as a blind pass does."""
+    who = holder_words(fd)
+    rep = Report(out)
+    try:
+        journal(host, "watch-held", f"this pass skipped: {who} holds this tool's record"
+                + (f"; its lend could not be asked ({lend_why})" if lend_why else ""))
+    except OSError:
+        pass
+    n = held_passes(host)
+    if n >= SEEN_PASSES:
+        rep.stop(f"the watch has had no whole pass for {n} passes in a row, since its last at {last_whole_pass(host)}: "
+                 f"each found this tool's record held by another of its commands, now {who}, so it read nothing for "
+                 f"the runners here. While this stands, the job hook here refuses each job once the watch's last read "
+                 f"of its repository is {SEEN_PASSES} passes old {HOOK_CAVEAT}, and no runner is taken off GitHub when "
+                 "a repository turns public. Your way out: let that command end, or end it in the terminal where it "
+                 "runs; the next pass reads again by itself")
+    else:
+        rep.ok(f"this pass is skipped: {who} holds this tool's record ({n} in a row; at {SEEN_PASSES} the watch ends "
+               "failed)")
+    return rep.code()
+
+
+def lock_take(host: Host, out, command: str, again: int = 0) -> int | None:
+    """R208: None when this command may go on (the lock is its own, lent to this watch pass, or status reads on
+    and saves nothing); otherwise the exit code of a command that changed nothing."""
+    path = lock_path(host)
+    _LOCK["made"] = ()
+    fd, why = lock_open(host)
+    if fd is None:
+        return lock_unasked(out, path, why)
+    answer, why = lock_try(fd)
+    if answer == "held" and command == "watch":
+        lent, why = lend_take(host, fd)
+        if lent == "taken":
+            os.close(fd)
+            return None
+        try:
+            return watch_held(host, out, fd, why if lent == "unasked" else "")
+        finally:
+            os.close(fd)
+    if answer == "held" and command == "status":  # the owner's condition d: never waits; its one save, none
+        _LOCK.update(readonly=True, held_by=holder_words(fd))
+        os.close(fd)
+        return None
+    waited, holder = False, ""
+    for i in range(int(LOCK_WAIT_S / LOCK_POLL_S)):
+        if answer != "held":
+            break
+        holder = lock_holder(fd)[1] or holder
+        if i == int(LOCK_SAY_AFTER_S / LOCK_POLL_S):
+            say_lines(f"waiting this tool's record is held by {holder_words(fd)}: this command waits up to "
+                      f"{LOCK_WAIT_S} seconds for it to end, and changes nothing until then", out)
+        waited = True
+        host.sleep(LOCK_POLL_S)
+        answer, why = lock_try(fd)
+    rep = Report(out)
+    if answer == "held":
+        rep.stop(f"this tool's record is held by {holder_words(fd)}, which did not end within {LOCK_WAIT_S} seconds: "
+                 "nothing was changed here. Your next step: let that command end, or end it in the terminal where it "
+                 "runs, then run the same command again")
+        os.close(fd)
+        return rep.code()
+    if answer == "unasked":
+        os.close(fd)
+        return lock_unasked(out, path, why)
+    if not lock_same(fd, path):
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        if waited and holder not in ("", "uninstall") and again < 3:
+            # the holder made nothing and took its own new lock file away as it ended: start over
+            return lock_take(host, out, command, again + 1)
+        rep.stop(f"this tool's folder, {host.state_dir()}, was removed " + ("while this command waited for it "
+                 "(uninstall removes it)" if waited else "as this command began") + ": nothing was made or changed "
+                 "here. Your next step, if you want this tool here again: run the same command again")
+        return rep.code()
+    _LOCK["fd"] = fd
+    lock_leftovers(host)
+    return None
+
+
+def lock_leftovers(host: Host) -> None:
+    """R208 (the owner's m and q): what a writer killed part-way leaves, taken away by the next command that takes
+    the lock, since no writer can be at work while it holds it: a temporary name of the record or its copy (never read
+    as the record), and a lend's socket. Only those exact names, only a plain file or a socket, never followed."""
+    d = host.state_dir()
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return
+    for n in names:
+        p = os.path.join(d, n)
+        try:
+            st = os.lstat(p)
+        except OSError:
+            continue
+        if (re.fullmatch(r"minions(\.copy)?\.json\.tmp(-\d+-[0-9a-f]{8})?", n) and stat.S_ISREG(st.st_mode)) or (
+                n == LEND_NAME and stat.S_ISSOCK(st.st_mode)):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+
+def aside_step(path: str) -> str:
+    """R208 (the owner's p): the step that sets a path of this tool's folder aside under a dated name, never deleted:
+    a name free when printed; -T: never moved INTO a folder that stands at that name; -n: never over one that
+    appeared since (coreutils 9.2 on: it then says so and ends nonzero; before 9.2 it skips silently, and this
+    tool's stop comes again with a new name). Rule 31 (B), R200: a path no printed line may carry gets words only."""
+    kept = f"{path}.kept-{stamp_now()}"
+    n = 1
+    while os.path.lexists(kept):
+        n += 1
+        kept = f"{path}.kept-{stamp_now()}-{n}"
+    if no_command_word(path):
+        return (f"set {path} aside by hand under a dated name such as {os.path.basename(kept)}, never deleted (its "
+                "path holds a character no printed command of this tool carries)")
+    here, there = shlex.quote(path), shlex.quote(kept)
+    return f"sets that path aside under a dated name, never deleted: {cmd(f'mv -n -T -- {here} {there}')}"
+
+
+def lock_unasked(out, path: str, why: str) -> int:
+    rep = Report(out)
+    head = (f"could not ask for this tool's lock, {path} ({why}): a command that changes this tool's record runs "
+            "only while it holds that lock, so nothing was changed here. ")
+    if why.startswith("its folder cannot be made"):  # the owner's (s): nothing stands at the path to set aside
+        folder = os.path.dirname(path)
+        rep.stop(head + f"Your next step: make {os.path.dirname(folder)} a folder you can write to (this tool makes "
+                 f"{os.path.basename(folder)} in it, as you), then run the same command again")
+    else:
+        rep.stop(head + f"Your next step {aside_step(path)}, then run the same command again")
+    return rep.code()
+
+
+def stamp_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+class AskedOutside(Exception):
+    """R208 (the owner's k): a wait for a person was answered with the lock let go; the command runs again from its
+    first line under a lock taken afresh, with that answer kept."""
+
+
+class UnlockedSave(RuntimeError):
+    """R208 (the owner's q): a save without the lock, which this tool never makes; said as a stop, never a traceback."""
+
+
+ASK_ROUNDS = 5  # a command whose lines change under the person this many times in a row stops, having changed nothing
+_ASKED = {"answers": {}, "last": None, "quiet": None}
+
+
+class Quiet:
+    """R208 (the owner's k): a round after an answer prints nothing until it comes back to the wait that was
+    answered (what it printed before that is what the person has read already); then it prints on as usual. A round
+    that does not come back to it, or comes to another wait first, prints all it held, under a line saying why."""
+
+    def __init__(self, real):
+        self.real, self.buf, self.on = real, [], True
+
+    def write(self, text: str) -> int:
+        if self.on:
+            self.buf.append(text)
+        else:
+            self.real.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        if not self.on:
+            self.real.flush()
+
+    def settle(self, keep: bool, head: str = "") -> None:
+        if not self.on:
+            return
+        self.on = False
+        if keep:
+            if head:
+                say_lines(head, self.real)
+            self.real.write("".join(self.buf))
+            self.real.flush()
+        self.buf = []
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+def outside_hold(key: tuple, ask):
+    """R208 (the owner's k): every wait for a person runs with this tool's lock let go, so a prompt left open never
+    holds the watch. The answer is kept for this command; the command then runs again from its first line, under a
+    lock taken afresh, so it decides on the record as it reads after the answer, never on a copy from before it. An
+    answer is used again only at the same wait with the same words shown; words that changed are asked again."""
+    a = _ASKED
+    if key in a["answers"]:
+        if key == a["last"] and a["quiet"] is not None and a["quiet"].on:
+            a["quiet"].settle(keep=False)
+            say_lines("ok after your answer this command took this tool's lock again and read its record afresh: "
+                      "what you were shown reads the same, so it goes on", a["quiet"].real)
+        return a["answers"][key]
+    if a["quiet"] is not None and a["quiet"].on:
+        a["quiet"].settle(keep=True, head="warn after your answer this command read this tool's record afresh, and "
+                          "what you are to read has changed meanwhile (another of its commands ran): read it again below")
+    if _LOCK["fd"] is None:
+        return ask()
+    lock_free()
+    a["answers"][key] = ask()
+    a["last"] = key
+    raise AskedOutside()
+
+
+def last_wait(text: str, ask):
+    """R208 (the owner's k): a wait after this command's last change to the record (uninstall's typed word for the
+    person's own record): the lock is let go first, and nothing after it writes the record (UnlockedSave)."""
+    if _LOCK["fd"] is not None:
+        lock_free()
+    return ask(text)
+
+
+def record_guard(fn=None, *, read: bool = True):
+    """R205 (family rule 6): every command that decides on the record reads it first, with three answers. Could
+    not be read: it stops before it changes anything, naming the file and why, with the one next step; a read that
+    fails later in the same run stops there, at the read. Commands called inside a command are its own steps.
+    R208: before that first read, the lock (lock_take), held to the command's end and freed here."""
+    if fn is None:
+        return functools.partial(record_guard, read=read)
+
+    @functools.wraps(fn)
+    def guarded(*a, **kw):
+        if _GUARD["depth"]:
+            return fn(*a, **kw)
+        host = kw["host"] = kw.get("host") or Host()
+        real = kw.get("out") or sys.stdout
+        _GUARD["depth"] += 1
+        _ASKED.update(answers={}, last=None, quiet=None)
+        since = journal_size(host) if fn.__name__ != "watch" else None  # R208 (o, 3): what this hold made skipped
+        if fn.__name__ == "watch" and read and not os.path.lexists(state_path(host)):
+            _GUARD["depth"] -= 1
+            return watch_no_record(host, real)
+        try:
+            for _ in range(ASK_ROUNDS):
+                try:
+                    code = lock_take(host, real, fn.__name__)
+                    if code is not None:
+                        return code
+                    path = state_path(host)
+                    _, why = read_record_file(path) if read else (None, None)
+                    if why:
+                        return record_stop(host, real, path, why, fn.__name__, begun=False)
+                    return fn(*a, **kw)
+                except AskedOutside:
+                    lock_free()
+                    _ASKED["quiet"] = kw["out"] = Quiet(real)  # R208 (k): the next round, afresh
+                except RecordUnread as e:
+                    return record_stop(host, real, e.path, e.why, fn.__name__, begun=True)
+                except UnlockedSave:
+                    rep = Report(real)
+                    rep.stop(f"this tool's {fn.__name__} was about to write its record without holding its lock, which "
+                             "it never does, so it wrote nothing more and stopped here. This is a fault of this tool; "
+                             "your next step: run the same command again, and status says where things stand")
+                    return rep.code()
+            rep = Report(real)
+            rep.stop(f"what you were to read changed {ASK_ROUNDS} times while you answered (other commands of this tool "
+                     "kept changing its record), so nothing more was changed here. Your next step: let them end, then "
+                     "run the same command again")
+            return rep.code()
+        finally:
+            if _ASKED["quiet"] is not None:
+                _ASKED["quiet"].settle(keep=True, head="warn after your answer this command read this tool's record "
+                                       "afresh and did not come back to the same question: what it did is below")
+            _ASKED.update(answers={}, last=None, quiet=None)
+            _GUARD["depth"] -= 1
+            lock_free()
+            if since is not None:
+                try:
+                    say_my_hold_skipped(host, real, since)
+                except Exception:  # noqa: BLE001  a line about the watch never turns a command's end into a traceback
+                    pass
+    return guarded
+
+
+def watch_no_record(host: Host, out) -> int:
+    """The owner's (s): the watch runs only after a setup made this tool's record, so a record that is not there
+    (it or its whole folder removed by hand or by another program) is never a fresh home to the watch. It makes
+    nothing (no folder, no lock file, no record) and changes nothing, says so at each pass, and the timer fires again."""
+    path, copy = state_path(host), copy_path(host)
+    rep = Report(out)
+    head = (f"this tool's record, {path}, is not there" + ("" if os.path.isdir(host.state_dir()) else
+            f", nor its folder {host.state_dir()}") + ": the watch runs only after a setup made it, so it was removed "
+            "while this tool's runner and watch stay installed here. The watch made nothing and changed nothing; ")
+    data, cwhy = read_record_file(copy)
+    if data is None:
+        rep.stop(head + no_road_words(copy, cwhy))
+    else:
+        rep.stop(head + f"its second copy, {copy}, reads whole; it was written at {copy_time(copy)} (its file's own "
+                 "time), and anything this tool made here after that time is not in it. Your next step puts that copy "
+                 f"in the record's place: {cmd('restore')}")
+    return rep.code()
+
+
+@record_guard(read=False)
+def restore(host: Host | None = None, out=None) -> int:
+    """R205 (the owner's condition 1): one name, one job. The record's second copy goes in the record's place; the
+    record that could not be read is set aside beside it under a dated name, never deleted. It says what it does
+    before it acts, and what it did."""
+    host = host or Host()
+    rep = Report(out)
+    path, copy = state_path(host), copy_path(host)
+    _, why = read_record_file(path)
+    gone = why is None and not os.path.lexists(path)
+    data, cwhy = read_record_file(copy)
+    if why is None and not (gone and data is not None):
+        rep.ok((f"{path} reads whole" if not gone else f"{path} is not there, nor a copy of it, so this tool made "
+                "nothing here yet") + ": nothing to restore, and nothing was changed")
+        return rep.code()
+    if data is None:
+        rep.stop(no_road_stop(path, why, copy, cwhy))
+        return rep.code()
+    when = copy_time(copy)
+    if gone:  # the owner's (s): the record removed, its copy whole: the copy goes back, nothing to set aside
+        rep.ok(f"{path} is not there. Its second copy, {copy}, reads whole and was written at {when} (its file's own "
+               "time): anything this tool made here after that time is not in it. It goes in the record's place now")
+        aside = ""
+        journal(host, "restore", f"{path} was not there; the copy written at {when} put in its place")
+    else:
+        rep.ok(f"{path} could not be read ({why}). Its second copy, {copy}, reads whole and was written at {when} (its "
+               "file's own time): anything this tool made here after that time is not in it. It goes in the record's "
+               "place now; the file that could not be read is kept beside it under a dated name, never deleted")
+        aside = set_aside(path, host.now())
+        journal(host, "restore", f"{path} set aside as {aside}; the copy written at {when} put in its place")
+    save_state(host, _marks_moved(data, _STORED, (C0, C1)))
+    back, bwhy = read_record_file(path)
+    if back != data:
+        rep.stop(f"the copy was written to {path}, but it does not read back as the copy ({bwhy or 'not the same'})"
+                 + (f"; the file that could not be read is kept as {aside}" if aside else "")
+                 + f". Run {cmd('restore')} again")
+        return rep.code()
+    rep.ok(f"the copy of {when} is in the record's place, read back whole. "
+           + (f"The file that could not be read is kept as {aside}: it is yours to read or delete, and uninstall "
+              "keeps it. " if aside else "")
+           + "Your next step: run the command that stopped again")
+    return rep.code()
 
 
 def systemctl(*args: str) -> list[str]:
@@ -2382,11 +3342,12 @@ def dropin_text(folder: str = "") -> str:
             + stop_post)
 
 
-RECORD_NAMES = r"README\.txt|journal\.log|jobs-[A-Za-z0-9_.-]+\.log"
+RECORD_NAMES = r"README\.txt|journal\.log|jobs-[A-Za-z0-9_.-]+\.log|kept-env-[A-Za-z0-9_.-]+"  # R209: kept .env files
 # R195: the runner archive, by GitHub's own file name for Linux and for a Mac. One pattern: the download takes only
 # a name of this form into this tool's folder, and a leave deletes by the same form what a cut download left.
 RUNNER_ARCHIVE = r"actions-runner-(?:linux|osx)-[a-z0-9]+-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz"
-STATE_NAMES = r"minions\.json(\.tmp)?|journal\.log|" + RUNNER_ARCHIVE
+STATE_NAMES = (r"minions(\.copy)?\.json(\.tmp(-\d+-[0-9a-f]{8})?)?|minions\.(lock|lend)|journal\.log|"  # R205, R208
+               + RUNNER_ARCHIVE)
 
 
 def delete_ours(folder: str, names: str) -> list[str]:
@@ -2543,14 +3504,14 @@ def check_beside_live(survey_: dict, repo: str, yes: bool, rep: Report) -> bool:
 
 def ask_admin_once(host: Host, rep: Report, interactive: bool, cmd: str = "setup") -> bool:
     """G2.2: the admin password is the person's step, asked once (sudo -v); every later step is `sudo -n`."""
-    rc, _ = host.run(["sudo", "-n", "true"])
-    if rc == 0:
+    asked = ("sudo", cmd) in _ASKED["answers"]  # R208 (k): typed in an earlier round of this same command
+    if not asked and host.run(["sudo", "-n", "true"])[0] == 0:
         rep.ok("admin rights ready (sudo did not need to ask now)")
         return True
     if interactive:
         rep.need("type this computer's admin password once, where sudo asks for it below (this step is yours)",
                  blocks=False, answered_here=True)
-        took = host.sudo_validate() == 0
+        took = outside_hold(("sudo", cmd), host.sudo_validate) == 0
         if took and host.run(["sudo", "-n", "true"])[0] == 0:
             rep.ok("admin rights ready (asked once)")
             return True
@@ -3261,6 +4222,7 @@ def no_systemd_words(where: str) -> str:
             f"systemd is turned on by systemd=true under [boot] in /etc/wsl.conf, then {C0}wsl --shutdown{C1} in Windows")
 
 
+@record_guard
 def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
           interactive: bool | None = None, limits: tuple[int, int] | None = None, beside_live: bool = False) -> int:
     host = host or Host()
@@ -3387,7 +4349,9 @@ def setup_writes(gh: GitHub, host: Host, repo: str, folder: str, labels: list[st
                                             "limits": {k: lim[k] for k in ("cores", "pct", "CPUQuota", "MemoryHigh",
                                                                            "MemoryMax", "MemorySwapMax",
                                                                            "swap_kept") if k in lim},
-                                            "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
+                                            "time": host.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                            **{k: v for k, v in ((data.get("setting_up") or {}).get(repo) or {}).items()
+                                               if k in ("env_sum", "env_aside")}}  # R209
     (data.get("setting_up") or {}).pop(repo, None)
     if "setting_up" in data and not data["setting_up"]:
         data.pop("setting_up")
@@ -3594,6 +4558,11 @@ def keep_journal_record(host: Host, rep: Report) -> bool:
     return True
 
 
+def kept_envs(host: Host) -> list[str]:
+    """R209: the runner settings files kept in the person's record, by their exact name format."""
+    return sorted(n for n in host.record_names() if n.startswith(KEPT_ENV) and re.fullmatch(RECORD_NAMES, n))
+
+
 def delete_record_if_typed(host: Host, rep: Report) -> None:
     """G6.10: the person's record is deleted only on `--delete-record`, confirmed by a word typed at a terminal."""
     d = host.record_dir()
@@ -3604,7 +4573,11 @@ def delete_record_if_typed(host: Host, rep: Report) -> None:
         rep.need(f"deleting your record ({d}) is your own choice, typed at your own terminal: run the same command "
                  "there and type delete when it asks; until then it is kept", blocks=False)
         return
-    word = host.ask(f"Type delete to delete your record of what this tool did ({d}), or press Enter to keep it: ")
+    kept = kept_envs(host)  # R209 (the owner's e): the person's kept settings go with it, so they are named first
+    held = (f" It holds {len(kept)} settings file{'s' if len(kept) != 1 else ''} of a runner's kept for you, which go "
+            f"with it: {', '.join(kept)}." if kept else "")
+    word = last_wait(f"Type delete to delete your record of what this tool did ({d}).{held} Or press Enter to keep "
+                     "it: ", host.ask)  # R208 (k): after uninstall's last change to this tool's record, the lock let go
     if word.strip(BLANKS) != "delete":
         rep.ok(f"your record ({d}) is kept, as you chose")
         return
@@ -3790,16 +4763,20 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
         if rc != 0:
             rep.stop(f"could not write {d}/{name}: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
             return False
-    rc, env = as_runner(host, ["cat", f"{folder}/.env"])  # R128: read as the runner user, never followed by root
+    env = runner_env_read(host, folder, rep, repo)  # R128: read as the runner user, never followed by root
+    if env is False:
+        return False
     # R143: the locale every job gets is the tool's (C.UTF-8), never one that came from a person's shell
-    keep = [x for x in (lines_of(env) if rc == 0 else [])
+    keep = [x for x in lines_of(env or "")
             if not x.startswith(("ACTIONS_RUNNER_HOOK_JOB_", "LANG=", "LANGUAGE=", "LC_"))]
     keep = ["LANG=C.UTF-8"] + keep
     keep += [f"ACTIONS_RUNNER_HOOK_JOB_STARTED={d}/job-started.sh", f"ACTIONS_RUNNER_HOOK_JOB_COMPLETED={d}/job-completed.sh"]
-    rc, out = as_runner(host, ["tee", f"{folder}/.env"], input="\n".join(keep) + "\n")
+    text = "\n".join(keep) + "\n"
+    rc, out = as_runner(host, ["tee", f"{folder}/.env"], input=text)
     if rc != 0:
         rep.stop(f"could not name the job hooks in {folder}/.env: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
         return False
+    note_setting(host, repo, "env_sum", env_sum(text))  # R209: what this tool left there, by its sum, never its lines
     rc, out = sudo(host, ["stat", "-c", "%a %U", f"{d}/job-started.sh", f"{d}/job-completed.sh"])
     if rc != 0 or [x.strip(BLANKS) for x in lines_of(out) if x.strip(BLANKS)] != ["755 root", "755 root"]:
         rep.stop(f"the job hooks are not root's and read-only to the runner: {tail(out)}. Settle what it says, then run the same command again: what was done is read back, never done twice")
@@ -3807,6 +4784,157 @@ def install_hooks(host: Host, repo: str, folder: str, rep: Report) -> bool:
     rep.ok("after each job its work folder is emptied, and during a job this computer does not fall asleep by "
            "itself; a sleep you ask for, or the lid, still puts it to sleep (job hooks, owned by root, read back)")
     return True
+
+
+ENV_MARK = "minions-env:"
+# R206: what the runner user finds at the runner's .env, as sh's own tests answer, each with its own mark; the path is
+# the script's one argument, never in its text. -L first: a link is never followed.
+ENV_SH = (f'if test -L "$1"; then echo "{ENV_MARK} a link"; elif ! test -e "$1"; then echo "{ENV_MARK} not there"; '
+          f'elif ! test -f "$1"; then echo "{ENV_MARK} not a file"; elif ! test -r "$1"; then '
+          f'echo "{ENV_MARK} not readable"; else echo "{ENV_MARK} readable"; fi')
+
+
+def runner_env_read(host: Host, folder: str, rep: Report, repo: str = "") -> str | None | bool:
+    """R206 (family rule 6): the runner's .env, which the runner's env.sh writes and a person may add lines to, and
+    which setup writes back whole with the job hooks' lines. Three answers: its text; None, not there (written new);
+    False, could not be read: then it is never written over, setup stops before the hooks' lines, naming the file
+    and why, with one step. No line of it is printed or logged."""
+    path = f"{folder}/.env"
+    rc, out = as_runner(host, ["sh", "-c", ENV_SH, "sh", path])
+    marks = [x.strip(BLANKS)[len(ENV_MARK):].strip(BLANKS) for x in lines_of(said(out))
+             if x.strip(BLANKS).startswith(ENV_MARK)]
+    kind = marks[0] if rc == 0 and len(marks) == 1 else None
+    if kind == "not there":
+        return None
+    why = {"a link": "it is a link, which this tool never follows",
+           "not a file": "it is not a plain file",
+           "not readable": f"the user {RUNNER_USER} cannot read it",
+           None: f"whether it is there could not be read (sh answered code {rc})"}.get(kind)
+    if kind == "readable":
+        rc, text = as_runner(host, ["cat", path])
+        if rc == 0:
+            return text
+        why = f"cat answered code {rc}"  # its words are not shown: they could carry a line of the file
+    aside = f"{path}.kept-{host.now().strftime('%Y%m%dT%H%M%SZ')}"
+    step = (cmd(f"sudo chown -h {RUNNER_USER} {path} && sudo -u {RUNNER_USER} chmod u+rw {path}")
+            if kind == "not readable" else cmd(f"sudo -u {RUNNER_USER} mv -n -T -- {path} {aside}"))
+    if kind != "not readable":  # R209: the name it is moved to is read again at the folder's removal, as the .env is
+        note_setting(host, repo, "env_aside", aside)
+    rep.stop(f"could not read {path} ({why}): the runner's own settings file, where setup adds the job hooks' two "
+             "lines and keeps every other line as it is, so it is not written over, and nothing of it was changed. "
+             + ("Your next step makes it the runner user's own and readable to it, its lines unchanged; then run "
+                "the same setup again" if kind == "not readable" else
+                "Your next step moves it aside under a dated name, its lines unchanged and yours to read; setup then "
+                "writes a new one with only its own lines, so run the same setup again")
+             + f": {step}")
+    return False
+
+
+ENV_MAX = 1024 * 1024  # R209: a runner .env larger than this is not read: it stays where it is, and its folder with it
+KEPT_ENV = "kept-env-"  # R209: the name of a runner .env kept in the person's record begins so
+
+
+def env_sum(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "surrogateescape")).hexdigest()
+
+
+def note_setting(host: Host, repo: str, key: str, value: str) -> None:
+    """R209: a fact of a runner's setup kept on its own entry (setting up, or set up), read afresh and saved whole."""
+    data = load_state(host)
+    entry = ((data.get("setting_up") or {}).get(repo) or (data.get("runners") or {}).get(repo))
+    if entry is None:
+        return
+    entry[key] = value
+    save_state(host, data)
+
+
+def env_names(text: str) -> str:
+    lines = [x for x in text.split("\n") if x.strip(BLANKS)]
+    names = sorted({x.split("=", 1)[0] for x in lines if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", x)})
+    other = sum(1 for x in lines if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", x))
+    return (f"{len(lines)} line{'s' if len(lines) != 1 else ''}" + (f", naming {', '.join(names)}" if names else "")
+            + (f", and {other} line{'s' if other != 1 else ''} that name{'s' if other == 1 else ''} no variable"
+               if other else ""))
+
+
+def keep_env(host: Host, repo: str, folder: str, mine: dict, rep: Report) -> list[str]:
+    """R209 (the owner's ruling, Thu 11-26): no road of this tool deletes a runner's .env that is not shown to be as
+    the tool left it. Called only after the runner's stop is read back (no process of it left: stop_runner, in
+    remove_one), before anything in its folder is deleted. Read as the runner user, never as root; its kind first:
+    only a plain file is read, a link, a folder, a pipe or a device is never opened (it goes or stays as clear_folder
+    rules); its size bound before the read. Three answers: its sum is the one setup kept when it wrote it (goes with
+    the folder); another sum, no sum on record (a setup cut before it wrote one) or no read: the person's, kept in
+    their record (600 from its first byte, a name of its own per event, its sum compared with the original's before
+    anything in that folder is deleted). The same for the name R206's step moved it to. Returns why the folder
+    stays (empty: it may go). No line of it is printed, logged or journaled: its line count and variable names."""
+    stays = []
+    for path, sum_ in ((f"{folder}/.env", mine.get("env_sum")), (mine.get("env_aside") or "", None)):
+        if not path.startswith(folder + "/"):
+            continue
+        rc, out = as_runner(host, ["sh", "-c", ENV_SH, "sh", path])
+        marks = [x.strip(BLANKS)[len(ENV_MARK):].strip(BLANKS) for x in lines_of(said(out))
+                 if x.strip(BLANKS).startswith(ENV_MARK)]
+        kind = marks[0] if rc == 0 and len(marks) == 1 else None
+        if kind in ("not there", "a link", "not a file"):
+            continue  # nothing to read; a link or a folder is never opened, and clear_folder rules on it
+        if kind != "readable":
+            stays.append(f"{path} could not be read as {RUNNER_USER} ("
+                         + (f"the user {RUNNER_USER} cannot read it" if kind == "not readable" else
+                            f"sh answered code {rc}") + "), so it is not known to be as this tool left it")
+            continue
+        rc, size = as_runner(host, ["stat", "-c", "%s", path])
+        size = str(size).strip(BLANKS)
+        if rc != 0 or not size.isdigit() or int(size) > ENV_MAX:
+            stays.append(f"{path} is " + (f"larger than {ENV_MAX} bytes" if size.isdigit() else
+                                          "of a size that could not be read") + ", so it is not read")
+            continue
+        rc, text = as_runner(host, ["cat", path])
+        if rc != 0:
+            stays.append(f"{path} could not be read as {RUNNER_USER} (cat answered code {rc})")
+            continue
+        got = env_sum(text)
+        if sum_ and got == sum_:
+            continue  # as this tool left it: it goes with the folder
+        kept, why = keep_copy(host, repo, path, text, got)
+        if why:
+            stays.append(why)
+            continue
+        said_ = ("its lines are not the ones this tool wrote there" if sum_ else
+                 "this tool kept no sum of it (written before setup's own lines, or by R206's step)")
+        rep.ok(f"{path} is a settings file of the runner's that is not as this tool left it ({said_}): it is kept as "
+               f"yours in {kept} (yours alone, mode 600; {env_names(text)}), never deleted; the folder goes")
+        rep.kept_env = [*getattr(rep, "kept_env", []), kept]
+        journal(host, "kept", f"{path} as {kept} ({env_names(text)})")
+    return stays
+
+
+def keep_copy(host: Host, repo: str, path: str, text: str, got: str) -> tuple[str, str]:
+    """R209: the person's copy, made new (600 from its first byte, never over an earlier one) and read back; its sum
+    the original's, read again as the runner user, before anything in that folder is deleted. (path, "") or ("", why)."""
+    data = text.encode("utf-8", "surrogateescape")
+    base = f"{KEPT_ENV}{re.sub(r'[^A-Za-z0-9_.-]', '_', repo)}-{os.path.basename(path)}-{host.now().strftime('%Y%m%dT%H%M%SZ')}"
+    kept = ""
+    for n in range(1, 100):
+        try:
+            kept = host.keep_private(base + ("" if n == 1 else f"-{n}"), data)
+            break
+        except FileExistsError:
+            continue
+        except OSError as e:
+            return "", (f"{path} is not as this tool left it, and its copy could not be made in your record "
+                        f"({host.record_dir()}: {e.strerror or type(e).__name__}), so it is not deleted")
+    if not kept:
+        return "", f"{path} is not as this tool left it, and no free name for its copy was found in your record"
+    rc, out = as_runner(host, ["sha256sum", path])
+    orig = str(out).strip(BLANKS).split(" ")[0] if rc == 0 else ""
+    try:
+        back = hashlib.sha256(host.read_private(kept)).hexdigest()
+    except OSError:
+        back = ""
+    if not (orig == got == back):
+        return "", (f"{path} is not as this tool left it, and its copy in your record ({kept}) does not read back "
+                    "the same as the original, so the original is not deleted")
+    return kept, ""
 
 
 def check_disk_floor(free: int | None, rep: Report, what: str) -> bool:
@@ -4034,6 +5162,10 @@ def wait_idle(gh: GitHub, host: Host, repo: str, mine: dict, wait_s: int, poll_s
     "offline" (no job process here and GitHub says offline) or "running" (the deadline passed: a `waiting` line)."""
     deadline = host.now() + dt.timedelta(seconds=wait_s)
     said = False
+    key = ("idle", repo, next_cmd)
+    if key in _ASKED["answers"]:
+        outside_hold(key, None)  # R208 (k): the round after the wait; what follows is read afresh, under the lock
+    let_go = False
     while True:
         r = listed_runner(gh, repo, mine["name"]) or {}
         if gh.limited():  # G8.14: never poll into a spent limit
@@ -4047,6 +5179,10 @@ def wait_idle(gh: GitHub, host: Host, repo: str, mine: dict, wait_s: int, poll_s
                      + settle_first(f"{C0}{next_cmd}{C1} again"))
             return "running"
         if not busy and not worker:
+            if let_go:  # R208 (k): the wait ran with the lock let go; the command runs again from its first line
+                _ASKED["answers"][key] = "idle"
+                _ASKED["last"] = key
+                raise AskedOutside()
             return "idle" if r.get("status") == "online" else "offline"
         if host.now() >= deadline:
             side = ", ".join(x for x in (("GitHub says busy" if busy else ""),
@@ -4057,11 +5193,16 @@ def wait_idle(gh: GitHub, host: Host, repo: str, mine: dict, wait_s: int, poll_s
             return "running"
         if not said:
             rep.ok(f"a job is running ({'GitHub says busy' if busy else 'a job process runs here'}): waiting for it "
-                   f"to end, until {deadline.strftime('%H:%MZ')} at the latest")
+                   f"to end, until {deadline.strftime('%H:%MZ')} at the latest; this tool's record is let go while it "
+                   "waits, so its watch goes on, and it is read afresh after")
             said = True
+        if _LOCK["fd"] is not None and not _LOCK["lent"]:  # R208 (o): no long wait inside the hold either
+            lock_free()
+            let_go = True
         host.sleep(poll_s)
 
 
+@record_guard
 def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
           host: Host | None = None, gh: GitHub | None = None, out=None, restart: bool = False,
           interactive: bool | None = None) -> int:
@@ -4134,6 +5275,7 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
     return rep.code()
 
 
+@record_guard
 def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=None,
            private_again: bool = False, on_battery: str | None = None, interactive: bool | None = None) -> int:
     """G4.6's other half: lift the hold (and start the service if a drain stopped it), never under the disk floor.
@@ -4257,6 +5399,7 @@ def lift_hold(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, tries:
 # ------------------------------------------------------------------------------------------------ G5 watch and hold
 
 WATCH_EVERY_S = 300  # G5.3: the watch's default interval
+WATCH_PASS_S = 240  # R208 (o): a pass ends within this (systemd ends it), so no pass holds the lock past one interval
 WATCH_UNIT = "minions-watch"
 TOOL_COPY = f"{HOOKS_ROOT}/minions.py"  # the copy the watch runs: root's, so neither the runner nor a job can change it
 WATCH_START = f"/usr/bin/python3 -I {TOOL_COPY} watch"  # R147, R190: the watch's start line, its words as written
@@ -4461,6 +5604,7 @@ def watch_heartbeat(data: dict, now: dt.datetime, slept_now: float | None = None
     return True, f"the watch ran {minutes(age)} ago, at {hms(last)} (every {minutes(every)})"
 
 
+@record_guard
 def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None = None, out=None,
            wait_warn_s: int = WAIT_WARN_S, rerun: int | None = None) -> int:
     """G5.1 to G5.4, G5.12, G5.13 (and G5.7, G5.14 through name_cut_jobs): read only, unless `--rerun JOB`."""
@@ -4566,6 +5710,14 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now, host.slept_s())
     rest.append(("ok" if ok_ else "warn", words))
+    held = held_passes(host)  # R208 (the owner's condition b): how many passes were skipped since the last whole one
+    if held:
+        rest.append(("warn", f"the watch's last whole pass was at {last_whole_pass(host)}; {held} pass(es) skipped "
+                             "since, each finding this tool's record held by another of its commands (the journal "
+                             f"names which); at {SEEN_PASSES} in a row the watch ends failed"))
+    if _LOCK["readonly"]:
+        rest.append(("ok", f"this tool's record is held by {_LOCK['held_by']}: status read it as it stands and "
+                           "saved nothing"))
     rest.append(copy_version_line(host, repos[0] if len(repos) == 1 else None))  # G4.10; R193: one known name
     for parsed in parsed_lines(host, data):  # R190: what systemd parsed, word for word
         (first if parsed[0] == "stop" else rest).append(parsed)
@@ -4862,6 +6014,7 @@ def rerun_once(gh: GitHub, host: Host, repo: str, job_id: int, named: dict, data
 
 
 
+@record_guard
 def watch(host: Host | None = None, gh: GitHub | None = None, out=None) -> int:
     """G5.3: one pass, run by the timer every WATCH_EVERY_S; one journal line per pass, and the heartbeat."""
     host = host or Host()
@@ -5423,12 +6576,22 @@ def watch_units(user: str, every_s: int, path: str = "") -> tuple[str, str]:
            "After=network-online.target\n\n"
            f"[Service]\nType=oneshot\nUser={user}\n"
            + (f"Environment={systemd_quoted('PATH=' + path)}\n" if path else "")  # R190: one value, whole
-           + f"ExecStart={WATCH_START}\nNice=10\n")  # R147: -I, as every start of the tool
+           + f"ExecStart={WATCH_START}\nNice=10\nTimeoutStartSec={WATCH_PASS_S}s\n")  # R147: -I, as every start of the tool
     tmr = ("# Windstorm Repo Minions: the watch's schedule (G5.3).\n"
            f"[Unit]\nDescription=Windstorm Repo Minions watch, every {every_s // 60} minutes\n\n"
            f"[Timer]\nOnBootSec=2min\nOnUnitActiveSec={every_s}s\nAccuracySec=30s\n\n"
            "[Install]\nWantedBy=timers.target\n")
     return svc, tmr
+
+
+def pass_state(host: Host) -> str:
+    """R208 (the owner's world 4): "ended" when systemd says the watch's service is not starting or stopping;
+    otherwise what it says, or "could not be read"."""
+    rc, out = host.run(systemctl("show", "-p", "ActiveState", "--value", f"{WATCH_UNIT}.service"))
+    word = str(out).strip(BLANKS)
+    if rc != 0 or not word:
+        return "could not be read"
+    return "ended" if word in ("inactive", "failed", "active") else f"systemd says {word}"
 
 
 def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: str | None = None,
@@ -5494,7 +6657,27 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
     # G5.15: one real pass now, as the timer runs it, and what it read, read back.
     before = (load_state(host).get("watch") or {}).get("pass")  # G5.19: the count, never the time to the second
     journal(host, "the watch's first pass")
-    sudo(host, systemctl("start", f"{WATCH_UNIT}.service"))
+    for _ in range(2):  # R208 (the owner's condition h): the pass runs under this command's lock, lent to it
+        why = lend_pass(host)
+        if why:
+            path = lend_path(host)
+            rep.stop(f"could not make {path} ({why}): the watch's first pass runs under this command's lock, and this "
+                     f"socket lends it to that pass, so the pass was not started. Your next step {aside_step(path)}, "
+                     "then run the same command again")
+            return False
+        try:
+            sudo(host, systemctl("start", f"{WATCH_UNIT}.service"), timeout=WATCH_PASS_S + 60)
+        finally:
+            took = lend_back(host)
+        state = pass_state(host)
+        if state != "ended":  # R208 (the owner's world 4): the lender writes nothing while the pass may still write
+            rep.stop(f"the watch's first pass has not been read to have ended ({state}), so this command writes nothing "
+                     f"more: it may still be writing under the lock it was lent. Read {C0}journalctl -u "
+                     f"{WATCH_UNIT}.service{C1}; the pass ends by itself within {WATCH_PASS_S // 60} minutes, and then "
+                     "the same command again finishes")
+            return False
+        if took or not held_after(host, "the watch's first pass"):
+            break  # a pass the timer started as it was turned on found the lock held: started once more, lent
     w = load_state(host).get("watch") or {}
     b = (w.get("blind") or {}).get(repo)
     seen = (host.read(seen_path(load_state(host)["runners"][repo]["folder"])) or "").strip(BLANKS)
@@ -5818,6 +7001,7 @@ def md_line(line: str) -> str:
     return out if out == line else f"{out} {MD_CHANGED}"
 
 
+@record_guard
 def move(repo: str, verify: bool = False, include: list[str] | None = None, host: Host | None = None,
          gh: GitHub | None = None, out=None, wait_s: int = VERIFY_WAIT_S, poll_s: float = 10) -> int:
     host = host or Host()
@@ -6197,13 +7381,9 @@ def names_unread(host: Host) -> list[str]:
     deleted on its word. A file that is not there is no answer of this kind (nothing was written yet)."""
     bad = []
     path = state_path(host)
-    if os.path.exists(path):
-        try:
-            with open(path, encoding="utf-8") as f:
-                if not isinstance(json.load(f), dict):
-                    bad.append(f"{path} (not this tool's record)")
-        except (OSError, ValueError) as e:
-            bad.append(f"{path} ({tail(str(e)) or type(e).__name__})")
+    _, why = read_record_file(path)  # R205: the one reader of the record, its three answers
+    if why:
+        bad.append(f"{path} ({why})")
     for j in (os.path.join(host.state_dir(), "journal.log"), os.path.join(host.record_dir(), "journal.log"),
               left_behind_path(host)):  # R136 (fault 2): what stayed, as an earlier uninstall wrote it
         _, why = host.read_checked(j)
@@ -6554,7 +7734,7 @@ def remove_service(host: Host, mine: dict, rep: Report, again: str = "uninstall"
     return True
 
 
-def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
+def remove_folders(host: Host, repo: str, mine: dict, rep: Report, for_setup: bool = False) -> bool:
     """The runner's own folders (only under the runner user's runners folder), its hooks and its jobs' records."""
     folder = mine.get("folder") or ""
     records = records_dir_of(folder) if folder else ""
@@ -6574,6 +7754,18 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report) -> bool:
     rules = {p_: (k, n) for p_, k, n in leave_folders(host, rep)}
     left, linked = [], []
     for path in paths:
+        if path == ours and exists_as_root(host, path):
+            stays = keep_env(host, repo, folder, mine, rep)  # R209: before anything in the folder is deleted
+            if stays and for_setup:
+                env_at = f"{folder}/.env"  # R206's own printed line (G8.16), one form
+                rep.stop(f"{'; '.join(stays)}. It is a settings file of the runner's, so this setup deletes nothing in "
+                         f"{folder}. Your next step makes it readable to the runner user, its lines unchanged: "
+                         + cmd(f"sudo chown -h {RUNNER_USER} {env_at} && sudo -u {RUNNER_USER} chmod u+rw {env_at}")
+                         + "; then run the same setup again, and it keeps the file for you")
+                return False
+            if stays:
+                foreign_stayed(rep, path, "runner", [f"{s_} (so the folder stays with it)" for s_ in stays])
+                continue
         if exists_as_root(host, path):
             journal(host, "delete", path)
             # R128 (rule 28): what the runner user can write is deleted as the runner user, who can take only what it
@@ -6678,7 +7870,7 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
         return False
     if not remove_github_side(gh, host, repo, mine, rep):
         return False
-    if not remove_folders(host, repo, mine, rep):
+    if not remove_folders(host, repo, mine, rep, for_setup=next_cmd.startswith("setup ")):
         return False
     journal(host, "removed", f"{repo} {mine.get('name')}")
     end_restart_hold(host, repo, data, "its runner was removed")  # R154: never said held for a runner gone or set up anew
@@ -6689,6 +7881,7 @@ def remove_one(gh: GitHub, host: Host, repo: str, data: dict, rep: Report, wait_
 
 
 # ------------------------------------------------------------------------------------------------------- G8.4 doctor
+@record_guard
 def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None = None, out=None,
            interactive: bool | None = None) -> int:
     """G8.4, INV8: every promise of G2 and G4 read back on this computer as it is now, and a half-done step finished
@@ -7755,10 +8948,11 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
                "nothing in a place every user writes)")
     line("folders", folders, "" if everything else f"kept; {C0}uninstall --all{C1} takes them", mark)
     if state_left is not None:
-        foreign = rep.stayed.get("state")
+        foreign, aside = rep.stayed.get("state"), rep.stayed.get("aside")
         line("this tool's state folder", [host.state_dir()] if state_left else [],
              (f"kept: it holds {', '.join(foreign)}, which this tool did not write; that and the folder are yours"
-              if foreign else "kept: its journal could not be moved to your record (said above)") if state_left else "")
+              if foreign else f"kept: it holds {', '.join(aside)}, {ASIDE_WHY}" if aside else
+              "kept: its journal could not be moved to your record (said above)") if state_left else "")
     if everything and packages is not None:  # R139 (rule 8): what was added while the dependency script ran stays
         names, unread = packages.get("dependency_packages") or [], packages.get("dependency_packages_unread")
         head = "census: system packages added while the runner's dependency script ran: "
@@ -7829,6 +9023,7 @@ def user_left_to_finish(data: dict) -> bool:
     return not (data.get("runners") or {}) and bool(data.get("runner_user_made"))
 
 
+@record_guard
 def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WAIT_S, poll_s: float = 10,
            host: Host | None = None, gh: GitHub | None = None, out=None, interactive: bool | None = None,
            delete_record: bool = False) -> int:
@@ -7883,7 +9078,9 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
         journal_copy_removal(host)
         journal(host, "delete", f"{host.state_dir()} (the last step but the tool's copy)")
         if keep_journal_record(host, rep):  # G6.10: the journal is the person's record; not kept, not deleted
-            left = delete_ours(host.state_dir(), STATE_NAMES)  # R129 (rule 23): only ours, by name
+            aside = aside_files(host)  # R205: what restore set aside is kept, never deleted, and named as such
+            left = [n for n in delete_ours(host.state_dir(), STATE_NAMES) if n not in aside]  # R129 (rule 23)
+            say_aside(host, rep, aside)
             if left:
                 rep.ok(f"this tool's files in {host.state_dir()} are deleted; left there, not written by this tool: "
                        f"{', '.join(left)}")
@@ -7897,14 +9094,35 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
                    "dependency_packages", "dependency_packages_unread")})
         if set(rep.stayed) - HANDED_ONLY and not rep.stopped:  # R136 (rule 8): the leave went to its end
             rep.ok("this tool is off this computer; what stayed was not made by this tool or its runner user, or holds "
-                   "what was not, named above with why each stayed")
+                   "what was not" + (", or is a record of this tool's that could not be read, kept for you"
+                                     if rep.stayed.get("aside") else "") + ", named above with why each stayed")
         return rep.code()
     if delete_record:
         delete_record_if_typed(host, rep)
+    say_aside(host, rep, aside_files(host))
     census(gh, host, known, False, rep)
     return rep.code()
 
 
+ASIDE_WHY = ("set aside by restore: a record of this tool's that could not be read, kept beside the record under a "
+             "dated name and never deleted by this tool; it is yours to read or delete")
+
+
+def aside_files(host: Host) -> list[str]:
+    """R205 (the owner's condition 1): what restore set aside in the state folder, by its exact name format."""
+    try:
+        return sorted(n for n in os.listdir(host.state_dir()) if RECORD_ASIDE.fullmatch(n))
+    except OSError:
+        return []
+
+
+def say_aside(host: Host, rep: Report, aside: list[str]) -> None:
+    if aside:
+        rep.ok(f"kept in {host.state_dir()}: {', '.join(aside)}: {ASIDE_WHY}")
+        rep.stayed["aside"] = aside
+
+
+@record_guard
 def look(repo: str, start: bool, host: Host | None = None, gh: GitHub | None = None, out=None,
          show_names: bool = False) -> int:
     host = host or Host()
@@ -8072,7 +9290,7 @@ def persons_own_eyes(host: Host, rep: Report, lines: list[str], interactive: boo
     rep.need("read the lines above, then press Enter here to go on; Ctrl-C stops it, and nothing has been changed yet",
              blocks=False, answered_here=True)
     rep.here = False
-    if not host.read_enter():
+    if not outside_hold(("enter", command, tuple(lines)), host.read_enter):
         rep.stop("no Enter was read: nothing was changed. Run the same command again in your own terminal")
         return False
     rep.ok("you read the lines and pressed Enter")
@@ -8147,6 +9365,8 @@ def parser() -> Parser:
     dr.add_argument("--wait-minutes", type=int, default=DRAIN_WAIT_S // 60, help="how long to wait for a job to end")
     dc = sub.add_parser("doctor", help="read back every promise of the install here; finish or undo a half-done step")
     dc.add_argument("repo", nargs="?", type=repo_arg, help="owner/name (default: every runner here)")
+    sub.add_parser("restore", help="put the second copy of this tool's record in the place of a record that could "
+                   "not be read; that file is kept beside it, never deleted")
     rm = sub.add_parser("uninstall", help="take a runner away on both sides; --all leaves nothing of this tool here")
     rm.add_argument("repo", nargs="?", type=repo_arg, help="owner/name (with --all: default every runner here)")
     rm.add_argument("--all", dest="everything", action="store_true",
@@ -8208,6 +9428,8 @@ def main(argv: list[str] | None = None, host: Host | None = None, out=None, gh: 
             return move(a.repo, verify=a.verify, include=a.include_job, host=host)
         if a.cmd == "doctor":
             return doctor(a.repo, host=host)
+        if a.cmd == "restore":
+            return restore(host=host, out=out)
         if a.cmd == "uninstall":
             if not a.repo and not a.everything:
                 parser().error("uninstall needs owner/name, or --all")

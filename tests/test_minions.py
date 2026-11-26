@@ -7,6 +7,7 @@ import ast
 import atexit
 import copy
 import importlib.util
+import inspect
 import hashlib
 import io
 import json
@@ -14,10 +15,13 @@ import os
 import re
 import shlex
 import shutil
+import socket
+import stat
 import subprocess
 import sys
 import time
 import tempfile
+import threading
 import unicodedata
 import unittest
 from unittest import mock
@@ -224,6 +228,9 @@ class FakeHost(M.Host):
         self._system, self.files, self.runs = system, dict(files or {}), dict(runs or {})
         # R160: gh has a login it can read with no session bus (a made-up value, one line, as `gh auth token` prints)
         self.runs.setdefault(("gh", "auth", "token"), (0, "made-up-login-value\n"))
+        # R208 (the owner's world 4): the watch's first pass is read to have ended before setup writes again
+        self.runs.setdefault(tuple(M.systemctl("show", "-p", "ActiveState", "--value", f"{M.WATCH_UNIT}.service")),
+                             (0, "inactive\n"))
         # R172: a computer with our runner on it has its user (setup_host starts without it, until useradd)
         self.runs.setdefault(("getent", "passwd", "minions-runner"),
                              (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n"))
@@ -382,6 +389,22 @@ class FakeHost(M.Host):
             raise OSError(28, "No space left on device")
         path = f"{self.record_dir()}/{name}"
         self.files[path] = (self.files.get(path, "") if append else "") + text
+
+    def keep_private(self, name, data):  # R209: as the real one: never over an earlier one, 600 from its first byte
+        path = f"{self.record_dir()}/{name}"
+        if getattr(self, "record_unwritable", False):
+            raise OSError(28, "No space left on device")
+        if path in self.files:
+            raise FileExistsError(17, "File exists", path)
+        self.files[path] = data.decode("utf-8", "surrogateescape")
+        self.modes = {**getattr(self, "modes", {}), path: 0o600}
+        return path
+
+    def read_private(self, path):
+        return self.files[path].encode("utf-8", "surrogateescape")
+
+    def record_names(self):
+        return sorted(k[len(self.record_dir()) + 1:] for k in self.files if k.startswith(self.record_dir() + "/"))
 
     def record_count(self):
         mine = [v for k, v in self.files.items() if k.startswith(self.record_dir() + "/")]
@@ -964,6 +987,8 @@ def setup_host(**kw):
         ("systemctl", "is-active", UNIT): (0, "active\n"),
         ("systemctl", "is-active", "minions-watch.timer"): (0, "active\n"),
         ("sudo", "-n", "chown"): (0, ""),
+        ("sudo", "-n", "-u", "minions-runner", "--", "sh", "-c", M.ENV_SH, "sh", f"{FOLDER}/.env"):
+            (0, "minions-env: readable\n"),  # R206
         ("sudo", "-n", "-u", "minions-runner", "--", "cat", f"{FOLDER}/.env"): (0, "LANG=C.UTF-8\n"),
         ("sudo", "-n", "-u", "minions-runner", "--", "tee", f"{FOLDER}/.env"): (0, ""),
         ("sudo", "-n", "stat", "-c", "%a %U", f"{M.hook_dir(REPO)}/job-started.sh"): (0, "755 root\n755 root\n"),
@@ -3136,7 +3161,7 @@ def printed_system_commands():
             texts.append(node.value)
     found = set()
     for t in texts:
-        for m in re.finditer(r"`((?:sudo|gh|chmod|journalctl|python3) [^`]*)`", t):
+        for m in re.finditer(r"`((?:sudo|gh|chmod|journalctl|python3|mv) [^`]*)`", t):
             found.add(re.sub(r"\{[^`]*?\}", "{}", m.group(1)))
     return found
 
@@ -4255,6 +4280,15 @@ class World:
                     if a[3] in self.files or a[3] in self.paths:
                         return 0, "regular file\n"
                     return 1, f"stat: cannot statx '{a[3]}': No such file or directory"
+                if a[:2] == ["sh", "-c"] and a[2] == M.ENV_SH:  # R206, R209: what stands at a runner .env
+                    p_ = a[4]
+                    word = ("a link" if p_ in self.links else "not readable" if p_ in getattr(self, "unreadable", ())
+                            else "readable" if p_ in self.files else "not a file" if p_ in self.dirs else "not there")
+                    return 0, f"{M.ENV_MARK} {word}\n"
+                if a[:3] == ["stat", "-c", "%s"] and a[3] in self.files:
+                    return 0, f"{len(self.files[a[3]].encode('utf-8', 'surrogateescape'))}\n"
+                if a[:1] == ["sha256sum"] and a[1] in self.files:
+                    return 0, f"{M.env_sum(self.files[a[1]])}  {a[1]}\n"
                 if a[:1] == ["cat"]:
                     if a[1] in self.files:
                         return 0, self.files[a[1]]
@@ -6711,6 +6745,7 @@ class G6(unittest.TestCase):
         code, lines = run_setup(gh, host)
         self.assertEqual(code, M.EXIT_STOP, lines)
         self.assertIn("run the same command again from the terminal where you typed the password", lines[-2])
+        self.assertIsNone(M._LOCK["fd"], "the lock is let go at the stop (the owner's r)")
         self.assertEqual(M.load_state(host)["setting_up"][REPO]["folder"], FOLDER)
         # uninstall finds it, never "nothing to uninstall", and takes it away, read back.
         out = Out()
@@ -6832,8 +6867,8 @@ class G8(unittest.TestCase):
 
     def test_G8_3_commands_and_line_kinds_are_exactly_these(self):
         # The commands built so far are the plan's own, in its order (a subsequence of it); more come with genes.
-        plan = ("look", "setup", "move", "lint", "status", "watch", "hold", "resume", "drain", "doctor", "uninstall",
-                "self-update")
+        plan = ("look", "setup", "move", "lint", "status", "watch", "hold", "resume", "drain", "doctor", "restore",
+                "uninstall", "self-update")
         sub = next(a for a in M.parser()._actions if isinstance(a, M.argparse._SubParsersAction))
         self.assertEqual(tuple(sub.choices), M.COMMANDS)
         self.assertTrue(set(M.COMMANDS) <= set(plan), M.COMMANDS)
@@ -7930,7 +7965,7 @@ class G8Words(unittest.TestCase):
                 a = n.args[0]
                 if isinstance(a, (ast.Name, ast.Call)):
                     continue  # public_words, blind_words, the memory floor: checked below
-                steps = {"settle_first", "came_back", "github_next", "unit_next", "kept_home_step"}
+                steps = {"settle_first", "came_back", "github_next", "unit_next", "kept_home_step", "no_road_words"}
                 if any(isinstance(x, ast.Call) and isinstance(x.func, ast.Name) and x.func.id in steps
                        for x in ast.walk(a)):
                     continue  # rule 7: the step is built by one of the step helpers, each checked below
@@ -7951,6 +7986,7 @@ class G8Words(unittest.TestCase):
         for built in (M.settle_first(), M.came_back("x", "y", "z"), M.github_next(500, REPO), M.github_next(403, REPO),
                       M.unit_next("u", ("unread", "w"), "c"), M.unit_next("u", ("running", "active"), "c"),
                       M.zero_job_words(REPO), M.zero_job_words(None), M.public_words(REPO, {"time": "t"}),
+                      M.no_road_words("c", None), M.no_road_words("c", "w"),
                       M.memory_floor_line(REPO, {"MemoryMax": 1, "pct": 60, "mem": 2 * 1024 ** 3, "cores": 1}),
                       M.memory_floor_line(REPO, {"MemoryMax": 1, "pct": 60, "mem": 16 * 1024 ** 3, "cores": 1})):
             self.assertTrue(self.NEXT.search(as_said(built)), built)
@@ -9899,8 +9935,11 @@ for name, make, run in runs:
         self.assertEqual(where.get("dump"), {"save_state"})
         # R136 (item 4, 2026-11-25): names_unread reads the record to tell "could not be read" from "not there", and
         # known_folders names it as the source of a name it did not take; neither writes it
+        # R205: the guard reads it first, and restore puts the copy in its place through save_state
         self.assertEqual(where.get("state_path"), {"load_state", "save_state", "record_look", "names_unread",
-                                                   "known_folders"})
+                                                   "known_folders", "record_guard", "guarded", "restore",
+                                                   "last_whole_pass", "watch_no_record"})
+        # R208: the watch's words, read only; (s): watch_no_record names the record that is not there and writes nothing
         docs = {id(d.body[0].value) for d in ast.walk(tree)
                 if isinstance(d, (ast.Module, ast.ClassDef, ast.FunctionDef)) and d.body
                 and isinstance(d.body[0], ast.Expr) and isinstance(d.body[0].value, ast.Constant)}
@@ -9996,6 +10035,1444 @@ class ZRule31(unittest.TestCase):
 
 def tearDownModule():
     machine_guard.check()  # rule 17 (R142): a test that reached this machine fails the run, even if it swallowed it
+
+
+def damaged_records(real: bytes):
+    """R205 (family rule 6): a record that is there and could not be read, each way."""
+    yield "0 bytes", b""
+    yield "cut short", real[: len(real) // 2]
+    yield "not the format", b"not json\n"
+    yield "not an object", b"[]\n"
+    yield "runners not an object", b'{"runners": []}\n'  # setup ended in a TypeError and wrote over it
+    yield "not UTF-8", b'{"runners": {"\xff": {}}}\n'
+    yield "cannot be opened", None
+
+
+def plant_record(path: str, real: bytes, data: bytes | None) -> bytes:
+    """Writes the damage; returns the bytes the file must still hold afterwards."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(real if data is None else data)
+    if data is None:
+        os.chmod(path, 0)
+    return real if data is None else data
+
+
+def file_bytes(path: str) -> bytes | None:
+    if not os.path.lexists(path):
+        return None
+    mode = os.stat(path).st_mode
+    os.chmod(path, 0o600)
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    finally:
+        os.chmod(path, mode)
+
+
+def odd_home(host, label: str) -> None:
+    """Homes 1 and 5 of the walk (a space, a backslash), as the stand-in's own folders: the record moves there."""
+    data = M.load_state(host)
+    home = tempfile.mkdtemp(dir=TMP, prefix={"plain": "w0", "a space": "w1 x", "a backslash": "w5\\x"}[label])
+    host._state = os.path.join(home, ".minions")
+    host.home = lambda: home
+    M.save_state(host, data)
+
+
+def printed_command(lines: list[str], line: str) -> str:
+    """The command printed after `line`, as the person reads it."""
+    for sentence, commands in unfold(lines):
+        if sentence == line:
+            assert len(commands) == 1, (line, commands)
+            return commands[0]
+    raise AssertionError((line, lines))
+
+
+class G6Record(unittest.TestCase):
+    """R205, codon G6.35 (family rule 6, the owner's ruling of 2026-11-25 9:30 PM ET)."""
+
+    def test_G6_35_a_record_that_could_not_be_read_is_never_written_over_and_every_command_names_it(self):
+        # Seen 2026-11-26 in a stand-in trial on 35515f9: on a damaged record, watch and look wrote a new one over it
+        # without the runners, uninstall then said "nothing to uninstall" with the runner still there, status and
+        # the others said "no runner of ours" without naming the file, setup ended in a TypeError.
+        for name, make, run in every_command():
+            probe, _ = make()
+            p = M.state_path(probe)
+            real = file_bytes(p) if os.path.exists(p) else b'{"looks": {}}\n'
+            for dname, data in damaged_records(real):
+                with self.subTest(command=name, damage=dname):
+                    host, gh = make()
+                    p = M.state_path(host)
+                    want = plant_record(p, real, data)
+                    copy_before = file_bytes(M.copy_path(host))
+                    ino = os.stat(p).st_ino
+                    out = Out()
+                    code = run(host, gh, out)
+                    lines = out.printed()
+                    self.assertEqual((os.stat(p).st_ino, file_bytes(p)), (ino, want), (name, dname, lines))
+                    self.assertEqual(file_bytes(M.copy_path(host)), copy_before, (name, dname))
+                    self.assertEqual(code, M.EXIT_STOP, (name, dname, lines))
+                    stop = [x for x in lines if x.startswith(f"stop could not read {p} (")]
+                    self.assertEqual(len(stop), 1, (name, dname, lines))
+                    self.assertIn("so nothing is deleted on its word", stop[0])
+                    self.assertTrue(G8Words.NEXT.search(stop[0]), stop[0])
+                    self.assertIn(M.watch_unread(), stop[0])  # the owner's point 3: what the watch does not do
+                    self.assertNotIn("Traceback", out.getvalue())
+                    if dname == "not UTF-8":
+                        self.assertNotIn("\\xff", stop[0])  # where the read stopped, never a value of the file
+
+    def test_G6_35_the_way_out_is_restore_as_printed_then_status_then_uninstall_to_nothing_of_ours(self):
+        # The owner's condition 1: one command of the tool's own, taken as printed, in a plain home and in homes 1
+        # and 5 of the walk; then status reads the record; then uninstall leaves nothing of ours and 0 runners.
+        for label in ("plain", "a space", "a backslash"):
+            with self.subTest(home=label):
+                gh, world, host = remove_setup(moved=False)
+                odd_home(host, label)
+                p = M.state_path(host)
+                good = file_bytes(p)
+                plant_record(p, good, b'{"runners": {"example-org/exa')
+                out = Out()
+                self.assertEqual(M.status(REPO, host=host, gh=StatusGH(), out=out), M.EXIT_STOP)
+                lines = out.printed()
+                stop = next(x for x in lines if x.startswith("stop could not read "))
+                self.assertIn("(cut short at line 1 column ", stop)
+                self.assertIn(f"its second copy, {M.copy_path(host)}, reads whole; it was written at ", stop)
+                self.assertIn("anything this tool made here after that time is not in it", stop)
+                command = printed_command(lines, stop)
+                argv = shlex.split(command)
+                self.assertEqual(argv, ["restore"], command)  # the tool's own command, as its steps print them
+                out = Out()
+                self.assertEqual(M.main(argv, host=host, out=out), M.EXIT_OK, out.printed())
+                said = out.printed()
+                self.assertTrue(said[0].startswith(f"ok {p} could not be read (cut short"), said)
+                self.assertIn("anything this tool made here after that time is not in it", said[0])  # before it acts
+                aside = M.aside_files(host)
+                self.assertEqual(len(aside), 1, os.listdir(host.state_dir()))
+                self.assertEqual(file_bytes(os.path.join(host.state_dir(), aside[0])), b'{"runners": {"example-org/exa')
+                self.assertEqual(file_bytes(p), good)
+                self.assertIn(f"kept as {os.path.join(host.state_dir(), aside[0])}", said[-1])
+                out = Out()
+                M.status(REPO, host=host, gh=StatusGH(), out=out)
+                self.assertFalse([x for x in out.printed() if "could not read" in x], out.printed())
+                self.assertTrue([x for x in out.printed() if x.startswith(f"ok {OURS} for {REPO}: ")], out.printed())
+                code, lines = run_uninstall(gh, host, repo=None, everything=True)
+                self.assertEqual(code, M.EXIT_OK, lines)
+                self.assertIsNone(gh.runner)  # 0 runners on GitHub
+                o = world.order
+                for step in (f"stop {UNIT}", "userdel"):
+                    self.assertIn(step, o)
+                self.assertIn(f"ok kept in {host.state_dir()}: {aside[0]}: {M.ASIDE_WHY}", lines)
+                self.assertEqual(sorted(os.listdir(host.state_dir())), aside)  # nothing else of ours
+                self.assertTrue([x for x in lines if x.startswith("ok this tool is off this computer")], lines)
+
+    def test_G6_35_uninstall_after_the_watch_on_a_damaged_record_still_finds_the_runner(self):
+        gh, world, host = remove_setup(moved=False)
+        open(M.state_path(host), "wb").close()
+        M.watch(host=host, gh=StatusGH(), out=Out())
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertFalse([x for x in lines if "nothing to uninstall" in x], lines)
+        self.assertNotIn(f"stop {UNIT}", world.order)
+        self.assertIsNotNone(gh.runner)
+
+    def test_G6_35_with_no_copy_that_reads_the_stop_says_so_and_names_the_readme_place(self):
+        # The owner's condition 3: both copies unreadable, or no copy: no road in the tool, said plainly, with the
+        # README's place that lists what the tool makes and where GitHub lists a repository's runners.
+        for cdamage in (None, b"", b"[]"):
+            with self.subTest(copy=cdamage):
+                gh, world, host = remove_setup(moved=False)
+                p, c = M.state_path(host), M.copy_path(host)
+                plant_record(p, b"", b"")
+                if cdamage is None:
+                    os.remove(c)
+                else:
+                    plant_record(c, b"", cdamage)
+                before = {n: file_bytes(os.path.join(host.state_dir(), n)) for n in os.listdir(host.state_dir())}
+                for run in (lambda o: M.status(REPO, host=host, gh=StatusGH(), out=o),
+                            lambda o: M.main(["restore"], host=host, out=o)):
+                    out = Out()
+                    self.assertEqual(run(out), M.EXIT_STOP, out.printed())
+                    stop = next(x for x in out.printed() if x.startswith(f"stop could not read {p} (0 bytes)"))
+                    self.assertIn("is not there" if cdamage is None else "could not be read either (", stop)
+                    self.assertIn("it has no road of its own back", stop)
+                    self.assertIn(f"\"{M.README_MAKES_HEAD}\" ({M.README_MAKES})", stop)
+                    self.assertIn("GitHub lists a repository's runners in its Settings, under Actions, then Runners", stop)
+                    self.assertTrue(G8Words.NEXT.search(stop), stop)
+                    self.assertFalse([x for x in out.printed() if x.endswith(" restore")], out.printed())
+                self.assertEqual({n: file_bytes(os.path.join(host.state_dir(), n))
+                                  for n in os.listdir(host.state_dir())}, before)
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f:
+            readme = f.read()
+        self.assertIn(f"\n## {M.README_MAKES_HEAD}\n", readme)
+        self.assertEqual(M.README_MAKES.split("#")[1], M.README_MAKES_HEAD.lower().replace(" ", "-"))
+        part = readme.split(f"## {M.README_MAKES_HEAD}\n", 1)[1].split("\n## ", 1)[0]
+        for place in (M.RUNNER_USER, M.RUNNERS_HOME, M.SLICE, f"{M.WATCH_UNIT}.timer", M.HOOKS_ROOT, M.RECORDS_ROOT,
+                      "~/.minions", f"~/{M.RECORD_NAME}", "actions.runner.", "Settings", "Runners"):
+            self.assertIn(place, part, place)
+
+    def test_G6_35_the_watch_says_its_line_when_the_state_begins_and_changes_never_each_pass(self):
+        # The owner's point 3: said when the state begins and when it changes; status says it while it stands.
+        gh, world, host = remove_setup(moved=False)
+        p = M.state_path(host)
+        jpath = os.path.join(host.state_dir(), "journal.log")
+
+        def a_pass():
+            out = Out()
+            code = M.watch(host=host, gh=StatusGH(), out=out)
+            with open(jpath, encoding="utf-8") as f:
+                return code, out.printed(), [x for x in f.read().splitlines() if x.split(" ", 2)[1:2] == ["watch"]]
+
+        plant_record(p, b"", b"")
+        code, lines, said = a_pass()
+        self.assertEqual(code, M.EXIT_STOP)
+        self.assertTrue(lines[0].startswith(f"stop could not read {p} (0 bytes)"), lines)
+        self.assertTrue(said[-1].endswith(f"watch its record could not be read: {p} (0 bytes)"), said)
+        for _ in range(3):  # the state stands: nothing said, nothing written
+            self.assertEqual(a_pass(), (M.EXIT_OK, [], said))
+        out = Out()
+        M.status(REPO, host=host, gh=StatusGH(), out=out)
+        self.assertIn(M.watch_unread(), out.printed()[0])
+        plant_record(p, b"", b"not json\n")  # it changes: said again
+        code, lines, said2 = a_pass()
+        self.assertEqual((code, len(said2)), (M.EXIT_STOP, len(said) + 1), lines)
+        self.assertIn("(not the format at line 1 column 1)", lines[0])
+        self.assertEqual(M.main(["restore"], host=host, out=Out()), M.EXIT_OK)
+        code, lines, said3 = a_pass()  # the record reads again: the watch's own pass, a line of its own
+        self.assertEqual(len(said3), len(said2) + 1)
+        self.assertNotIn("could not be read", said3[-1])
+        plant_record(p, b"", b"")
+        os.chmod(jpath, 0)  # a journal that could not be read: the line is said at each pass, never kept back
+        try:
+            self.assertEqual(M.watch(host=host, gh=StatusGH(), out=Out()), M.EXIT_STOP)
+            self.assertEqual(M.watch(host=host, gh=StatusGH(), out=Out()), M.EXIT_STOP)
+        finally:
+            os.chmod(jpath, 0o600)
+
+    def test_G6_35_save_state_never_writes_over_a_record_that_could_not_be_read_and_sets_a_bad_copy_aside(self):
+        host = linux_host()
+        Clock(host)
+        M.save_state(host, {"runners": {}})
+        p, c = M.state_path(host), M.copy_path(host)
+        self.assertEqual(file_bytes(p), file_bytes(c))
+        plant_record(p, b"", b"[1")
+        with self.assertRaises(M.RecordUnread) as e:
+            M.save_state(host, {"runners": {"x/y": {}}})
+        self.assertEqual((e.exception.path, e.exception.why), (p, "cut short at line 1 column 3"))
+        self.assertEqual(file_bytes(p), b"[1")
+        with self.assertRaises(M.RecordUnread):
+            M.load_state(host)
+        os.remove(p)
+        self.assertEqual(M.load_state(host), {})  # not there: "no", as before
+        plant_record(c, b"", b"")
+        M.save_state(host, {"runners": {}})
+        aside = M.aside_files(host)
+        self.assertEqual([x.split(".unread-")[0] for x in aside], ["minions.copy.json"])
+        self.assertEqual(file_bytes(os.path.join(host.state_dir(), aside[0])), b"")
+        self.assertEqual(file_bytes(p), file_bytes(c))
+        out = Out()
+        self.assertEqual(M.main(["restore"], host=host, out=out), M.EXIT_OK)
+        self.assertEqual(out.printed(), [f"ok {p} reads whole: nothing to restore, and nothing was changed"])
+
+
+ENV_KEY = ("sudo", "-n", "-u", "minions-runner", "--", "sh", "-c", getattr(M, "ENV_SH", "R206: not in this code"),  # getattr: red, not a collection stop, on the code before R206
+           "sh", f"{FOLDER}/.env")
+CAT_ENV = ("sudo", "-n", "-u", "minions-runner", "--", "cat", f"{FOLDER}/.env")
+PERSONS_ENV = "LANG=C.UTF-8\nJAVA_HOME=/opt/java\nMADE_BY_THE_PERSON=made-value-r206\n"
+
+
+# R208 (G6.36, the owner's ruling 2026-11-26): one lock per home. The writers here are real processes on real files in
+# a made home, each one of this tool's commands by its name, through the tool's own guard.
+TOOLS_ENV = ("LANG=C.UTF-8\nJAVA_HOME=/opt/java\nACTIONS_RUNNER_HOOK_JOB_STARTED=/x/job-started.sh\n"
+             "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/x/job-completed.sh\n")  # as setup's install_hooks wrote it
+ADDED_ENV = TOOLS_ENV + "MADE_BY_THE_PERSON=made-value-r209\n"  # the usual way to give jobs a variable: a line added
+
+
+def env_world(env, env_sum=None, aside=None):
+    gh, world, host = remove_setup()
+    world.files[f"{FOLDER}/.env"] = env
+    world.paths.add(f"{FOLDER}/.env")
+    d = M.load_state(host)
+    if env_sum is not None:
+        d["runners"][REPO]["env_sum"] = env_sum
+    if aside is not None:
+        d["runners"][REPO]["env_aside"] = aside
+    M.save_state(host, d)
+    return gh, world, host
+
+
+def kept_of(host):
+    return {k: v for k, v in host.files.items() if k.startswith(host.record_dir() + "/" + M.KEPT_ENV)}
+
+
+class G6Env(unittest.TestCase):
+    """R209 (the owner's ruling, Thu 11-26, option A): no road of the tool deletes a runner's .env that is not shown to
+    be as the tool left it; such a file is set aside as the person's, named by path with its lines by count."""
+
+    def test_G6_37_a_line_the_person_added_to_an_installed_runner_s_env_is_kept_by_uninstall_never_deleted(self):
+        # THE ORDINARY WORLD (red on 35515f9): an installed runner, a line added to its .env, then uninstall
+        gh, world, host = env_world(ADDED_ENV, M.env_sum(TOOLS_ENV))
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        kept = kept_of(host)
+        self.assertEqual(list(kept.values()), [ADDED_ENV], "kept byte for byte")
+        (path,) = kept
+        self.assertEqual(host.modes[path], 0o600)
+        self.assertRegex(os.path.basename(path), r"^kept-env-example-org_example-repo-\.env-\d{8}T\d{6}Z$")
+        line = [x for x in lines if f"{FOLDER}/.env is a settings file of the runner's" in x]
+        self.assertEqual(len(line), 1, lines)
+        self.assertIn(f"its lines are not the ones this tool wrote there): it is kept as yours in {path} (yours "
+                      "alone, mode 600; 5 lines, naming ACTIONS_RUNNER_HOOK_JOB_COMPLETED, ACTIONS_RUNNER_HOOK_JOB_STARTED, "
+                      "JAVA_HOME, LANG, MADE_BY_THE_PERSON), never deleted; the folder goes", line[0])
+        # nothing of it printed, logged or journaled: names and counts only (the owner's d)
+        self.assertNotIn("made-value-r209", "\n".join(lines))
+        self.assertNotIn("made-value-r209", host.files.get(os.path.join(host.state_dir(), "journal.log"), "")
+                         + "".join(v for k, v in host.files.items() if k.endswith("journal.log")))
+        self.assertIn(("sudo", "-n", "-u", "minions-runner", "--", "cat", f"{FOLDER}/.env"), host.ran, "as the runner user")
+        self.assertNotIn(("sudo", "-n", "cat", f"{FOLDER}/.env"), host.ran, "never as root")
+
+    def test_G6_37_a_env_as_the_tool_left_it_goes_with_the_folder_and_one_with_no_sum_on_record_is_kept(self):
+        # (a) three answers: yes (goes, as today); no; could not be read
+        gh, world, host = env_world(TOOLS_ENV, M.env_sum(TOOLS_ENV))
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual((code, kept_of(host)), (M.EXIT_OK, {}), lines)
+        gh, world, host = env_world(TOOLS_ENV)  # a setup cut before it kept a sum: the person's, kept
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual((code, list(kept_of(host).values())), (M.EXIT_OK, [TOOLS_ENV]), lines)
+        self.assertTrue(any("this tool kept no sum of it" in x for x in lines), lines)
+        # could not be read (the runner user cannot read it): never deleted; the folder stays, named; uninstall
+        # goes to its end saying so
+        gh, world, host = env_world(ADDED_ENV, M.env_sum(TOOLS_ENV))
+        world.unreadable = {f"{FOLDER}/.env"}
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(kept_of(host), {})
+        self.assertNotIn(f"empty {FOLDER}", world.order, "nothing in that folder deleted")
+        self.assertTrue(any(f"{FOLDER}/.env could not be read as minions-runner (the user minions-runner cannot read "
+                            "it), so it is not known to be as this tool left it (so the folder stays with it)" in x
+                            for x in lines), lines)
+        # its kind is read first: a link or a folder is never opened (clear_folder rules on it, as before)
+        for kind in ("link", "folder"):
+            gh, world, host = env_world("")
+            world.files.pop(f"{FOLDER}/.env")
+            (world.links if kind == "link" else world.dirs).add(f"{FOLDER}/.env")
+            code, lines = run_uninstall(gh, host)
+            self.assertNotIn(("sudo", "-n", "-u", "minions-runner", "--", "cat", f"{FOLDER}/.env"), host.ran, kind)
+            self.assertEqual(kept_of(host), {})
+
+    def test_G6_37_a_kept_copy_that_cannot_be_made_or_does_not_read_back_leaves_the_env_and_its_folder(self):
+        # (c): the copy cannot be made (the record cannot be written): the .env is not deleted, the folder stays
+        gh, world, host = env_world(ADDED_ENV, M.env_sum(TOOLS_ENV))
+        host.record_unwritable = True
+        code, lines = run_uninstall(gh, host)
+        self.assertNotIn(f"empty {FOLDER}", world.order)
+        self.assertTrue(any("its copy could not be made in your record" in x and "so it is not deleted" in x
+                            for x in lines), lines)
+        # it does not read back the same as the original: not deleted
+        gh, world, host = env_world(ADDED_ENV, M.env_sum(TOOLS_ENV))
+        host.read_private = lambda path: b"other bytes"
+        code, lines = run_uninstall(gh, host)
+        self.assertNotIn(f"empty {FOLDER}", world.order)
+        self.assertTrue(any("does not read back the same as the original, so the original is not deleted" in x
+                            for x in lines), lines)
+        # a size bound before the read
+        gh, world, host = env_world("A=" + "x" * (M.ENV_MAX + 1) + "\n", M.env_sum(TOOLS_ENV))
+        code, lines = run_uninstall(gh, host)
+        self.assertNotIn(("sudo", "-n", "-u", "minions-runner", "--", "cat", f"{FOLDER}/.env"), host.ran)
+        self.assertTrue(any(f"is larger than {M.ENV_MAX} bytes, so it is not read" in x for x in lines), lines)
+        # two events: two names, never one over the other
+        gh, world, host = env_world(ADDED_ENV, M.env_sum(TOOLS_ENV))
+        first = M.keep_copy(host, REPO, f"{FOLDER}/.env", ADDED_ENV, M.env_sum(ADDED_ENV))
+        again = M.keep_copy(host, REPO, f"{FOLDER}/.env", ADDED_ENV, M.env_sum(ADDED_ENV))
+        self.assertEqual((first[1], again[1]), ("", ""))
+        self.assertNotEqual(first[0], again[0])
+
+    def test_G6_37_setup_again_over_a_cut_setup_keeps_the_env_before_any_delete_after_r206_s_step(self):
+        # (f), (g): in the SAME stand-in computer, with setting_up in the record (no fresh look over it): R206's stop,
+        # its step's effect (the file readable to the runner user), setup again: the .env kept before any delete
+        # (a finished setup after it is walk (b), on the guest)
+        host, sha = setup_host()
+        host.runs[ENV_KEY] = (0, "minions-env: not readable\n")
+        fresh_look(host)
+        listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
+        none = (200, {"total_count": 0, "runners": []})
+        code, lines = run_setup(setup_gh(sha, {listing: none}), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        chown = (f"`sudo chown -h minions-runner {FOLDER}/.env && sudo -u minions-runner chmod u+rw {FOLDER}/.env`")
+        self.assertTrue(any(x.startswith("stop could not read") and x.endswith(chown) for x in lines), lines)
+        self.assertIn(REPO, M.load_state(host).get("setting_up") or {})
+        host.runs[ENV_KEY] = (0, "minions-env: readable\n")  # the step's effect
+        host.runs[CAT_ENV] = (0, PERSONS_ENV)
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "stat", "-c", "%s", f"{FOLDER}/.env")] = (0, "70\n")
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "sha256sum", f"{FOLDER}/.env")] = (
+            0, f"{M.env_sum(PERSONS_ENV)}  {FOLDER}/.env\n")
+        token = ("POST", f"repos/{REPO}/actions/runners/registration-token")
+        gh = setup_gh(sha)
+        gh.overrides[listing] = lambda body: runners_answer() if token in gh.calls else none
+        host.runs[R_TEST + (FOLDER,)] = (0, "")  # the half-made folder is there
+        ras = ("sudo", "-n", "-u", "minions-runner", "--")
+        host.runs[ras + ("find", FOLDER, "-maxdepth", "0", "-printf", "%D %y\n")] = (0, "2049 d\n")
+        host.runs[ras + ("find", FOLDER, "-xdev", "-mindepth", "1", "!", "-user", "minions-runner", "-prune", "-printf",
+                         "F\t%D\t%u\t%y\t%P\\0", "-o", "-printf", "O\t%D\t%u\t%y\t%P\\0")] = (0, "")  # emptied
+        host.ran.clear()
+        code, lines = run_setup(gh, host)
+        # the finished setup after it is walk (b) on the guest (this stand-in does not model the folder's delete)
+        self.assertFalse([x for x in lines if x.startswith("stop") and ".env" in x], lines)
+        self.assertEqual(list(kept_of(host).values()), [PERSONS_ENV], "the .env's bytes in the kept place")
+        cat = host.ran.index(CAT_ENV)
+        dels = [i for i, a in enumerate(host.ran) if "-delete" in a and FOLDER in a]
+        self.assertTrue(dels and cat < min(dels), "kept and compared before anything in that folder is deleted")
+        # Unreadable at setup again: setup stops before any delete in that folder, with one step that can be taken
+        host, sha = setup_host()
+        host.runs[ENV_KEY] = (0, "minions-env: not readable\n")
+        fresh_look(host)
+        run_setup(setup_gh(sha, {listing: none}), host)
+        host.ran.clear()
+        gh = setup_gh(sha)
+        gh.overrides[listing] = lambda body: runners_answer() if token in gh.calls else none
+        host.runs[R_TEST + (FOLDER,)] = (0, "")
+        code, lines = run_setup(gh, host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertFalse([a for a in host.ran if "-delete" in a and FOLDER in a])
+        self.assertTrue(any(x.startswith("stop ") and chown in x for x in lines), lines)
+
+    def test_G6_37_setup_keeps_the_sum_of_what_it_wrote_and_the_name_r206_s_step_moves_it_to_is_read_too(self):
+        host, sha = setup_host()
+        fresh_look(host)
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        tee = [a for a in host.ran if a[-2:] == ("tee", f"{FOLDER}/.env")]
+        self.assertEqual(len(tee), 1)
+        self.assertRegex(M.load_state(host)["runners"][REPO]["env_sum"], r"^[0-9a-f]{64}$")
+        self.assertIn("note_setting(host, repo, \"env_sum\", env_sum(text))", inspect_source(M.install_hooks))
+        # R206's mv step moves it to a dated name inside the folder: that name is on record and kept the same way
+        aside = f"{FOLDER}/.env.kept-20261126T120000Z"
+        gh, world, host = env_world(TOOLS_ENV, M.env_sum(TOOLS_ENV), aside=aside)
+        world.files[aside] = PERSONS_ENV
+        code, lines = run_uninstall(gh, host)
+        self.assertEqual(list(kept_of(host).values()), [PERSONS_ENV], lines)
+
+    def test_G6_37_delete_record_names_the_kept_settings_files_before_the_word_is_typed(self):
+        # (e): the prompt says how many kept settings files the record holds, by name; the word takes them with it
+        host = linux_host()
+        host.tty = True
+        host.files[f"{host.record_dir()}/journal.log"] = "x\n"
+        host.files[f"{host.record_dir()}/kept-env-example-org_example-repo-.env-20261126T120000Z"] = "A=1\n"
+        rep = M.Report(Out())
+        host.answer = "delete"
+        M.delete_record_if_typed(host, rep)
+        self.assertIn("It holds 1 settings file of a runner's kept for you, which go with it: "
+                      "kept-env-example-org_example-repo-.env-20261126T120000Z.", host.asked)
+        self.assertTrue(re.fullmatch(M.RECORD_NAMES, "kept-env-example-org_example-repo-.env-20261126T120000Z"))
+
+
+LOCK_HELPER = r'''
+import io, json, os, random, sys, time
+tree, kind, home, pairs, gap, seed = sys.argv[1:7]
+pairs, gap = int(pairs), float(gap) / 1000
+extra = sys.argv[7:]
+os.environ["HOME"] = home
+sys.path.insert(0, tree)
+import minions as M
+random.seed(int(seed))
+guard = getattr(M, "record_guard", lambda fn: fn)  # 35515f9 has no guard: its commands write as they always did
+held = {"n": 0}
+if hasattr(M, "lock_try"):
+    real_try = M.lock_try
+    def counted(fd):
+        a = real_try(fd)
+        held["n"] += a[0] == "held"
+        return a
+    M.lock_try = counted
+ran = {"whole": 0, "i": 0}
+
+@guard
+def watch(host=None, out=None):
+    d = M.load_state(host)
+    time.sleep(random.uniform(0, gap))  # the GitHub calls' time
+    d = M.load_state(host)  # the watch reads again before its own save, as watch() does
+    w = d.get("watch") or {}
+    d["watch"] = {**w, "pass": int(w.get("pass") or 0) + 1, "time": M.stamp(host.now())}
+    M.save_state(host, d)
+    M.journal(host, "watch", "a whole pass")
+    ran["whole"] += 1
+    return 0
+
+@guard
+def look(host=None, out=None):
+    d = M.load_state(host)
+    time.sleep(random.uniform(0, gap))  # its own work's time
+    d.setdefault("looks", {})[f"o/r{ran['i']}"] = {"t": ran["i"]}
+    M.save_state(host, d)
+    ran["whole"] += 1
+    return 0
+
+@guard
+def move(host=None, out=None):  # a command that works for longer than several passes beside the watch
+    d = M.load_state(host)
+    open(extra[0], "w").close()  # it holds the lock now
+    time.sleep(float(extra[1]))
+    d.setdefault("moves", {})["o/long"] = {"t": 1}
+    M.save_state(host, d)
+    ran["whole"] += 1
+    return 0
+
+@guard
+def setup(host=None, out=None):  # holds the lock until told, then ends; or starts a long child and waits on it
+    open(extra[0], "w").close()
+    if extra[1] == "child":
+        M.Host().run(["sleep", "60"], timeout=120)
+    end = time.monotonic() + 120  # bounded: a test that fails before its go file never leaves this behind
+    while not os.path.exists(extra[1]) and time.monotonic() < end:
+        time.sleep(0.02)
+    d = M.load_state(host)
+    d.setdefault("looks", {})["o/held"] = {"t": 1}
+    M.save_state(host, d)
+    return 0
+
+@guard
+def uninstall(host=None, out=None):  # holds the lock, then takes this tool's folder away as uninstall --all does
+    open(extra[0], "w").close()
+    end = time.monotonic() + 120  # bounded: a test that fails before its go file never leaves this behind
+    while not os.path.exists(extra[1]) and time.monotonic() < end:
+        time.sleep(0.02)
+    sd = host.state_dir()
+    for n in sorted(os.listdir(sd)):
+        os.unlink(os.path.join(sd, n))
+    os.rmdir(sd)
+    return 0
+
+def _slow(host=None, out=None):  # a watch pass that says it holds (lent or its own), then works a while
+    if getattr(M, "_LOCK", {}).get("fd") is None:
+        return 9  # it did not hold this tool's lock: it never writes
+    open(extra[0], "w").close()
+    time.sleep(float(extra[1]))
+    d = M.load_state(host)
+    w = d.get("watch") or {}
+    d["watch"] = {**w, "pass": int(w.get("pass") or 0) + 1, "time": M.stamp(host.now())}
+    M.save_state(host, d)
+    M.journal(host, "watch", "a whole pass")
+    ran["whole"] += 1
+    return 0
+
+
+_slow.__name__ = "watch"  # the tool takes it as its watch: it asks for a lend, never waits
+slowwatch = guard(_slow)
+
+fn = {"watch": watch, "look": look, "move": move, "setup": setup, "uninstall": uninstall, "slowwatch": slowwatch}[kind]
+codes, errors, outs = {}, {}, []
+for i in range(pairs):
+    ran["i"] = i
+    out = io.StringIO()
+
+    try:
+        c = fn(host=M.Host(), out=out)
+        codes[str(c)] = codes.get(str(c), 0) + 1
+    except Exception as e:  # noqa: BLE001 - counted by kind
+        errors[type(e).__name__] = errors.get(type(e).__name__, 0) + 1
+    outs.append(out.getvalue())
+    if kind in ("watch", "look"):
+        time.sleep(random.uniform(0, gap / 4))
+print(json.dumps({"kind": kind, "whole": ran["whole"], "held": held["n"], "codes": codes, "errors": errors,
+                  "outs": outs[-3:]}))
+'''
+
+
+def lock_helper_path():
+    path = os.path.join(TMP, "lock_helper.py")
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(LOCK_HELPER)
+    return path
+
+
+def lock_writer(kind, home, pairs=1, gap_ms=0, seed=1, *extra, tree=None):
+    return subprocess.Popen([sys.executable, lock_helper_path(), tree or os.path.join(ROOT, "scripts"), kind, home,
+                             str(pairs), str(gap_ms), str(seed), *extra], stdout=subprocess.PIPE, text=True)
+
+
+def lock_result(p, timeout=300):
+    out, _ = p.communicate(timeout=timeout)
+    return json.loads(out.strip().splitlines()[-1])
+
+
+def wait_file(path, timeout=30):
+    end = time.monotonic() + timeout
+    while not os.path.exists(path):
+        if time.monotonic() > end:
+            raise AssertionError(f"{path} never appeared")
+        time.sleep(0.01)
+
+
+def made_home():
+    home = tempfile.mkdtemp(dir=TMP, prefix="lock-home-")
+    with mock.patch.dict(os.environ, {"HOME": home}):
+        M.save_state(M.Host(), {"runners": {"o/r": {"name": "box", "unit": "u", "folder": "/f"}}})
+    return home
+
+
+def helper_is_watch(pid):
+    """In this suite the pass is the helper's watch, not a process of the watch's own service: the lender's check
+    is set to that (the real check, lend_peer_ok, is read in its own test)."""
+    return helper_is_watch_kind("watch")(pid)
+
+
+def helper_is_watch_kind(kind):
+    def check(pid):
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                argv = f.read().split(b"\0")
+        except OSError:
+            return False
+        return len(argv) > 4 and argv[1].endswith(b"lock_helper.py") and argv[3] == kind.encode()
+    return check
+
+
+def home_host(home):
+    h = FakeHost()
+    h._state = os.path.join(home, ".minions")
+    return h
+
+
+def read_whole(path):
+    return M.read_record_file(path)
+
+
+class G6Lock(unittest.TestCase):
+    def test_G6_36_two_real_processes_lose_nothing_and_leave_the_record_and_its_copy_whole(self):
+        # The owner's condition i: a watch-shaped writer (read, GitHub's time, read again, its pass, save) beside a
+        # command-shaped one (read, its work, one new look, save), 300 pairs at each of three gaps. Before R208 this
+        # lost the runner's entry and hundreds of looks (the stand-in trial, 2026-11-25).
+        for gap in (0, 5, 50):
+            with self.subTest(gap_ms=gap):
+                home = made_home()
+                ps = [lock_writer("watch", home, 300, gap, 1), lock_writer("look", home, 300, gap, 2)]
+                watch, look = (lock_result(p) for p in ps)
+                sd = os.path.join(home, ".minions")
+                rec, why = read_whole(os.path.join(sd, "minions.json"))
+                cpy, cwhy = read_whole(os.path.join(sd, M.RECORD_COPY))
+                self.assertIsNone(why, "the record reads whole")
+                lost = {f"o/r{i}" for i in range(300)} - set(rec.get("looks") or {})
+                self.assertEqual(("o/r" in (rec.get("runners") or {}), len(lost), (rec.get("watch") or {}).get("pass")),
+                                 (True, 0, watch["whole"]), "the runner's entry, every look, every watch pass")
+                self.assertEqual((watch["errors"], look["errors"]), ({}, {}), "no error, only held answers")
+                self.assertEqual((cwhy, rec), (None, cpy), "its copy reads whole, the same")
+                self.assertEqual(look["whole"], 300, "a command by hand waits and runs; it is never skipped")
+                with open(os.path.join(sd, "journal.log"), encoding="utf-8") as f:
+                    words = [x.split(" ", 2)[1] for x in f]
+                self.assertEqual(words.count("watch-held") + watch["whole"], 300)
+                self.assertEqual(watch["held"], words.count("watch-held"), "the watch never waits: held is skipped")
+                self.assertEqual(sorted(n for n in os.listdir(sd) if ".tmp" in n), [], "no temporary file left")
+                print(f"R208 gap {gap} ms: watch whole {watch['whole']}, skipped {words.count('watch-held')}; "
+                      f"look whole {look['whole']}, held answers {look['held']}")
+
+    def test_G6_36_a_command_longer_than_a_pass_the_watch_skips_says_so_ends_failed_then_reads_again(self):
+        # The owner's condition b and i's second shape: the watch never waits behind a command; each pass skipped is
+        # journaled; past SEEN_PASSES in a row it ends failed and says why, naming the holder; after the command
+        # ends, the next pass is whole, the skipped count is 0 again, and both writers' changes are in the record.
+        home = made_home()
+        sd = os.path.join(home, ".minions")
+        holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
+        mv = lock_writer("move", home, 1, 0, 1, holding, "1.5")
+        wait_file(holding)
+        watch = lock_result(lock_writer("watch", home, M.SEEN_PASSES + 2, 0, 3))
+        self.assertEqual(watch["whole"], 0)
+        self.assertEqual(watch["codes"], {str(M.EXIT_OK): M.SEEN_PASSES - 1, str(M.EXIT_STOP): 3}, watch)
+        last = watch["outs"][-1]
+        self.assertIn(f"the watch has had no whole pass for {M.SEEN_PASSES + 2} passes in a row", last)
+        self.assertIn(f"this tool's move, process {mv.pid}", last)
+        self.assertIn("Your way out: let that command end", last)
+        self.assertEqual(M.held_passes(home_host(home)), M.SEEN_PASSES + 2)
+        self.assertEqual(lock_result(mv)["whole"], 1)
+        after = lock_result(lock_writer("watch", home, 1, 0, 4))
+        self.assertEqual((after["whole"], after["codes"]), (1, {"0": 1}))
+        self.assertEqual(M.held_passes(home_host(home)), 0)
+        rec, why = read_whole(os.path.join(sd, "minions.json"))
+        self.assertIsNone(why)
+        self.assertIn("o/long", rec["moves"])
+        self.assertEqual(rec["watch"]["pass"], 1)
+
+    def test_G6_36_a_command_by_hand_waits_says_what_for_then_stops_naming_the_holder_and_the_step_is_taken(self):
+        # The owner's condition c: bounded, said after a moment, a stop that changed nothing with the holder's
+        # process id and command name (no arguments), and the step taken: the holder ends, the same command again.
+        home = made_home()
+        sd = os.path.join(home, ".minions")
+        holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
+        go = holding + ".go"
+        holder = lock_writer("setup", home, 1, 0, 1, holding, go)
+        wait_file(holding)
+        before = file_bytes(os.path.join(sd, "minions.json"))
+        ran = []
+
+        @M.record_guard
+        def drain(host=None, out=None):
+            d = M.load_state(host)
+            d.setdefault("looks", {})["o/drain"] = {"t": 1}
+            M.save_state(host, d)
+            ran.append(1)
+            return M.EXIT_OK
+
+        out = Out()
+        with mock.patch.object(M, "LOCK_WAIT_S", 1), mock.patch.object(M, "LOCK_SAY_AFTER_S", 0.25):
+            code = drain(host=home_host(home), out=out)
+        self.assertEqual((code, ran), (M.EXIT_STOP, []))
+        text = out.getvalue()
+        self.assertIn(f"waiting this tool's record is held by this tool's setup, process {holder.pid}: this command "
+                      "waits up to 1 seconds", text)
+        self.assertIn(f"stop this tool's record is held by this tool's setup, process {holder.pid}, which did not end "
+                      "within 1 seconds: nothing was changed here. Your next step: let that command end", text)
+        self.assertNotIn(lock_helper_path(), text, "the command's name, never its arguments")
+        self.assertEqual(file_bytes(os.path.join(sd, "minions.json")), before)
+        open(go, "w").close()  # the step: that command ends ...
+        lock_result(holder)
+        out = Out()
+        self.assertEqual(drain(host=home_host(home), out=out), M.EXIT_OK)  # ... then the same command again
+        self.assertEqual(ran, [1])
+        rec, _ = read_whole(os.path.join(sd, "minions.json"))
+        self.assertEqual(set(rec["looks"]), {"o/held", "o/drain"})
+
+    def test_G6_36_no_program_the_tool_starts_holds_the_lock(self):
+        # The owner's condition f: a long child (sleep, through the tool's own Host.run), the tool ended by its
+        # exact process id, and the lock free while the child still runs; the child holds no handle on the file.
+        home = made_home()
+        holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
+        p = lock_writer("setup", home, 1, 0, 1, holding, "child")
+        wait_file(holding)
+        child = None
+        end = time.monotonic() + 10
+        while child is None and time.monotonic() < end:
+            with open(f"/proc/{p.pid}/task/{p.pid}/children", encoding="ascii") as f:
+                kids = f.read().split()
+            child = int(kids[0]) if kids else None
+            time.sleep(0.02)
+        self.assertIsNotNone(child, "the long child started")
+        try:
+            p.kill()
+            p.wait(10)
+            lock = os.path.join(home, ".minions", M.LOCK_NAME)
+            fd = os.open(lock, os.O_RDWR)
+            try:
+                self.assertEqual(M.lock_try(fd), ("taken", ""), "the lock is free once the tool ended")
+            finally:
+                os.close(fd)
+            self.assertTrue(os.path.exists(f"/proc/{child}"), "the child still runs")
+            fds = [os.readlink(f"/proc/{child}/fd/{n}") for n in os.listdir(f"/proc/{child}/fd")]
+            self.assertNotIn(os.path.realpath(lock), fds)
+        finally:
+            os.kill(child, 9)
+        p.stdout.close()
+
+    def test_G6_36_a_command_that_waited_while_uninstall_took_the_folder_makes_nothing(self):
+        # The owner's condition g: the file it locked is no longer the file at that path; it stops, and makes nothing.
+        home = made_home()
+        sd = os.path.join(home, ".minions")
+        holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
+        go = holding + ".go"
+        holder = lock_writer("uninstall", home, 1, 0, 1, holding, go)
+        wait_file(holding)
+        ran = []
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            ran.append(1)
+            M.save_state(host, {"runners": {"o/new": {}}})
+            return M.EXIT_OK
+
+        out = Out()
+        h = home_host(home)
+        h.sleep = time.sleep  # the waiting is real here: the holder ends half a second in
+        threading.Timer(0.5, lambda: open(go, "w").close()).start()
+        code = setup(host=h, out=out)
+        lock_result(holder)
+        self.assertEqual((code, ran), (M.EXIT_STOP, []))
+        self.assertIn(f"stop this tool's folder, {sd}, was removed while this command waited for it (uninstall removes "
+                      "it): nothing was made or changed here", out.getvalue())
+        self.assertFalse(os.path.lexists(sd), "nothing made again")
+
+    def test_G6_36_the_watch_pass_a_command_starts_and_waits_for_runs_under_its_lock(self):
+        # The owner's condition h: setup starts the watch's first pass and waits for it (install_watch); that pass
+        # asks for the lend, is handed setup's own lock and is whole; only one pass can take it; without the lend
+        # the same pass is skipped. And install_watch starts once more when the timer's pass was skipped.
+        home = made_home()
+        got = {}
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            self.assertEqual(M.lend_pass(host), "")
+            got["mode"] = stat.S_IMODE(os.lstat(os.path.join(home, ".minions", M.LEND_NAME)).st_mode)
+            got["lent"] = lock_result(lock_writer("watch", home, 1, 0, 1))
+            got["took"] = M.lend_back(host)
+            got["again"] = lock_result(lock_writer("watch", home, 1, 0, 2))  # a second pass: no lend left
+            return M.EXIT_OK
+
+        with mock.patch.object(M, "lend_peer_ok", helper_is_watch):
+            self.assertEqual(setup(host=home_host(home), out=Out()), M.EXIT_OK)
+        self.assertEqual((got["lent"]["whole"], got["took"], got["mode"]), (1, True, 0o600))
+        self.assertEqual(got["again"]["whole"], 0)
+        self.assertFalse(os.path.lexists(os.path.join(home, ".minions", M.LEND_NAME)))
+        rec, _ = read_whole(os.path.join(home, ".minions", "minions.json"))
+        self.assertEqual(rec["watch"]["pass"], 1)
+        # install_watch: the pass the timer started as it was turned on found the lock held; the start runs again
+        src = inspect_source(M.install_watch)
+        self.assertIn("lend_pass(host)", src)
+        self.assertIn('held_after(host, "the watch\'s first pass")', src)
+        h = home_host(home)
+        M.journal(h, "the watch's first pass")
+        self.assertFalse(M.held_after(h, "the watch's first pass"))
+        M.journal(h, "watch-held", "this pass skipped")
+        self.assertTrue(M.held_after(h, "the watch's first pass"))
+
+    def test_G6_36_the_lend_goes_only_to_the_watch_s_own_pass_of_this_account_and_a_stranger_is_journaled(self):
+        # The owner's world 2: the lender checks who asks (the same account, a process of the watch's own service);
+        # any other who asks gets nothing, and the journal says so. The real check: this suite's own process is not
+        # in the watch's service, so a pass of the helper is refused by it, and skipped.
+        home = made_home()
+        got = {}
+        self.assertFalse(M.lend_peer_ok(os.getpid()))
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            M.lend_pass(host)
+            got["pass"] = lock_result(lock_writer("watch", home, 1, 0, 1))
+            got["took"] = M.lend_back(host)
+            return M.EXIT_OK
+
+        setup(host=home_host(home), out=Out())
+        self.assertEqual((got["pass"]["whole"], got["took"]), (0, False))
+        with open(os.path.join(home, ".minions", "journal.log"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertRegex(text, r" lend-refused process \d+ of user id \d+ asked for this tool's lock, and it is not the "
+                               r"watch's pass this command started: it got nothing\n")
+        self.assertIn(" watch-held this pass skipped", text)
+
+    def test_G6_36_a_home_whose_path_is_longer_than_a_socket_s_bound_still_lends_and_the_pass_is_whole(self):
+        # The owner's world 1: a socket's path is bound by 107 bytes; the lend is bound through the folder opened
+        # by itself, so a long home binds, and its first pass is whole.
+        home = tempfile.mkdtemp(dir=TMP, prefix="lock-home-" + "a" * 60 + "-" + "b" * 60 + "-")
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            M.save_state(home_host(home), {"looks": {}})
+        self.assertGreater(len(os.path.join(home, ".minions", M.LEND_NAME).encode()), 108)
+        got = {}
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            got["why"] = M.lend_pass(host)
+            got["pass"] = lock_result(lock_writer("watch", home, 1, 0, 1))
+            got["took"] = M.lend_back(host)
+            return M.EXIT_OK
+
+        with mock.patch.object(M, "lend_peer_ok", helper_is_watch):
+            setup(host=home_host(home), out=Out())
+        self.assertEqual((got["why"], got["pass"]["whole"], got["took"]), ("", 1, True))
+
+    def test_G6_36_what_stands_at_the_lend_s_path_is_a_stop_or_a_clean_take_over_never_followed(self):
+        # The owner's world 3: a file, a folder, a link: a stop naming it, never followed or taken; a socket a dead
+        # lender left: taken over (stale: the one who makes a lend holds the lock). The watch asks a non-socket:
+        # could not be asked, journaled. The next command that takes the lock takes a dead lend away.
+        target = os.path.join(TMP, "lend-target")
+        with open(target, "w") as f:
+            f.write("not ours\n")
+        for kind in ("file", "folder", "link", "socket"):
+            with self.subTest(kind=kind):
+                home = made_home()
+                path = os.path.join(home, ".minions", M.LEND_NAME)
+                if kind == "file":
+                    with open(path, "w") as f:
+                        f.write("x")
+                elif kind == "folder":
+                    os.mkdir(path)
+                elif kind == "link":
+                    os.symlink(target, path)
+                else:
+                    dead = socket.socket(socket.AF_UNIX)
+                    dead.bind(path)
+                    dead.close()  # its lender is gone: no one listens
+                got = {}
+
+                @M.record_guard
+                def setup(host=None, out=None):
+                    got["why"] = M.lend_pass(host)
+                    got["took"] = M.lend_back(host)
+                    return M.EXIT_OK
+
+                @M.record_guard
+                def look(host=None, out=None):
+                    got["watch"] = lock_result(lock_writer("watch", home, 1, 0, 1))
+                    return M.EXIT_OK
+
+                if kind != "socket":
+                    look(host=home_host(home), out=Out())
+                    with open(os.path.join(home, ".minions", "journal.log"), encoding="utf-8") as f:
+                        self.assertIn(f"its lend could not be asked ({path} is not a socket of this tool's)", f.read())
+                setup(host=home_host(home), out=Out())
+                want = {"file": "a file, not a socket of this tool's", "folder": "a folder, not a socket of this tool's",
+                        "link": "a link, not a socket of this tool's", "socket": ""}[kind]
+                self.assertEqual(got["why"], want)
+                with open(target) as f:
+                    self.assertEqual(f.read(), "not ours\n")
+                self.assertEqual(os.path.lexists(path), kind != "socket")
+        # A dead lend found by the next command that takes the lock: taken away (lock_leftovers)
+        home = made_home()
+        path = os.path.join(home, ".minions", M.LEND_NAME)
+        dead = socket.socket(socket.AF_UNIX)
+        dead.bind(path)
+        dead.close()
+        self.assertEqual(lock_result(lock_writer("look", home, 1, 0, 1))["whole"], 1)
+        self.assertFalse(os.path.lexists(path))
+
+    def test_G6_36_both_ends_hold_one_lock_and_a_pass_killed_early_leaves_the_lender_to_finish(self):
+        # The owner's world 4: once handed over, the lock is free only when both have closed it: the lender gone
+        # while the pass works, a third command still finds it held; the pass ends, it is free. A pass killed early:
+        # lend_back comes back within its bound, and install_watch reads that the pass ended before it writes.
+        home = made_home()
+        holds = os.path.join(TMP, f"lent-holds-{os.getpid()}-{time.monotonic_ns()}")
+        got = {}
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            M.lend_pass(host)
+            got["pass"] = lock_writer("slowwatch", home, 1, 0, 1, holds, "3", )
+            wait_file(holds)
+            got["took"] = M.lend_back(host)
+            return M.EXIT_OK
+
+        with mock.patch.object(M, "lend_peer_ok", helper_is_watch_kind("slowwatch")):
+            setup(host=home_host(home), out=Out())  # the lender ends here, its own fd closed
+        third = M.lock_open(home_host(home))[0]
+        self.assertEqual(M.lock_try(third)[0], "held", "the pass still holds the lock it was handed")
+        self.assertEqual(lock_result(got["pass"])["whole"], 1)
+        self.assertEqual(M.lock_try(third)[0], "taken", "both closed: free")
+        os.close(third)
+        # Killed early: the lender's lend_back returns within its bound, nothing hangs
+        holds2 = holds + "-2"
+
+        @M.record_guard
+        def setup2(host=None, out=None):
+            M.lend_pass(host)
+            p = lock_writer("slowwatch", home, 1, 0, 1, holds2, "60")
+            wait_file(holds2)
+            p.kill()
+            p.wait(30)
+            t0 = time.monotonic()
+            got["took2"] = M.lend_back(host)
+            got["back_s"] = time.monotonic() - t0
+            return M.EXIT_OK
+
+        with mock.patch.object(M, "lend_peer_ok", helper_is_watch_kind("slowwatch")):
+            setup2(host=home_host(home), out=Out())
+        self.assertTrue(got["took2"])
+        self.assertLess(got["back_s"], M.LEND_ACCEPT_S * 3 + 1)
+        # install_watch reads that the pass has ended before it writes again (systemd's own word), else it stops
+        src = inspect_source(M.install_watch)
+        self.assertIn("state = pass_state(host)", src)
+        self.assertIn(f"TimeoutStartSec={M.WATCH_PASS_S}s\n", M.watch_units("person", 300)[0])
+        for word, want in (("inactive\n", "ended"), ("failed\n", "ended"), ("activating\n", "systemd says activating"),
+                           ("", "could not be read")):
+            h = FakeHost(runs={tuple(M.systemctl("show", "-p", "ActiveState", "--value", f"{M.WATCH_UNIT}.service")):
+                               (0, word)})
+            self.assertEqual(M.pass_state(h), want)
+
+    def test_G6_36_the_lock_that_could_not_be_asked_stops_before_any_change_and_its_step_is_taken(self):
+        # The owner's condition a's third answer, and e: the lock file is a kept file; nothing stands in it.
+        for kind in ("folder", "link"):
+            with self.subTest(kind=kind):
+                home = made_home()
+                sd = os.path.join(home, ".minions")
+                lock = os.path.join(sd, M.LOCK_NAME)
+                os.unlink(lock)  # made_home's own planting made it
+                if kind == "folder":
+                    os.mkdir(lock)
+                else:
+                    os.symlink(os.path.join(home, "elsewhere"), lock)
+                before = file_bytes(os.path.join(sd, "minions.json"))
+                ran = []
+
+                @M.record_guard
+                def look(host=None, out=None):
+                    ran.append(1)
+                    M.save_state(host, {})
+                    return M.EXIT_OK
+
+                out = Out()
+                self.assertEqual(look(host=home_host(home), out=out), M.EXIT_STOP)
+                self.assertEqual(ran, [])
+                self.assertEqual(file_bytes(os.path.join(sd, "minions.json")), before)
+                why = "a folder, not a file" if kind == "folder" else "a link, not a file"
+                self.assertIn(f"stop could not ask for this tool's lock, {lock} ({why})", out.getvalue())
+                step = re.search(r"never deleted: `(mv -n -T -- [^`]+)`", out.getvalue()).group(1)
+                self.assertEqual(subprocess.run(shlex.split(step)).returncode, 0)  # the step, as printed
+                self.assertEqual(look(host=home_host(home), out=Out()), M.EXIT_OK)
+                self.assertEqual(ran, [1])
+                kept = [n for n in os.listdir(sd) if n.startswith(M.LOCK_NAME + ".kept-")]
+                self.assertEqual(len(kept), 1, "set aside, never deleted")
+                self.assertFalse(os.path.exists(os.path.join(home, "elsewhere")), "a link is never followed")
+        # Nothing stands in the lock file and nothing is read from it
+        self.assertEqual(os.path.getsize(os.path.join(sd, M.LOCK_NAME)), 0)
+        src = inspect_source(M.lock_holder) + inspect_source(M.lock_take)
+        self.assertNotIn("os.read(", src)
+
+    def test_G6_36_no_wait_for_a_person_is_inside_the_hold_and_after_the_answer_the_record_is_read_afresh(self):
+        # The owner's k: a person who leaves a prompt open never holds the watch. At setup's Enter, at sudo's
+        # password and at uninstall's typed word the lock is let go: a real watch pass run while the person waits is
+        # whole, never skipped. After the answer the command takes the lock again and runs from its first line, so it
+        # decides on the record as the watch left it; what it printed before the wait is not printed twice.
+        home = made_home()
+        seen = {}
+
+        def person_waits(answer):
+            def wait(*_):
+                seen.setdefault("passes", []).append(lock_result(lock_writer("watch", home, 1, 0, 1)))
+                return answer
+            return wait
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            rep = M.Report(out)
+            seen.setdefault("rounds", []).append(M.load_state(host).get("watch", {}).get("pass"))
+            rep.ok("a line before the wait")
+            if not M.persons_own_eyes(host, rep, ["the lines you read"], True, "`setup o/r`"):
+                return rep.code()
+            if not M.ask_admin_once(host, rep, True):
+                return rep.code()
+            d = M.load_state(host)
+            d.setdefault("looks", {})["o/after"] = {"t": 1}
+            M.save_state(host, d)
+            rep.ok("done")
+            return rep.code()
+
+        h = home_host(home)
+        h.tty, h.enter, h.read_enters, h.validated = True, True, 0, 0
+        h.read_enter = (lambda real: lambda: (person_waits(True)(), real())[1])(h.read_enter)
+        h.runs[("sudo", "-n", "true")] = (1, "a password is required")
+        h.sudo_validate = (lambda real: lambda: (person_waits(0)(), real())[1])(h.sudo_validate)
+        out = Out()
+        self.assertEqual(setup(host=h, out=out), M.EXIT_OK, out.getvalue())
+        self.assertEqual([p["whole"] for p in seen["passes"]], [1, 1], "each pass while the person waited was whole")
+        self.assertEqual(seen["rounds"], [None, 1, 2], "each round read the record afresh, as the watch left it")
+        self.assertEqual((h.read_enters, h.validated), (1, 1), "each asked once")
+        text = out.getvalue()
+        self.assertEqual(text.count("ok a line before the wait"), 1, text)
+        self.assertEqual(text.count("after your answer this command took this tool's lock again and read its record "
+                                    "afresh: what you were shown reads the same, so it goes on"), 2, text)
+        rec, _ = read_whole(os.path.join(home, ".minions", "minions.json"))
+        self.assertEqual((rec["watch"]["pass"], sorted(rec["looks"])), (2, ["o/after"]))
+        # What the person was to read changed while they answered: asked again, with the reason
+        home = made_home()
+        n = {"i": 0}
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            rep = M.Report(out)
+            p = M.load_state(host).get("watch", {}).get("pass")
+            if not M.persons_own_eyes(host, rep, [f"passes so far: {p}"], True, "`setup o/r`"):
+                return rep.code()
+            return rep.code()
+
+        h = home_host(home)
+        h.tty, h.enter, h.read_enters = True, True, 0
+
+        def enter_while_a_pass_runs():
+            n["i"] += 1
+            if n["i"] == 1:
+                person_waits(True)()
+            h.read_enters += 1
+            return True
+
+        h.read_enter = enter_while_a_pass_runs
+        out = Out()
+        self.assertEqual(setup(host=h, out=out), M.EXIT_OK)
+        self.assertEqual(h.read_enters, 2)
+        self.assertIn("warn after your answer this command read this tool's record afresh, and what you are to read has "
+                      "changed meanwhile (another of its commands ran): read it again below", out.getvalue())
+        # uninstall's typed word (after its last change to the record): the lock let go first; a save after it is a
+        # stop naming the command, never a traceback (the owner's q)
+        home = made_home()
+
+        @M.record_guard
+        def uninstall(host=None, out=None):
+            rep = M.Report(out)
+            M.last_wait("Type delete: ", person_waits("delete"))
+            M.save_state(host, {"looks": {}})
+            return rep.code()
+
+        out = Out()
+        self.assertEqual(uninstall(host=home_host(home), out=out), M.EXIT_STOP)
+        self.assertEqual(seen["passes"][-1]["whole"], 1)
+        self.assertIn("stop this tool's uninstall was about to write its record without holding its lock, which it "
+                      "never does, so it wrote nothing more and stopped here", out.getvalue())
+
+    def test_G6_36_every_wait_for_a_person_and_every_long_wait_runs_with_the_lock_let_go(self):
+        # The owner's k and o, named: every wait for a person in the tool is one of these three, each inside
+        # outside_hold or last_wait: the Enter (persons_own_eyes: setup, uninstall), sudo's password (ask_admin_once:
+        # setup, uninstall, drain --stop, resume, doctor), the typed word (uninstall --delete-record). The wait for
+        # a running job (wait_idle: drain, uninstall, setup over a cut one) lets the lock go before its first sleep.
+        src = inspect_source(M)
+        self.assertEqual(src.count("host.read_enter()"), 0)
+        self.assertEqual(src.count("host.sudo_validate()"), 0)
+        self.assertEqual(len(re.findall(r"host\.ask\(", src)), 0)
+        self.assertIn('outside_hold(("enter", command, tuple(lines)), host.read_enter)', inspect_source(M.persons_own_eyes))
+        self.assertIn('outside_hold(("sudo", cmd), host.sudo_validate)', inspect_source(M.ask_admin_once))
+        self.assertIn("last_wait(", inspect_source(M.delete_record_if_typed))
+        self.assertIn("input(prompt)", inspect_source(M.Host.ask))
+        self.assertEqual(len(re.findall(r"\binput\(", src)), 1)
+        # wait_idle: a real watch pass while it waits for a job to end is whole; then the command runs again afresh
+        home = made_home()
+        answers = iter([{"busy": True, "status": "online"}, {"busy": False, "status": "online"},
+                        {"busy": False, "status": "online"}])
+        seen = {"rounds": 0}
+
+        @M.record_guard
+        def drain(host=None, out=None):
+            rep = M.Report(out)
+            seen["rounds"] += 1
+            got = M.wait_idle(mock.Mock(limited=lambda: False), host, "o/r", {"name": "box", "folder": "/f"}, 60, 0, rep, "drain o/r")
+            M.save_state(host, M.load_state(host))
+            rep.ok(f"then: {got}")
+            return rep.code()
+
+        h = home_host(home)
+        h.sleep = lambda s: seen.setdefault("pass", lock_result(lock_writer("watch", home, 1, 0, 1)))
+        with mock.patch.object(M, "listed_runner", lambda *a: next(answers)), \
+                mock.patch.object(M, "runner_pids", lambda *a: []):
+            out = Out()
+            self.assertEqual(drain(host=h, out=out), M.EXIT_OK, out.getvalue())
+        self.assertEqual((seen["pass"]["whole"], seen["rounds"]), (1, 2))
+        self.assertIn("this tool's record is let go while it waits, so its watch goes on", out.getvalue())
+        self.assertIn("ok then: idle", out.getvalue())
+
+    def test_G6_36_a_hold_past_the_watch_s_three_passes_heals_at_its_next_pass_with_nothing_for_a_person(self):
+        # The owner's (o), 2: the REAL watch over a computer with our runner, its folder shared with a real process
+        # of this tool's that holds the lock (setup's shape) past SEEN_PASSES passes: each pass skipped, the last
+        # failed and says why; no private read is written meanwhile (the job hook's read grows old). The holder ends
+        # by itself: the very next pass is whole, writes a fresh private read for the hook, and leaves no mark
+        # (no skipped count, no blind entry, status with no skipped line), with no step of a person's between.
+        host, clock = g5_host()
+        home = tempfile.mkdtemp(dir=TMP, prefix="lock-home-")
+        shutil.copytree(host.state_dir(), os.path.join(home, ".minions"))
+        host._state = os.path.join(home, ".minions")
+        seen = M.seen_path(f"/home/minions-runner/runners/{REPO.replace('/', '-')}")
+        holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
+        go = holding + ".go"
+        holder = lock_writer("setup", home, 1, 0, 1, holding, go)
+        self.addCleanup(lambda: holder.poll() is None and holder.kill())
+        wait_file(holding)
+        codes = []
+        for _ in range(M.SEEN_PASSES + 1):
+            clock.sleep(300)
+            out = Out()
+            codes.append(M.watch(host=host, gh=StatusGH(), out=out))
+        self.assertEqual(codes, [M.EXIT_OK] * (M.SEEN_PASSES - 1) + [M.EXIT_STOP] * 2, out.getvalue())
+        self.assertIn(f"the watch has had no whole pass for {M.SEEN_PASSES + 1} passes in a row", out.getvalue())
+        self.assertNotIn(seen, host.files, "a skipped pass wrote a private read")
+        open(go, "w").close()  # the holder ends by itself: no person's step
+        lock_result(holder)
+        clock.sleep(300)
+        out = Out()
+        self.assertEqual(M.watch(host=host, gh=StatusGH(), out=out), M.EXIT_OK, out.getvalue())
+        self.assertEqual(host.files[seen].strip(), str(int(clock.t.timestamp())), "the hook's read is fresh again")
+        self.assertEqual(M.held_passes(host), 0)
+        self.assertFalse((M.load_state(host).get("watch") or {}).get("blind"))
+        st = Out()
+        M.status(REPO, host=host, gh=StatusGH(), out=st)
+        self.assertNotIn("skipped since", st.getvalue())
+        self.assertNotIn("no whole pass", st.getvalue())
+
+    def test_G6_36_a_command_whose_own_hold_made_the_watch_skip_says_so_at_its_end(self):
+        # The owner's (o), 3: the person at the command that held the lock is told, at its end, how many passes its
+        # hold made the watch skip, what that meant for jobs past SEEN_PASSES, and that nothing else is theirs to do.
+        # Passes another command's hold made skip, before this one began, are not counted for it.
+        home = made_home()
+        hh = home_host(home)
+        M.journal(hh, "watch-held", "this pass skipped: process 1 holds this tool's record")  # not this command's
+
+        def make(n):
+            @M.record_guard
+            def drain(host=None, out=None):
+                if n:
+                    lock_result(lock_writer("watch", home, n, 0, 7))
+                return M.EXIT_OK
+            return drain
+
+        for n, words in ((0, None), (1, "the watch skipped 1 of its passes"),
+                         (M.SEEN_PASSES + 1, f"the watch skipped {M.SEEN_PASSES + 1} of its passes")):
+            out = Out()
+            self.assertEqual(make(n)(host=home_host(home), out=out), M.EXIT_OK)
+            text = out.getvalue()
+            if words is None:
+                self.assertNotIn("the watch skipped", text)
+                continue
+            self.assertIn(f"warn while this command held this tool's record, {words} (the journal names each)", text)
+            self.assertIn("the watch's next pass reads again by itself", text)
+            self.assertEqual(f"at {M.SEEN_PASSES} in a row it ended failed" in text, n >= M.SEEN_PASSES, text)
+
+    def test_G6_36_a_watch_pass_with_its_folder_or_record_gone_says_so_makes_nothing_and_the_next_pass_reads(self):
+        # The owner's (s): the folder this tool keeps its record and lock in is gone, or the record alone is, when the
+        # watch fires. The watch never takes that for a fresh home (it runs only after a setup): each pass says so,
+        # makes nothing (no folder, no lock file, no record) and ends; where the copy reads, its step is restore, taken
+        # as printed, and the next pass is whole. A home this tool cannot write in: the stop's words fit, no mv line.
+        host, clock = g5_host()
+        home = tempfile.mkdtemp(dir=TMP, prefix="lock-home-")
+        kept = os.path.join(TMP, f"kept-{os.getpid()}-{time.monotonic_ns()}")
+        shutil.copytree(host.state_dir(), kept)
+        host._state = os.path.join(home, ".minions")
+        for _ in range(2):  # the folder gone: said at each pass, nothing made
+            out = Out()
+            self.assertEqual(M.watch(host=host, gh=StatusGH(), out=out), M.EXIT_STOP)
+            self.assertIn(f"stop this tool's record, {host._state}/minions.json, is not there, nor its folder "
+                          f"{host._state}: the watch runs only after a setup made it", out.getvalue())
+            self.assertIn("The watch made nothing and changed nothing", out.getvalue())
+            self.assertFalse(os.path.lexists(host._state), "the watch made this tool's folder")
+        shutil.copytree(kept, host._state)  # the record alone gone, its copy whole
+        os.unlink(os.path.join(host._state, "minions.json"))
+        out = Out()
+        self.assertEqual(M.watch(host=host, gh=StatusGH(), out=out), M.EXIT_STOP)
+        lines = out.printed()
+        self.assertIn("reads whole", lines[0])
+        self.assertEqual(lines[-1], "restore", lines)
+        self.assertFalse(os.path.lexists(os.path.join(host._state, "minions.json")))
+        out = Out()
+        self.assertEqual(M.main([lines[-1]], host=host, out=out), M.EXIT_OK, out.getvalue())  # taken as printed
+        self.assertIn("is not there. Its second copy", out.getvalue())
+        self.assertNotIn("kept as", out.getvalue())
+        clock.sleep(300)
+        out = Out()
+        self.assertEqual(M.watch(host=host, gh=StatusGH(), out=out), M.EXIT_OK, out.getvalue())
+        self.assertIn(REPO, M.load_state(host)["runners"])
+        bare = tempfile.mkdtemp(dir=TMP, prefix="lock-home-")  # a home this tool cannot write in
+        os.chmod(bare, 0o500)
+        self.addCleanup(os.chmod, bare, 0o700)
+
+        @M.record_guard
+        def drain(host=None, out=None):
+            return M.EXIT_OK
+
+        hb = FakeHost()
+        hb._state = os.path.join(bare, ".minions")
+        out = Out()
+        self.assertEqual(drain(host=hb, out=out), M.EXIT_STOP)
+        self.assertIn(f"(its folder cannot be made: Permission denied)", out.getvalue())
+        self.assertIn(f"Your next step: make {bare} a folder you can write to (this tool makes .minions in it, as "
+                      "you), then run the same command again", out.getvalue())
+        self.assertNotIn("mv -n", out.getvalue())
+
+    def test_G6_36_a_process_with_the_lock_file_open_that_does_not_hold_it_is_never_named_its_holder(self):
+        # The owner, after the btrfs run (11-26): /proc/locks is matched by inode number only (its device is not the
+        # one stat gives on btrfs), so a process that has this lock file open WITHOUT holding it (another command
+        # waiting at it) and holds a FLOCK on another file with the same inode number elsewhere was named the holder.
+        # The holder is now the process whose own descriptor of THIS file carries the FLOCK line (/proc/PID/fdinfo).
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, M.LOCK_NAME)
+        open(path, "w").close()
+        kids = []
+        for take in (True, False):
+            code = ("import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDWR); "
+                    + ("fcntl.flock(fd, fcntl.LOCK_EX); " if take else "") + "print('ready', flush=True); time.sleep(60)")
+            k = subprocess.Popen([sys.executable, "-I", "-c", code, path], stdout=subprocess.PIPE, text=True)
+            self.addCleanup(k.wait)
+            self.addCleanup(k.kill)
+            self.assertEqual(k.stdout.readline().strip(), "ready")
+            kids.append(k)
+        holder, waiter = kids
+        ino = os.stat(path).st_ino
+        with open("/proc/locks", encoding="ascii") as f:
+            real = f.read()
+        made_up = f"1: FLOCK  ADVISORY  WRITE {waiter.pid} 00:99:{ino} 0 EOF\n"  # its lock on another file system
+        real_open = open
+
+        def fake_open(name, *a, **k):
+            if name == "/proc/locks":
+                return io.StringIO(made_up + real)
+            return real_open(name, *a, **k)
+        fd = os.open(path, os.O_RDWR)
+        self.addCleanup(os.close, fd)
+        with mock.patch.object(M, "open", fake_open, create=True):
+            pid, _ = M.lock_holder(fd)
+        self.assertEqual(pid, holder.pid, "the process whose descriptor of this file holds the lock")
+        self.assertNotEqual(pid, waiter.pid)
+
+    def test_G6_36_a_download_that_trickles_ends_within_its_bound_plus_one_read(self):
+        # The owner's (o): the runner's download is inside the hold, so its bound must hold on a line that trickles. A
+        # real server on this computer's loopback sends a long body one byte every 0.3 s: with the whole bound 2 s and
+        # one read's wait 1 s, the download ends by the tool's own words within 2 + 1 s and a margin, never waiting on
+        # each byte. Red on a read of a fixed size (1 MiB at 1 byte per 0.3 s: days).
+        import http.server
+        stop = threading.Event()
+
+        class Trickle(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", str(1 << 20))
+                self.end_headers()
+                for _ in range(200):
+                    if stop.is_set():
+                        return
+                    try:
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                    except OSError:
+                        return
+                    time.sleep(0.3)
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Trickle)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        self.addCleanup(stop.set)
+        got = {}
+
+        def fetch():
+            t0 = time.monotonic()
+            try:
+                M.Host().fetch_to(f"http://127.0.0.1:{srv.server_address[1]}/runner.tar.gz",
+                                  os.path.join(tempfile.mkdtemp(dir=TMP), "runner.tar.gz"), timeout=1, whole_s=2)
+                got["end"] = "finished"
+            except Exception as e:  # noqa: BLE001
+                got["end"] = f"{type(e).__name__}: {e}"
+            got["s"] = time.monotonic() - t0
+
+        th = threading.Thread(target=fetch, daemon=True)
+        th.start()
+        th.join(8)
+        self.assertFalse(th.is_alive(), "the download was still running after 8 s on a 2 s bound")
+        self.assertLess(got["s"], 4.5, got)
+        self.assertIn("TimeoutError: the download took longer than 1 minute, so it was stopped (a slow line)", got["end"])
+
+    def test_G6_36_the_mv_step_is_taken_as_printed_from_a_home_with_a_space_and_never_moves_into_a_folder(self):
+        # The owner's p: the lock's mv line goes through the helper every printed command does (rule 31 (B), R200),
+        # is taken as printed from a home whose path holds a space; a kept name that stands already (a folder): -T
+        # never moves INTO it, -n never over it; a path no printed line may carry gets words, no command.
+        home = tempfile.mkdtemp(dir=TMP, prefix="lock home with a space-")
+        sd = os.path.join(home, ".minions")
+        os.makedirs(sd, mode=0o700)
+        lock = os.path.join(sd, M.LOCK_NAME)
+        os.mkdir(lock)
+        out = Out()
+        self.assertEqual(M.lock_take(home_host(home), out, "look"), M.EXIT_STOP)
+        step = re.search(r"never deleted: `(mv -n -T -- [^`]+)`", out.getvalue()).group(1)
+        self.assertEqual(subprocess.run(["bash", "-c", step]).returncode, 0, step)  # pasted into a shell, as printed
+        self.assertFalse(os.path.lexists(lock))
+        kept = [n for n in os.listdir(sd) if n.startswith(M.LOCK_NAME + ".kept-")]
+        self.assertEqual(len(kept), 1)
+        # the kept name stands already, as a folder: the step neither moves into it nor over it
+        os.mkdir(lock)
+        target = os.path.join(sd, "taken-name")
+        os.mkdir(target)
+        r = subprocess.run(["mv", "-n", "-T", "--", lock, target], capture_output=True, text=True)
+        self.assertEqual(os.listdir(target), [], "nothing moved into the folder at that name")
+        self.assertTrue(os.path.isdir(lock), "the lock path stays where it was")
+        # a name free when printed: one that stands gets the next free one
+        with mock.patch.object(M, "stamp_now", lambda: "20261126T120000Z"):
+            os.mkdir(f"{lock}.kept-20261126T120000Z")
+            self.assertIn(f"{lock}.kept-20261126T120000Z-2", M.aside_step(lock))
+        # a path that holds a backtick: no command, words only
+        self.assertNotIn("`mv", M.cmd("x") + M.aside_step("/home/user/a`b/.minions/minions.lock"))
+        self.assertIn("set /home/user/a`b/.minions/minions.lock aside by hand", M.aside_step("/home/user/a`b/.minions/minions.lock"))
+        self.assertIn("aside_step(path)", inspect_source(M.lock_unasked))
+
+    def test_G6_36_status_never_waits_and_saves_nothing_while_another_holds_the_record(self):
+        # The owner's condition d (taken: none): status reads on, says who holds the record, and writes nothing.
+        home = made_home()
+        sd = os.path.join(home, ".minions")
+        holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
+        go = holding + ".go"
+        holder = lock_writer("setup", home, 1, 0, 1, holding, go)
+        wait_file(holding)
+        before = file_bytes(os.path.join(sd, "minions.json"))
+        seen = {}
+
+        @M.record_guard
+        def status(host=None, out=None):
+            seen["readonly"], seen["by"] = M._LOCK["readonly"], M._LOCK["held_by"]
+            M.save_state(host, {"looks": {"o/status": {}}})  # its one save: none
+            return M.EXIT_OK
+
+        t0 = time.monotonic()
+        self.assertEqual(status(host=home_host(home), out=Out()), M.EXIT_OK)
+        self.assertLess(time.monotonic() - t0, 1, "status never waits")
+        self.assertEqual((seen["readonly"], seen["by"]), (True, f"this tool's setup, process {holder.pid}"))
+        self.assertEqual(file_bytes(os.path.join(sd, "minions.json")), before)
+        self.assertFalse(M._LOCK["readonly"], "freed at its end")
+        open(go, "w").close()
+        lock_result(holder)
+        src = inspect_source(M.status)
+        self.assertIn("pass(es) skipped", src)
+        self.assertIn("status read it as it stands and", src)
+
+    def test_G6_36_every_command_that_changes_the_record_takes_the_lock_and_no_save_goes_without_it(self):
+        # Aims 1 and 2: every command of the tool runs through the guard; a save inside a command without the lock
+        # is refused, never written.
+        for name in M.COMMANDS:
+            self.assertTrue(hasattr(getattr(M, name), "__wrapped__"), f"{name} runs through record_guard")
+        home = made_home()
+        with mock.patch.dict(M._GUARD, {"depth": 1}):
+            with self.assertRaises(RuntimeError):
+                M.save_state(home_host(home), {})
+        rec, _ = read_whole(os.path.join(home, ".minions", "minions.json"))
+        self.assertIn("o/r", rec["runners"])
+        names = ["minions.lock", "minions.lend", "minions.json.tmp-123-0a1b2c3d", "minions.copy.json.tmp-9-ffffffff"]
+        self.assertTrue(all(re.fullmatch(M.STATE_NAMES, n) for n in names), "uninstall --all deletes them")
+
+
+inspect_source = inspect.getsource
+
+
+class G2Env(unittest.TestCase):
+    """R206, codon G2.29 (family rule 6, the owner's ruling of 2026-11-25 9:30 PM ET)."""
+
+    def test_G2_29_a_runner_env_that_could_not_be_read_is_never_written_over(self):
+        # Seen 2026-11-26 in a stand-in trial on 35515f9: a .env the runner user could not open was taken for an
+        # empty one and written over with only the tool's three lines; every line of the person's was lost.
+        for kind, step in (("not readable", f"sudo chown -h minions-runner {FOLDER}/.env && "
+                                            f"sudo -u minions-runner chmod u+rw {FOLDER}/.env"),
+                           ("a link", f"sudo -u minions-runner mv -n -T -- {FOLDER}/.env {FOLDER}/.env.kept-"),
+                           ("not a file", f"sudo -u minions-runner mv -n -T -- {FOLDER}/.env {FOLDER}/.env.kept-"),
+                           ("cat fails", f"sudo -u minions-runner mv -n -T -- {FOLDER}/.env {FOLDER}/.env.kept-"),
+                           ("no mark", f"sudo -u minions-runner mv -n -T -- {FOLDER}/.env {FOLDER}/.env.kept-")):
+            with self.subTest(kind=kind):
+                host, sha = setup_host()
+                host.runs[ENV_KEY] = {"cat fails": (0, "minions-env: readable\n"), "no mark": (1, "")}.get(
+                    kind, (0, f"minions-env: {kind}\n"))
+                host.runs[CAT_ENV] = (1, PERSONS_ENV + "cat: read error\n")  # what a cut read could carry
+                fresh_look(host)
+                code, lines = run_setup(setup_gh(sha), host)
+                self.assertEqual(code, M.EXIT_STOP, lines)
+                self.assertFalse([a for a, _ in host.fed if a[-1] == f"{FOLDER}/.env"], "written over")
+                stop = next(x for x in lines if x.startswith(f"stop could not read {FOLDER}/.env ("))
+                self.assertIn("so it is not written over, and nothing of it was changed", stop)
+                command = re.search(r": `([^`]*)`$", stop).group(1)  # run_setup's lines hold each command in place
+                self.assertTrue(command.startswith(step), (command, step))
+                self.assertNotIn("made-value-r206", "\n".join(lines))  # no line of the file is printed
+                for j in journals():
+                    with open(j, encoding="utf-8") as f:
+                        self.assertNotIn("made-value-r206", f.read())  # nor logged
+                if kind != "not readable":
+                    continue
+                # The step's effect (the file the runner user's own and readable), then setup: the person's lines
+                # stay, byte for byte, with the hooks' two lines after them. The stand-in has no GitHub for a setup
+                # run again over one that stopped part-way, so this is a fresh world; the step itself, as printed,
+                # and the same setup again are the owner's walk (b) on a real guest.
+                host, sha = setup_host()
+                fresh_look(host)
+                host.runs[ENV_KEY] = (0, "minions-env: readable\n")
+                host.runs[CAT_ENV] = (0, PERSONS_ENV)
+                code, lines = run_setup(setup_gh(sha), host)
+                self.assertEqual(code, M.EXIT_OK, lines)
+                env = next(x for a, x in host.fed if a[-1] == f"{FOLDER}/.env")
+                self.assertTrue(env.startswith(PERSONS_ENV), env)
+                self.assertEqual(env[len(PERSONS_ENV):].count("ACTIONS_RUNNER_HOOK_JOB_"), 2, env)
+        # Not there, 0 bytes, cut short: as before (written new; nothing; the cut line kept as it was).
+        for kind, text, want in (("not there", None, ""), ("0 bytes", "", ""), ("cut short", "JAVA_HO", "JAVA_HO\n")):
+            with self.subTest(kind=kind):
+                host, sha = setup_host()
+                host.runs[ENV_KEY] = (0, "minions-env: not there\n" if text is None else "minions-env: readable\n")
+                host.runs[CAT_ENV] = (0, text or "")
+                fresh_look(host)
+                self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
+                env = next(x for a, x in host.fed if a[-1] == f"{FOLDER}/.env")
+                self.assertEqual(env.split("ACTIONS_RUNNER_HOOK_JOB_")[0], "LANG=C.UTF-8\n" + want)
 
 
 if __name__ == "__main__":
