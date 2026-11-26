@@ -2998,7 +2998,7 @@
    "codon": "G6.44",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
-   "test": "",
+   "test": "test_G6_44_a_wait_with_no_answer_read_never_says_an_answer_came",
    "owner": "maintainer",
    "proven": "",
    "issue": 403,

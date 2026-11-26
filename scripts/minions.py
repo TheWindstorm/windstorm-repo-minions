@@ -3043,18 +3043,22 @@ class Quiet:
         return getattr(self.real, name)
 
 
-def outside_hold(key: tuple, ask):
+def outside_hold(key: tuple, ask, none_read=None):
     """R208: every wait for a person runs with this tool's lock let go, so a prompt left open never
     holds the watch. The answer is kept for this command; the command then runs again from its first line, under a
     lock taken afresh, so it decides on the record as it reads after the answer, never on a copy from before it. An
-    answer is used again only at the same wait with the same words shown; words that changed are asked again."""
+    answer is used again only at the same wait with the same words shown; words that changed are asked again.
+    R216: `none_read(answer)` says the wait ended with no answer read (input closed, no key): then no line says an
+    answer came, and the caller's stop is the next line."""
     a = _ASKED
     if key in a["answers"]:
+        got = a["answers"][key]
         if key == a["last"] and a["quiet"] is not None and a["quiet"].on:
             a["quiet"].settle(keep=False)
-            say_lines("ok after your answer this command took this tool's lock again and read its record afresh: "
-                      "what you were shown reads the same, so it goes on", a["quiet"].real)
-        return a["answers"][key]
+            if none_read is None or not none_read(got):
+                say_lines("ok after your answer this command took this tool's lock again and read its record "
+                          "afresh: what you were shown reads the same, so it goes on", a["quiet"].real)
+        return got
     if a["quiet"] is not None and a["quiet"].on:
         a["quiet"].settle(keep=True, head="warn after your answer this command read this tool's record afresh, and "
                           "what you are to read has changed meanwhile (another of its commands ran): read it again below")
@@ -9673,7 +9677,7 @@ def persons_own_eyes(host: Host, rep: Report, lines: list[str], interactive: boo
     rep.need("read the lines above, then press Enter here to go on; Ctrl-C stops it, and nothing has been changed yet",
              blocks=False, answered_here=True)
     rep.here = False
-    if not outside_hold(("enter", command, tuple(lines)), host.read_enter):
+    if not outside_hold(("enter", command, tuple(lines)), host.read_enter, none_read=lambda got: not got):
         rep.stop("no Enter was read: nothing was changed. Run the same command again in your own terminal")
         return False
     rep.ok("you read the lines and pressed Enter")

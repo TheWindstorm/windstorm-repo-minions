@@ -11571,6 +11571,46 @@ class G6Lock(unittest.TestCase):
         self.assertIn("stop this tool's uninstall was about to write its record without holding its lock, which it "
                       "never does, so it wrote nothing more and stopped here", out.getvalue())
 
+    def test_G6_44_a_wait_with_no_answer_read_never_says_an_answer_came(self):
+        # Row R216, seen on a stock Ubuntu 22.04 guest: setup's Enter with its input closed under a terminal. The wait
+        # lets the lock go and the command runs again from its first line, as G6.36 says; when nothing was read, no
+        # line says an answer came: the stop says none was read and that nothing was changed.
+        home = made_home()
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            rep = M.Report(out)
+            rep.ok("a line before the wait")
+            if not M.persons_own_eyes(host, rep, ["the lines you read"], True, "`setup o/r`"):
+                return rep.code()
+            d = M.load_state(host)
+            d.setdefault("looks", {})["o/after"] = {"t": 1}
+            M.save_state(host, d)
+            rep.ok("done")
+            return rep.code()
+
+        h = home_host(home)
+        h.tty, h.enter, h.read_enters = True, False, 0  # a terminal whose input is closed: Enter reads nothing
+        out = Out()
+        code = setup(host=h, out=out)
+        text = out.getvalue()
+        self.assertNotEqual(code, M.EXIT_OK, text)
+        self.assertEqual(h.read_enters, 1, "asked once")
+        self.assertNotIn("after your answer", text)
+        self.assertNotIn("you read the lines and pressed Enter", text)
+        self.assertEqual(text.count("no Enter was read: nothing was changed. Run the same command again in your own "
+                                    "terminal"), 1, text)
+        self.assertEqual(text.count("ok a line before the wait"), 1, "what was printed before the wait, once")
+        rec, _ = read_whole(os.path.join(home, ".minions", "minions.json"))
+        self.assertNotIn("o/after", (rec or {}).get("looks", {}), "nothing was changed")
+        # An answer that came still says so, as G6.36 holds
+        home = made_home()
+        h = home_host(home)
+        h.tty, h.enter, h.read_enters = True, True, 0
+        out = Out()
+        self.assertEqual(setup(host=h, out=out), M.EXIT_OK, out.getvalue())
+        self.assertEqual(out.getvalue().count("after your answer this command took this tool's lock again"), 1)
+
     def test_G6_36_every_wait_for_a_person_and_every_long_wait_runs_with_the_lock_let_go(self):
         # Every wait for a person in the tool is one of these three, each inside
         # outside_hold or last_wait: the Enter (persons_own_eyes: setup, uninstall), sudo's password (ask_admin_once:
@@ -11580,7 +11620,8 @@ class G6Lock(unittest.TestCase):
         self.assertEqual(src.count("host.read_enter()"), 0)
         self.assertEqual(src.count("host.sudo_validate()"), 0)
         self.assertEqual(len(re.findall(r"host\.ask\(", src)), 0)
-        self.assertIn('outside_hold(("enter", command, tuple(lines)), host.read_enter)', inspect_source(M.persons_own_eyes))
+        self.assertIn('outside_hold(("enter", command, tuple(lines)), host.read_enter, none_read=',  # R216
+                      inspect_source(M.persons_own_eyes))
         self.assertIn('outside_hold(("sudo", cmd), host.sudo_validate)', inspect_source(M.ask_admin_once))
         self.assertIn("last_wait(", inspect_source(M.delete_record_if_typed))
         self.assertIn("input(prompt)", inspect_source(M.Host.ask))
