@@ -72,7 +72,7 @@ def collect(path: str) -> list:
     return out
 
 
-def tests_that_ran(tests_dir: str = TESTS) -> set:
+def names_that_ran(tests_dir: str = TESTS) -> set:
     """G9.6: names of the tests the runner collects AND runs to a pass. A name found only as text is not a test.
 
     This file's own tests are counted when collected: they are running now, and a failure among them fails the run.
@@ -141,7 +141,7 @@ _RAN = None
 def ran_here() -> set:
     global _RAN
     if _RAN is None:
-        _RAN = tests_that_ran()
+        _RAN = names_that_ran()
     return _RAN
 
 
@@ -244,7 +244,7 @@ class Strand(unittest.TestCase):
             with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
                 f.write(probe)
             before = len(NOT_RUN_HERE)
-            ran = tests_that_ran(d)
+            ran = names_that_ran(d)
             twice = defined_twice(os.path.join(d, "test_probe.py"))
         self.assertEqual(ran, {"test_probe_reached", "test_probe_shadowed"})
         self.assertEqual(twice, ["test_probe_shadowed"])
@@ -273,11 +273,11 @@ class Strand(unittest.TestCase):
             with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
                 f.write(early)
             with self.assertRaises(AssertionError) as caught:
-                tests_that_ran(d)
+                names_that_ran(d)
             self.assertIn("ended before its run finished (exit 0, no outcome written)", str(caught.exception))
             with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
                 f.write(printed)
-            self.assertEqual(tests_that_ran(d), {"test_probe_writes"})
+            self.assertEqual(names_that_ran(d), {"test_probe_writes"})
         step = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
         for line in ("set -o pipefail", "python \"$t\" -v 2>&1 | tee \"$log\" || exit 1",
                      "grep -qE '^Ran [0-9]+ tests? in ' \"$log\" && grep -qE '^OK( \\(.*\\))?$' \"$log\" || {",
