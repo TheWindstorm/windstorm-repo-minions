@@ -11,7 +11,7 @@ one up, moves the jobs it can take, and keeps it ready, while the computer stays
 user of their own with no admin rights, inside processor and memory limits, and never on a public repository.
 
 The whole tool is one script: `scripts/minions.py`, two levels above this skill's base directory
-(`<base>/../../scripts/minions.py`). It uses only the Python standard library and the GitHub CLI (`gh`). Run it
+(`../../scripts/minions.py` from there). It uses only the Python standard library and the GitHub CLI (`gh`). Run it
 with `python3 -I`. If the file is not there, this skill was installed without its plugin: get it with
 `cd ~ && git clone --branch v0.1.0 https://github.com/TheWindstorm/windstorm-repo-minions`, in the person's home folder. If `git`
 is not installed (a stock Debian has none), installing it is the person's step, like any `need you`: ask them to
@@ -23,23 +23,34 @@ that `setup` installs runs from the clone, but `status` and `uninstall` are run 
 
 Run the steps in this order. Do not skip one, and do not start the next while the last ended on `stop`,
 `need you` or `waiting`.
+In every step here, OWNER/REPO stands for the repository's name (owner/name): write the person's repository
+there, as one word. The tool refuses OWNER/REPO itself, so a step run as written here ends in the tool's own refusal.
 
-1. **look**: `minions.py look <owner/repo>`, then, with the person's yes, `minions.py look <owner/repo> --start-test`.
+1. **look**: `minions.py look OWNER/REPO`, then, with the person's yes, `minions.py look OWNER/REPO --start-test`.
 2. **tell**: paste look's `tell the person` lines to the person as one block, all of them, as printed (see
    "Before setup" below).
-3. **setup**: the person's own step, in their own terminal. Run `minions.py setup <owner/repo>`: from your shell it
+3. **setup**: the person's own step, in their own terminal. Run `minions.py setup OWNER/REPO`: from your shell it
    changes nothing and prints the one command for the person; pass that command on exactly as printed. In their own
    terminal it shows them what they must read before anything changes, and goes on only when they press Enter.
-4. **move**: `minions.py move <owner/repo>`.
-5. **verify**: after the person merged, `minions.py move <owner/repo> --verify`.
-6. **status**: `minions.py status <owner/repo>`, whenever the person asks how it is doing.
+4. **move**: `minions.py move OWNER/REPO`.
+5. **verify**: after the person merged, `minions.py move OWNER/REPO --verify`.
+6. **status**: `minions.py status OWNER/REPO`, whenever the person asks how it is doing.
 
-To pause it: `minions.py drain <owner/repo>` holds the runner and waits until no job runs (nothing is cut);
-`minions.py resume <owner/repo>` lets jobs land again. Before a restart or an update of the computer, drain before anything else.
+To pause it: `minions.py drain OWNER/REPO` holds the runner and waits until no job runs (nothing is cut);
+`minions.py resume OWNER/REPO` lets jobs land again. Before a restart or an update of the computer, drain before anything else.
 
 ## What the tool prints
 
-Every line starts with one of six kinds, or is the head or foot line of a block (`-----`). Read the line, then say it to the person in plain words; quote
+Every line starts with one of six kinds, or is the head or foot line of a block (`-----`), or is a command. A
+command stands alone on the line after the line that names it ("the command below"; where it names more than one,
+each is numbered in order, as in "the second command below"), as many as that line names, and nothing else is on it. When you give the person a
+command, give it the same way: on a line of its own, exactly as printed, never inside a sentence. A line that says
+"shown changed" held a name someone else chose (a workflow file, a job, another program's words): say that it was
+changed, as the line does. A line that says a command is "not given here" because it "cannot be typed on one
+line" gives no command on purpose: a name it would carry holds a line break, a character a terminal acts on,
+or one that cannot be seen.
+Never build that command yourself; give the person the step the line names (for a workflow file, renaming it on
+GitHub). Read the line, then say it to the person in plain words; quote
 the tool's own numbers and names, never your own. When you give the tool's words as its words, give them exactly
 as printed: add nothing inside them (no other time zone, no conversion, no comment). Your own explanation is
 never presented as the tool's.
@@ -94,14 +105,15 @@ folder).
 - **A yes beside something live.** If setup says `need you: this computer serves something live`, say what it
   names (ports open to the network, containers) and that jobs here would share its processors, memory and disk.
   Ask whether to use another computer or to run jobs here anyway. Only on their yes in words, run
-  `setup <owner/repo> --beside-live-too`.
+  `setup OWNER/REPO --beside-live-too`.
 - **The start test's yes.** Before `--start-test`, say what it does, in look's own words: one temporary branch
   with one workflow file, a job that runs on no machine, then the run and the branch are deleted and read back gone.
   Run it only after the person says yes.
 - **Merging the move pull request.** The tool never merges. Say: "I opened pull request #N. Please read it and
   merge it yourself when you are happy with it."
 - **A publishing job.** A job that publishes or deploys (a release, a package upload, a deploy) is left where it
-  is. Moving one needs the person's word for that one job: `move <owner/repo> --include-job <file>:<job>`.
+  is. Moving one needs the person's word for that one job: `move OWNER/REPO --include-job=FILE:JOB`, with the
+  workflow file and the job as the move pull request names them.
   Ask them by name of the job, one at a time.
 
 ## Before setup
@@ -115,7 +127,8 @@ their go before setup. These are what they carry; if one is missing, say it in t
   on this computer. Then say: "Anyone who can push to this repository can run code on this computer."
 - **The limits.** Read look's limits line to the person word for word. It sounds like "at most half of this
   computer's processors and 60 % of its memory", with the real numbers. The one way to change them is
-  `setup <owner/repo> --limits <processors>,<memory %>`. If look says the memory share is too small for a job,
+  `setup OWNER/REPO --limits PROCESSORS,PERCENT`, with the number of processors and the
+  percent of memory in their places. If look says the memory share is too small for a job,
   give the person its way out and what that costs their own work, as the line says. On a computer with one
   processor the line says "1 of 1" and that everything else there will be slow while a job runs: read that too,
   and let the person decide.
@@ -160,7 +173,7 @@ amount, a promise that something costs nothing, or that the person spends less: 
 - **Other people's things.** On a computer other people also use, the tool counts their containers and runners
   and never names them. Say the counts; never go looking.
 - **The person's own other things.** look counts the person's own containers and other runner services and does
-  not name them (their names may be the person's projects). Run `look <owner/repo> --show-names` only when the
+  not name them (their names may be the person's projects). Run `look OWNER/REPO --show-names` only when the
   person asks to see them.
 - **The person's keys and logins.** Do not look into the person's keys, their `~/.ssh` folder, git's saved
   logins or any other saved login. Reach GitHub only as the tool does: through the GitHub CLI and its own login.
@@ -183,6 +196,9 @@ amount, a promise that something costs nothing, or that the person spends less: 
 | "My job is waiting" | `status`; read its lines; if the runner is held, `resume` |
 | "My test failed on my computer" | `status`; it names a job cut by a restart or stopped by this computer's memory limit; otherwise it is the job's own result |
 | "I need my computer now" | `drain`, wait for its `ok` |
-| "Something is wrong with it", or a command was cut part-way | `doctor <owner/repo>`, in the person's own terminal: it reads back every promise of the install, names each one not kept with its next step, and finishes or undoes a step that was cut |
+| "Something is wrong with it", or a command was cut part-way | `doctor OWNER/REPO`, in the person's own terminal: it reads back every promise of the install, names each one not kept with its next step, and finishes or undoes a step that was cut |
+| A command stops on "could not read" this tool's record (`~/.minions/minions.json`) | Nothing was changed. When its second copy reads, the stop prints `restore`: run it as printed; it keeps the file that could not be read beside the record under a dated name, never deleted, and puts the copy in its place; then run the command that stopped again. Pass on what the stop says about the copy's time. When no copy reads, there is no step in the tool: pass on the stop's words, which name the README's list of what the tool makes and where GitHub lists the runners; never write or delete the record yourself |
+| A command says "this tool's record is held by" another of its commands | That command is still running (often a `setup`, `drain` or `uninstall` in another terminal, or the watch's pass). Let it end, or end it in the terminal where it runs, then run the same command again. Never delete `~/.minions/minions.lock`: nothing is kept in it, and the lock is let go by itself when its command ends |
+| A command says it kept a runner's `.env` in the person's record | Those are lines the person (or someone) added to the runner's settings file; the tool kept them, readable by the person only, and deleted nothing of them. Pass on the file's name and its line count; never print, copy or delete the kept file yourself: it is the person's |
 | "I removed it with Claude Code's own `plugin uninstall`" | That takes the skill out of Claude Code only. The runner, its service, the watch, the limits and the runner user stay and go on taking the repository's jobs: they do the person's jobs, not Claude Code's; `status` then says the skill's folder is gone. The one command that takes them off runs from the copy setup installed: `python3 -I /usr/local/lib/windstorm-repo-minions/minions.py uninstall --all`, in the person's own terminal |
-| "Take it off" | `uninstall` is the person's own step in their own terminal, like setup: from your shell it prints the one command for them; pass it on exactly. `uninstall <owner/repo>`; `uninstall --all` leaves nothing of this tool installed or running, keeps the person's record of what it did in one folder they own (the census names it last; say where), and opens a pull request that puts moved jobs back (theirs to merge). Deleting that record is the person's own choice, typed at their terminal (`uninstall --all --delete-record`): never yours; pass on its `tell the person` line about that pull request's own checks |
+| "Take it off" | `uninstall` is the person's own step in their own terminal, like setup: from your shell it prints the one command for them; pass it on exactly. `uninstall OWNER/REPO`; `uninstall --all` leaves nothing of this tool installed or running, keeps the person's record of what it did in one folder they own (the census names it last; say where), and opens a pull request that puts moved jobs back (theirs to merge). Deleting that record is the person's own choice, typed at their terminal (`uninstall --all --delete-record`): never yours; pass on its `tell the person` line about that pull request's own checks |

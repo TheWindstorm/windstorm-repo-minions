@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.1.0 (the tag's day, New York)
+## 0.1.0 (2026-11-26)
 
 The first release. Linux with systemd; one private repository per computer. Every row due in 0.1.0 in
 `PROMISES.json` has its test, and each row says whether, where and how it was seen on a real machine. They were
 seen on stock virtual machines (Ubuntu 24.04.5, Ubuntu 22.04.5, Debian 12) against a private repository, with
-Claude Code 2.1.330 following the skill from a cold start. Not seen yet, by name: a laptop (battery, lid, its own
+Claude Code 2.1.330 following the skill from a cold start, last on 2026-11-23; the passages added to the README
+since were not walked by an agent. Not seen yet, by name: a laptop (battery, lid, its own
 sleep, a change of network); an account whose GitHub Actions start no jobs; GitHub's own removal of a runner after
 14 days offline; a repository really turned public with a runner on it; GitHub's API limit running out while the
 tool works; other Linux distributions, macOS and Windows. The four rows built and tested for a laptop or such an
@@ -28,8 +29,8 @@ the cap (row R94).
   after uninstall (row R132).
 - No line says the job hook refuses a job without saying a job that already ran here can switch that hook off; the
   watch, which runs as you, is the gate (row R133).
-- A file of yours in the tool's folders, or a `minions-runner` the tool did not make, no longer stops `uninstall`:
-  it stays, named in the census as yours with why, and uninstall finishes (row R136).
+- A file of yours in the tool's folders, or a `minions-runner` the tool's record does not show it made, no longer
+  stops `uninstall`: it stays, named in the census with why, and uninstall finishes (row R136).
 - Setup says which system packages were added while the runner's own dependency script ran (read from the
   system's package list before and after it), and `uninstall --all` names them as kept: they are installed for the
   whole system, and another program may use them by then (row R139).
@@ -65,6 +66,62 @@ the cap (row R94).
   that stops, or that ends at a step of the person's, keeps no record of itself, and where gh keeps its login is
   written down only once the login reads have passed. Those stops say "this tool made nothing": gh writes files of
   its own in a home where it never ran, and the tool does not claim them (row R160).
+- A GitHub CLI with no `auth token` command (gh 2.4.0, Ubuntu 22.04's own) has its login read from gh's own file,
+  and no file there is no login yet, with the login step; before, `look` stopped there on every such computer.
+  A person who has never logged in is told that gh has no login saved here yet, or that it may have none, never
+  that where gh keeps it could not be read.
+  Only the answer seen from that gh is taken for it, and a
+  stop on gh's answer about the login says gh's own words on standard error and nothing of what it wrote on
+  standard output, where a token comes when the call works; before, such a stop quoted that output's last
+  lines, holding back only a line shaped like a GitHub token (row R204).
+- A record of what the tool made that could not be read (empty, cut short, not its format, unreadable) is never
+  taken for an empty one or written over, by any command or by the watch's timer: every command stops before it
+  changes anything, naming the file and why. Before, the watch wrote a new record over it without the runners,
+  and `uninstall` then said there was nothing to uninstall, with the runner still there. The record now has a
+  second copy beside it; the one step back is `restore`, a new command, which keeps the file that could not be
+  read under a dated name and puts the copy in its place; when no copy reads, the stop says so and names the
+  README's list of what the tool makes on a computer (row R205).
+- With the record removed and its second copy still there, no command run by hand takes the computer for one
+  where the tool made nothing: each stops before it changes or asks anything and says the record was removed while
+  the tool's parts stay, with `restore` as its step when the copy reads. Before, `doctor` and `uninstall` of a
+  repository said there was nothing to check or uninstall, `status` sent the person to `setup`, and `uninstall
+  --all` took the watch off, with the runner still serving. `uninstall --all` deletes the copy before the record,
+  so a cut between its last removals never leaves that state (row R205).
+- `setup` never writes over a runner `.env` it could not read; it stops, names the file, and gives one step that
+  keeps the file's lines. Before, such a file was written over with only the tool's own lines (row R206).
+- The tool's own commands and its watch take turns with its record: a command that changes it holds one lock
+  from its first read to its end. A command run by hand waits up to a minute for another, then stops and names
+  it (only the process that holds the lock, never one that only has its file open); the watch never waits, and a pass that finds the record held is skipped and said. Before, two at the
+  same time could undo each other's changes, lose an entry, or leave the record unreadable; seen in a stand-in
+  trial with two processes writing in a tight loop, not on a real machine. No wait for a person is inside the
+  hold: at a prompt, at the admin password and while a command waits for a running job, the lock is let go, and
+  after the answer the command takes it again and reads the record afresh; when what the person was shown has
+  changed meanwhile, it says so and asks again. The watch pass `setup` starts and waits for is handed `setup`'s
+  own lock and is never skipped; a pass ends within 4 minutes. A command whose hold made the watch skip a pass
+  says so at its end. The watch never takes its record, or the folder of its record and lock, for a fresh home
+  when it is not there: it makes nothing, says so at each pass, and `restore` puts a copy that reads back in its
+  place. `status --rerun` asks GitHub nothing while another of the tool's commands holds the record: it names
+  that command, says the job was not run again, and gives the same command again (row R208).
+- No road of the tool deletes a runner's `.env` that is not as the tool left it. `uninstall`, and `setup` run
+  again after a setup that was cut short, read the file before the runner's folder goes; a file with lines
+  added after setup wrote it is kept in `~/repo-minions-record/`, readable by its owner only, and named by path
+  with its count of lines, never its lines. A line already in the file when setup wrote it is part of what
+  setup left and goes with the folder. Where it cannot be kept and compared, the file and its folder stay, named, and
+  `setup` gives the step that ends that stop for its kind (for the person's own file: move it, never remove it).
+  `uninstall --delete-record` names the kept files before the word is typed. Before, those lines were deleted
+  with the folder and nothing was said (row R209).
+- On a computer that holds what carries the tool's own names (its runner user, a runner service of its naming
+  form, their folders) and no record of the tool here names it, no line says the tool did not make it or that it
+  is yours: each says what was read. `status`, `doctor`, `drain`, `resume`, `uninstall` of a repository and `setup`
+  stop before any change, naming whether that service runs now and starts at a restart, the repository its name
+  carries (GitHub may still list a runner for it), the README's list of what the tool makes on a computer and where
+  GitHub lists runners. A read that did not answer is said, never taken for none. No step deletes the runner user
+  while such a service is here or a process of that user runs. `uninstall --all` stops before any change while such
+  a service runs, starts at a restart, or could not be read, with one step that switches it off and keeps it off,
+  and says that it is another account's if another account set the tool up; with it off, the leave goes on and
+  names it. It ends saying the tool is off only when nothing of its names can still run; otherwise it says what can,
+  and exits 1. Before, `status` sent the person to `setup`, whose step deleted a user whose runner was running, and
+  `uninstall --all` took the watch from that runner and ended "off this computer" (row R210).
 - Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
   path of Claude Code's own list of plugins and the plugin's name, never its version folder, and the tool says the
   skill was removed from Claude Code only when that list was read and names it nowhere: an update of the plugin says

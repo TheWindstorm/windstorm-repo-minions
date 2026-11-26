@@ -71,7 +71,7 @@ class Skill(unittest.TestCase):
         self.assertEqual(steps, ["look", "tell", "setup", "move", "verify", "status"])
         persons = flat(section(t, "The person's steps"))
         for must in ("gh auth login", "admin password", "I never see it", "same terminal", "--start-test",
-                     "says yes", "never merges", "merge it yourself", "--include-job <file>:<job>",
+                     "says yes", "never merges", "merge it yourself", "--include-job=FILE:JOB",
                      "never press Agree or Accept"):
             self.assertIn(must, persons, must)
         # R81: a computer without git (a stock Debian): installing it is the person's step, named with its command
@@ -158,7 +158,8 @@ class Skill(unittest.TestCase):
         before = flat(section(text(), "Before setup"))
         self.assertIn("at most half of this computer's processors and 60 % of its memory", before)
         self.assertIn("with the real numbers", before)
-        self.assertIn("`setup <owner/repo> --limits <processors>,<memory %>`", before)
+        self.assertIn("`setup OWNER/REPO --limits PROCESSORS,PERCENT`, with the number of processors and the percent of "
+                      "memory in their places", before)  # R193: no angle bracket in a step
         self.assertIn('On a computer with one processor the line says "1 of 1" and that everything else there will be '
                       "slow while a job runs: read that too, and let the person decide.", before)
 
@@ -236,6 +237,29 @@ class Skill(unittest.TestCase):
             self.assertNotRegex(t.lower(), r"\b" + re.escape(word) + r"\b", word)
         for name in ("veron", "windy", "eth-", "tailscale", "user1", "/home/"):
             self.assertNotIn(name, t.lower(), name)
+
+    def test_G8_23_no_step_the_skill_or_the_readme_shows_holds_an_angle_bracket(self):
+        # Row R193, its second place: an agent pastes the skill's steps, and a person the README's, and a shell takes
+        # an angle bracket for its own. Every code line of both (each inline span, each line of a fenced block) is
+        # read; where the value is not known it is the plain word OWNER/REPO, which the tool itself refuses.
+        for rel in ("README.md", os.path.join("skills", "repo-minions", "SKILL.md")):
+            lines = code_lines(fread(os.path.join(ROOT, rel)))
+            for line in lines:
+                self.assertNotRegex(line, r"[<>]", f"{rel}: a code line holds an angle bracket: {line}")
+        skill = flat(text())
+        self.assertIn("OWNER/REPO stands for the repository's name (owner/name)", skill)
+        self.assertIn("`setup OWNER/REPO --limits PROCESSORS,PERCENT`", skill)
+        self.assertIn("`move OWNER/REPO --include-job=FILE:JOB`", skill)
+        # the reader itself: a span, a fenced block's lines, and a bracket in either are all seen
+        planted = code_lines("a `look <owner/repo>` b\n```\nsetup x\n  move <y>\n```\nno `c` d `e > f`\n")
+        self.assertEqual(planted, ["look <owner/repo>", "c", "e > f", "setup x", "  move <y>"])
+
+
+def code_lines(t: str) -> list:
+    """Every code line of a markdown text: each inline span (outside fenced blocks), then each fenced block's lines."""
+    fence = re.compile(r"^```[^\n]*\n(.*?)^```[ \t]*$", re.M | re.S)
+    spans = re.findall(r"`([^`\n]+)`", fence.sub("", t))
+    return spans + [line for block in fence.findall(t) for line in block.splitlines()]
 
 
 def tearDownModule():

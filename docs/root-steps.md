@@ -51,37 +51,46 @@ Folders, and who can write them:
 | `install_hooks` | `install` | no | no: root's folders. Each repository's records folder is made in root's folder, then handed to the runner user | the hooks folders 0755 root:root; the records root 0755 root:root; the repository's records folder 2750, the runner user's, your group; `seen` 0755, yours, your group |
 | `install_hooks` | `stat` | no | no | nothing. The two hooks are written by `root_file` (0755 root:root) |
 | `install_watch` | `install` | no | no: the tool's copy, in root's folder | the hooks root 0755 root:root; the tool's copy 0755 root:root |
-| `install_watch` | `(argv)` | no: `systemctl daemon-reload`, `enable --now` the timer. The watch runs as you (`User=`), from root's copy | no | nothing. The watch's service and timer are written by `root_file` (0644 root:root) |
+| `install_watch` | `systemctl daemon-reload` | no | no | nothing: systemd reads the watch's unit files again, before they are read back word for word |
+| `install_watch` | `(argv)` | no: `enable --now` the timer, after its unit was read back as systemd parsed it. The watch runs as you (`User=`), from root's copy | no | nothing. The watch's service and timer are written by `root_file` (0644 root:root) |
 | `install_watch` | `systemctl start` | no | no | nothing |
 | `start_runner` | `systemctl start` | no | no | nothing |
-| `stop_runner` | `systemctl stop` | no | no | nothing |
+| `_stop_runner` | `systemctl stop` | no | no | nothing |
 | `resume` | `systemctl enable` | no | no | nothing |
 | `reregister` | `(argv)` | no: `systemctl enable`, `start` | no | nothing |
 | `doctor_one` | `stat` | no | no: the hooks (root's) and the runner user's home entry. The credential files are read as the runner user (R128) | nothing |
-| `root_test` | `chosen` | no | no: `test -e` on root's own paths only. A path in the runner user's home is read as the runner user (R128) | nothing |
+| `root_test` | `chosen` | no | no: `sh -c` with the tool's own fixed script, `if test -e "$1"; then echo "minions-test: there"; else echo "minions-test: not there"; fi`, the path given as its argument (never in the script), on root's own paths only; the answer is that printed mark, never sudo's exit or words. A path in the runner user's home is read as the runner user (R128) | nothing |
+| `root_test` | `(argv)` | no | no: the same marked `sh -c` test of the runner user's home folder itself (`/home/minions-runner`), read as root only when the runner user reads absent (getent's exit 2; seen: that user removed by hand, so sudo cannot run anything as it, and nothing is then tried as it): a folder in `/home`, which a job cannot replace or re-point; where it is not there, nothing in it is (R167). Where it is there, nothing inside it is read, followed or deleted by root; it is named as what stayed (R173) | nothing |
 | `remove_service` | `systemctl disable` | no | no | nothing |
-| `remove_service` | `rm` | no | no: the unit and drop-in in `/etc/systemd/system`. The unit name, when read from the runner's `.service` file, is read as the runner user and must match `actions.runner.*.service` with no `/` | nothing |
+| `remove_service` | `rm` | no | no: the unit and drop-in in `/etc/systemd/system`. The unit name, when read from the runner's `.service` file, is read as the runner user and must match `actions.runner.*.service` with no `/`; with that user gone it is not read there: it is the name this tool gives the unit, used unless that unit's file in `/etc/systemd/system` is read not there (R167) | nothing |
 | `remove_service` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_service` | `systemctl reset-failed` | no | no | nothing |
-| `remove_folders` | `rm` | no | no: the hooks only (root's). The runner's folder is deleted as the runner user (R128) | nothing |
+| `clear_folder` | `rm` | no | no: `rm -f` by exact name, in a folder only this tool writes (the job hooks, the drop-in, the copy, `seen`'s files of this tool: root's), each name taken from the code's own list. A folder a job can write is emptied as the runner user, never by root (R128, R136). A runner's name read from `left-behind.txt` (this tool's own file in the person's record, a line read only when it has the shape of a folder this tool empties) leads root to remove only the two fixed hook files, `job-started.sh` and `job-completed.sh`, in this tool's hook folder of that name; no other file by that name (R136) | nothing |
+| `clear_folder` | `rmdir` | no | no: a folder of this tool, by exact name, once what this tool or the runner user made in it is gone. `rmdir` follows nothing and removes only an empty folder; a folder that still holds something stays, named. By a name read from `left-behind.txt`: only an empty folder of that name in this tool's two root-owned folders, the hooks' and the records' (R136) | nothing |
 | `empty_then_rmdir` | `rmdir` | no | no: a records folder that the runner user has already emptied. `rmdir` follows nothing and removes only an empty folder | nothing |
+| `remove_shared` | `systemctl stop` | no | no | nothing |
 | `remove_shared` | `systemctl disable` | no | no | nothing |
 | `remove_shared` | `rm` | no | no: root's folders, and `seen` (yours) | nothing |
-| `remove_shared` | `rmdir` | no | no | nothing |
 | `remove_shared` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_shared` | `systemctl reset-failed` | no | no | nothing |
 | `remove_slice` | `systemctl stop` | no | no | nothing |
+| `watch_off` | `systemctl stop` | no | no | nothing |
 | `remove_slice` | `rm` | no | no | nothing |
 | `remove_slice` | `systemctl daemon-reload` | no | no | nothing |
 | `remove_runner_user` | `crontab` | no | no: root's spool | nothing |
 | `remove_runner_user` | `atq` | no | no | nothing |
+| `left_schedules` | `find` | no | no: root's own at spool folder (`/var/spool/cron/atjobs`, or `/var/spool/at`), which no job can write; `-maxdepth 1 -type f -nouser -printf '%f %U\n'` reads each file's name and owner number only, and follows nothing. Read only when the runner user reads absent: setup before `useradd`, uninstall to name what stayed (change 4) | nothing |
 | `remove_runner_user` | `atrm` | no | no | nothing |
 | `remove_runner_user` | `loginctl` | no | no | nothing |
-| `remove_runner_user` | `userdel` | no | no: the home is emptied first, as the runner user. `userdel -r` then removes an empty folder | nothing |
+| `remove_runner_user` | `userdel` | no | no: the home is emptied first, as the runner user, of what that user made. `userdel` without `-r` (R130, R136) | nothing |
+| `remove_runner_user` | `rmdir` | no | no: the runner user's home, once that user is deleted and nothing stayed in it: a folder in `/home`; `rmdir` follows nothing and removes only an empty folder (R130) | nothing |
+| `hand_to_root` | `find` | no | no: BEFORE `userdel` (every process of the runner user is ended by then), below the runner user's home, the records root and each folder of this tool that stayed: `-xdev -uid N -print0 -execdir chown -h root:root`, one file system, each link itself and never its target, `chown` handed the name in its own folder (never a whole path through folders another user may own); in `/tmp`, `/var/tmp` and `/dev/shm` one walk from each of those root folders themselves, one file system, no link followed, so no path root hands over passes through a folder of another user's; a link of that number is handed itself, never its target; nothing is deleted there and nothing of another number changes. Each hand read back with the same `find` and no `-exec`; what is still of that number stops the leave before `userdel`. Nothing else changes owner (R136) | nothing |
+| `hand_home_to_root` | `find` | no | no: after `userdel`, the runner user's home itself when it stays: `-maxdepth 0 -nouser -execdir chown -h root:root`, a folder in `/home`, which no job can replace, taken only while its number has no user; read back, and run again by a later run that finds that home (R136) | nothing |
 
 The one place a root step makes something the runner user can write, outside its home, is each repository's records
 folder: the job hooks run as the runner user and write that repository's job records there. Nothing in it is ever
-run, sourced or followed by root: at uninstall the runner user empties it and root removes the empty folder.
+run, sourced or followed by root: at uninstall the runner user deletes what it made there, and root removes the folder only once it is empty. What the runner user did not
+make stays, named in the census.
 
 Steps run as you, not as root, that read the whole system: `package_list` runs `dpkg-query -W` (or `rpm -qa` where
 there is no `dpkg-query`) just before and just after the runner's dependency script, to read which system packages

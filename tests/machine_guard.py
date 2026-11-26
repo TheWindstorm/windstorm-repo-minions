@@ -40,13 +40,14 @@ import shutil
 import site
 import sys
 import tempfile
+import threading
 import unittest
 
 FORBIDDEN = frozenset({
     # admin rights
     "sudo", "su", "pkexec", "doas",
     # services, timers, sessions, the init system (Linux and macOS)
-    "systemctl", "journalctl", "loginctl", "systemd-run", "systemd-inhibit", "launchctl", "pmset", "diskutil",
+    "systemctl", "busctl", "journalctl", "loginctl", "systemd-run", "systemd-inhibit", "launchctl", "pmset", "diskutil",
     # packages
     "dpkg", "dpkg-query", "apt", "apt-get", "rpm", "dnf", "yum", "zypper", "snap", "brew",
     # scheduling
@@ -62,9 +63,10 @@ LEFT_OFF = {
     **{n: _FILES for n in ("install", "cp", "rm", "rmdir", "chmod", "chown", "tee", "tar", "mktemp", "find", "mkdir",
                            "realpath", "dirname")},
     **{n: "the hook tests use it on processes they started" for n in ("kill", "pgrep", "sleep", "setsid")},
-    **{n: _READS for n in ("cat", "stat", "id", "test", "sha256sum", "systemd-detect-virt", "sysctl", "sw_vers",
+    **{n: _READS for n in ("cat", "stat", "id", "getent", "test", "sha256sum", "systemd-detect-virt", "sysctl", "sw_vers",
                            "netstat", "date", "awk", "seq", "df", "tail", "tr")},
     **{n: _ON_PURPOSE for n in ("bash", "env", "python3", "git")},
+    "sh": "the tool runs it only as `sh -c` with its own fixed `test -e` script (R167), which reads only",
 }
 ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REAL_HOME = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
@@ -86,8 +88,64 @@ class MachineReached(RuntimeError):
     pass
 
 
+def _fd_path(fd):
+    """Where an open folder's handle points (Linux: /proc; macOS: F_GETPATH), or None when it cannot be read."""
+    if not isinstance(fd, int) or fd < 0:
+        return None
+    try:
+        return os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+        pass
+    try:
+        import fcntl
+        if hasattr(fcntl, "F_GETPATH"):
+            return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024)).split("\0", 1)[0] or None
+    except OSError:
+        pass
+    return None
+
+
+# Row R183 (the maintainer's word 2026-11-25): the suite's result, and what it leaves behind, do not depend on the
+# folder it is started from. shutil.rmtree opens each folder inside its tree by its bare name from its parent's
+# handle; Python's "open" event carries no handle, so such a name is judged as below the tree's own top (rmtree
+# follows no link), never as below the current folder. A name an event gives with its handle (os.remove, os.rmdir,
+# os.mkdir, ...) is judged by where that handle points. A plain relative name is still judged by the current folder.
+# Each thread keeps its own tops (a second thread's plain open is judged by the folder, not by another's tree).
+# The roads to rmtree are shutil's own name and tempfile's copy of it (Python 3.12: "_rmtree = _shutil.rmtree", taken
+# when tempfile was first imported, so TemporaryDirectory's cleanup never looked up shutil.rmtree; the maintainer's
+# trial, 2026-11-25). Any rmtree reached by another road raises its "shutil.rmtree" event with no top of ours: counted,
+# never judged against the current folder. Not seen by the hook: an open through a handle (os.open with dir_fd; the
+# "open" event carries no handle).
+_RM = threading.local()
+_real_rmtree = shutil.rmtree
+
+
+def _rm_tops():
+    if not hasattr(_RM, "tops"):
+        _RM.tops, _RM.armed = [], 0
+    return _RM.tops
+
+
+def _rmtree(path, *a, **k):
+    top = os.fsdecode(path) if isinstance(path, (str, bytes)) else None
+    if top is not None and not os.path.isabs(top):
+        top = os.path.join(_fd_path(k.get("dir_fd")) or os.getcwd(), top)
+    tops = _rm_tops()
+    tops.append(os.path.realpath(top) if top else None)
+    _RM.armed += 1  # the next "shutil.rmtree" event of this thread is this call's own
+    try:
+        return _real_rmtree(path, *a, **k)
+    finally:
+        _RM.armed = 0
+        tops.pop()
+
+
+_rmtree.avoids_symlink_attacks = getattr(_real_rmtree, "avoids_symlink_attacks", False)
+shutil.rmtree = _rmtree
+if getattr(tempfile, "_rmtree", None) is _real_rmtree:
+    tempfile._rmtree = _rmtree
 _TMP = tempfile.mkdtemp(prefix="minions-guard-")
-atexit.register(shutil.rmtree, _TMP, True)
+atexit.register(lambda: shutil.rmtree(_TMP, True))  # looked up at exit: the rmtree above
 BIN = os.path.join(_TMP, "bin")
 LOG = os.path.join(_TMP, "reached.log")
 os.makedirs(BIN)
@@ -170,12 +228,16 @@ def _where():
     return os.environ.get("MINIONS_GUARD_TEST") or "outside a test"
 
 
-def _in_home(p):
+def _in_home(p, dir_fd=None):
     if isinstance(p, bytes):
         p = os.fsdecode(p)
     if not isinstance(p, str) or not p:
         return None
-    p = os.path.realpath(p if os.path.isabs(p) else os.path.join(os.getcwd(), p))
+    if not os.path.isabs(p):  # R183: relative to the handle it came with, else to rmtree's top, else to the folder
+        tops = _rm_tops()
+        base = _fd_path(dir_fd) or (tops[-1] if tops and tops[-1] else None) or os.getcwd()
+        p = os.path.join(base, p)
+    p = os.path.realpath(p)
     if p != REAL_HOME and not p.startswith(REAL_HOME + os.sep):
         return None
     if "__pycache__" in p or any(p == r or p.startswith(r + os.sep) for r in ALLOWED):
@@ -224,6 +286,10 @@ def _child(exe, argv, env):
     return None
 
 
+_DIR_FD_AT = {"os.remove": 1, "os.rmdir": 1, "os.mkdir": 2, "os.chmod": 2, "os.chown": 3, "os.utime": 3,
+              "os.rename": 2, "os.replace": 2, "os.link": 2, "shutil.rmtree": 1}  # each event's handle (args)
+
+
 def _hook(event, args):
     global _busy
     if _busy:
@@ -237,10 +303,16 @@ def _hook(event, args):
             what = _child(args[0], args[1], args[2] if len(args) > 2 else None)
         elif event == "os.system":
             what = _child(None, str(args[0]), None)
+        elif event == "shutil.rmtree" and not (_rm_tops() is not None and _RM.armed):
+            what = (f"shutil.rmtree reached by a road the guard does not follow ({args[0]!r}): the names it opens "
+                    "would be judged by the current folder; give machine_guard that road (row R183)")
         elif event in ("open", "os.listdir", "os.scandir", "os.mkdir", "os.remove", "os.rmdir", "os.rename",
                        "os.replace", "os.chmod", "os.chown", "os.symlink", "os.link", "shutil.rmtree", "os.truncate",
                        "os.utime"):
-            p = _in_home(args[0]) if args else None
+            if event == "shutil.rmtree":
+                _RM.armed = 0  # this call's own event, seen: a nested rmtree must come through a wrapper again
+            at = _DIR_FD_AT.get(event)
+            p = _in_home(args[0], args[at] if at is not None and len(args) > at else None) if args else None
             if p:
                 what = f"{event} in this account's real home: {p}"
     except Exception as e:  # the guard's own fault is counted too, never read as "nothing reached"

@@ -24,6 +24,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import machine_guard  # noqa: E402  rule 17 (R142): first, so no test here reaches this machine
+import version_places  # noqa: E402  R194: the gates' reads of a version from a name, one place
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLAN = os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md")
@@ -81,27 +82,47 @@ def names_that_ran(tests_dir: str = TESTS) -> set:
     for name in sorted(os.listdir(tests_dir)):
         if not (name.startswith("test_") and name.endswith(".py")):
             continue
-        tests = collect(os.path.join(tests_dir, name))
         if os.path.abspath(os.path.join(tests_dir, name)) == os.path.abspath(__file__):
-            ran |= {t._testMethodName for t in tests}
+            ran |= {t._testMethodName for t in collect(os.path.join(tests_dir, name))}
             continue
-
-        class Passed(unittest.TestResult):
-            def __init__(self):
-                super().__init__()
-                self.passed = []
-
-            def addSuccess(self, test):
-                super().addSuccess(test)
-                self.passed.append(test)
-
-        res = Passed()
-        with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn):
-            unittest.TestSuite(tests).run(res)
-        ran |= {t._testMethodName for t in res.passed}
-        for test, why in res.skipped:  # an honest skip is "not run here", never a pass
-            NOT_RUN_HERE.append(f"{name}: {test._testMethodName} ({why})")
+        # R169 (the gate recipe's ninth case): each other file runs in its OWN process, and what it ran is read from
+        # the outcome that process writes only once its whole run has ended. A process that ended early (a test, or
+        # the tool under test, calling os._exit(0); a parent leaving after a fork) wrote none: nothing of it counts,
+        # and the gate fails, whatever that exit was. Outcomes come from the runner's own result (addSuccess), never
+        # from report text a test can write into (the eighth case).
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "outcome.json")
+            p = subprocess.run([sys.executable, "-c", OUTCOME_RUNNER, tests_dir, name, out], capture_output=True,
+                               text=True, timeout=1800)
+            if not os.path.exists(out):
+                raise AssertionError(f"{name} ended before its run finished (exit {p.returncode}, no outcome written): "
+                                     "an early end is never a pass (R169)")
+            got = jload(out)
+        ran |= set(got["passed"])
+        for test, why in got["skipped"]:  # an honest skip is "not run here", never a pass
+            NOT_RUN_HERE.append(f"{name}: {test} ({why})")
     return ran
+
+
+OUTCOME_RUNNER = """
+import contextlib, json, os, sys, unittest
+tests_dir, name, out = sys.argv[1:4]
+sys.path.insert(0, tests_dir)
+suite = unittest.TestLoader().discover(tests_dir, pattern=name, top_level_dir=tests_dir)
+class Passed(unittest.TestResult):
+    def __init__(self):
+        super().__init__()
+        self.passed = []
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        self.passed.append(test._testMethodName)
+res = Passed()
+with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn):
+    suite.run(res)
+with open(out, "w") as f:
+    json.dump({"passed": res.passed, "skipped": [[t._testMethodName, w] for t, w in res.skipped],
+               "run": res.testsRun}, f)
+"""
 
 
 NOT_RUN_HERE: list = []
@@ -230,6 +251,40 @@ class Strand(unittest.TestCase):
         self.assertTrue(any("test_probe_skipped (a planted skip)" in x for x in NOT_RUN_HERE[before:]), NOT_RUN_HERE)
         del NOT_RUN_HERE[before:]
 
+    def test_G9_14_a_run_that_ends_early_or_prints_a_pass_is_never_green(self):
+        """R169 (the gate recipe's eighth and ninth cases, 2026-11-24). Ninth: a test (or the tool under test,
+        a parent leaving after a fork) calls os._exit(0): exit 0, no summary, and a gate in the same process never
+        ran; seen green on this repository's own CI step before R169. Each other file now runs in its own process
+        and counts only from the outcome written at its end: the early end fails the gate. Eighth: a test writes a
+        line shaped like the runner's report for a name no file defines: outcomes come from the runner's result,
+        never its text. And the CI step is green only with each file's "Ran" and "OK" lines and the gate's own
+        last line, which it writes only after its whole run."""
+        early = ("import os, unittest\n\n"
+                 "class T(unittest.TestCase):\n"
+                 "    def test_a_ends_early(self):\n"
+                 "        os._exit(0)\n\n"
+                 "    def test_b_after(self):\n"
+                 "        pass\n")
+        printed = ("import sys, unittest\n\n"
+                   "class T(unittest.TestCase):\n"
+                   "    def test_probe_writes(self):\n"
+                   "        sys.stderr.write('test_probe_ghost (test_probe.T.test_probe_ghost) ... ok\\n')\n")
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
+                f.write(early)
+            with self.assertRaises(AssertionError) as caught:
+                tests_that_ran(d)
+            self.assertIn("ended before its run finished (exit 0, no outcome written)", str(caught.exception))
+            with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
+                f.write(printed)
+            self.assertEqual(tests_that_ran(d), {"test_probe_writes"})
+        step = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+        for line in ("set -o pipefail", "python \"$t\" -v 2>&1 | tee \"$log\" || exit 1",
+                     "grep -qE '^Ran [0-9]+ tests? in ' \"$log\" && grep -qE '^OK( \\(.*\\))?$' \"$log\" || {",
+                     "tail -n 1 \"$RUNNER_TEMP/test_strand.py.log\" | grep -qE '^gate: passed: ' || {"):
+            self.assertIn(line, step)
+        self.assertIn('print(f"gate: {\'passed\' if result.wasSuccessful() else \'FAILED\'}', fread(__file__))
+
     def test_no_test_file_defines_one_name_twice(self):
         for name in sorted(os.listdir(TESTS)):
             if name.startswith("test_") and name.endswith(".py"):
@@ -272,17 +327,6 @@ class Hygiene(unittest.TestCase):
     def test_G9_10_main_carries_install_lines_only_pinned_to_a_released_tag(self):
         # Rules 15 and 16 (the maintainer's rulings, 2026-11-23): before a release, main's README has no install
         # lines; after it, every clone there names a version tag that exists. Runs the CI step itself, as written.
-        text = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
-        job = text[text.index("\n  release-place:"):]
-        lines = job.splitlines()
-        i = next(n for n, x in enumerate(lines) if x.strip() == "run: |")
-        indent = len(lines[i]) - len(lines[i].lstrip()) + 2
-        body = []
-        for x in lines[i + 1:]:
-            if x.strip() and len(x) - len(x.lstrip()) < indent:
-                break
-            body.append(x[indent:])
-        script = "set -e\n" + "\n".join(body) + "\n"
         url = "https://github.com/TheWindstorm/windstorm-repo-minions"
         cases = [  # (README text, tags on GitHub's copy, passes; None: GitHub's copy could not be read)
             ("No install lines here.\n", [], True),
@@ -294,28 +338,102 @@ class Hygiene(unittest.TestCase):
             ("`python3 -I x/minions.py setup O/N`\n", ["v0.1.0"], False),  # an install line with no pinned clone
             (f"`git clone --branch v0.1.0 {url}`\n", None, False),  # rule 6: could not be read is refused, said
         ]
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
-                                                                                         "GIT_CONFIG_NOSYSTEM")}
-        env.update(BRANCH="main", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
-                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
         for readme, tags, ok in cases:
-            with tempfile.TemporaryDirectory() as d:
-                with open(os.path.join(d, "README.md"), "w", encoding="utf-8") as f:
-                    f.write(readme)
-                run = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)
-                run("git", "init", "-q"); run("git", "add", "."); run("git", "commit", "-qm", "r")
-                run("git", "tag", "v0.1.0")  # here in every case: a tag only in the checkout must not count
-                origin = os.path.join(d, "origin.git")
-                run("git", "init", "-q", "--bare", origin)
-                for tag in tags or []:
-                    run("git", "push", "-q", origin, f"refs/tags/{tag}")
-                run("git", "remote", "add", "origin", origin if tags is not None else os.path.join(d, "gone.git"))
-                r = run("bash", "-c", script)
-                self.assertEqual(r.returncode == 0, ok, f"{readme!r} tags {tags}: {r.stdout}{r.stderr}")
-                if tags is None:
-                    self.assertIn("could not be read", r.stdout)
-                elif "--branch v0.1.0" in readme and not tags:
-                    self.assertIn("not a tag of this repository yet", r.stdout)
+            r = release_place(readme, tags)
+            self.assertEqual(r.returncode == 0, ok, f"{readme!r} tags {tags}: {r.stdout}{r.stderr}")
+            if tags is None:
+                self.assertIn("could not be read", r.stdout)
+            elif "--branch v0.1.0" in readme and not tags:
+                self.assertIn("not a tag of this repository yet", r.stdout)
+
+    def test_G9_16_a_gate_reads_a_version_only_where_it_stands_whole(self):
+        # Row R194: three places where a gate took a version, or this repository, from part of a word. Each form is
+        # planted where that gate reads it: the CI step on main's README, and the reads test_G9_8 makes of the
+        # README and the skill (tests/version_places.py, the one place both read through).
+        url = "https://github.com/TheWindstorm/windstorm-repo-minions"
+        cases = [  # (README text, tags on GitHub's copy, passes)
+            # (1) two clones on one line, one unpinned: a count of lines saw one clone, pinned
+            (f"`git clone --branch v0.1.0 {url}` or `git clone {url}`\n", ["v0.1.0"], False),
+            (f"`git clone --branch v0.1.0 {url}` or `git clone --branch v0.1.0 {url}`\n", ["v0.1.0"], True),
+            # (2) another repository whose name starts with this one's is not a pinned clone of this one
+            (f"`git clone --branch v0.1.0 {url}-other`\n", ["v0.1.0"], False),
+            (f"`git clone --branch v0.1.0 {url}s`\n", ["v0.1.0"], False),
+            (f"`git clone --branch v0.1.0 {url}.git`\n", ["v0.1.0"], True),  # this one's own address, with .git
+            (f"git clone --branch v0.1.0 {url}\n", ["v0.1.0"], True),  # the address at the line's end
+        ]
+        for readme, tags, ok in cases:
+            r = release_place(readme, tags)
+            self.assertEqual(r.returncode == 0, ok, f"{readme!r} tags {tags}: {r.stdout}{r.stderr}")
+        vp = version_places
+        self.assertEqual(vp.clone_options(f"`git clone --branch v0.1.0 {url}` or `git clone {url}`"),
+                         ["--branch v0.1.0", ""])
+        for other in (f"{url}-other", f"{url}s", f"{url}.github.io", f"{url}_x"):
+            self.assertEqual(vp.clone_options(f"`git clone --branch v0.1.0 {other}`"), [], other)
+            self.assertFalse(vp.clones_ours(f"`git clone {other}`"), other)
+        for own in (f"`git clone --branch v0.1.0 {url}`", f"`git clone --branch v0.1.0 {url}.git`",
+                    f"git clone --branch v0.1.0 {url}", f"(git clone --branch v0.1.0 {url})"):
+            self.assertEqual(vp.clone_options(own), ["--branch v0.1.0"], own)
+            self.assertTrue(vp.clones_ours(own), own)
+            self.assertEqual(vp.clones_not_read(own), [], own)
+        # Every clone has three answers, never two (the maintainer's principle, 2026-11-25): this repository whole, read
+        # and checked with the letter case of host, owner and name ignored; an address listed in OTHERS; or NOT READ,
+        # and the version test fails naming the line. A sentence's closing marks end the address.
+        for form in (f"run git clone --branch v0.1.0 {url}.", f"run git clone --branch v0.1.0 {url}. Then look",
+                     f"run git clone --branch v0.1.0 {url}.git.", f"run git clone --branch v0.1.0 {url}... then",
+                     "`git clone --branch v0.1.0 https://github.com/thewindstorm/windstorm-repo-minions`",
+                     "`git clone --branch v0.1.0 https://GITHUB.COM/TheWindstorm/windstorm-repo-minions`",
+                     "`git clone --branch v0.1.0 git@github.com:TheWindstorm/windstorm-repo-minions.git`",
+                     "`git clone --branch v0.1.0 ssh://git@github.com/TheWindstorm/windstorm-repo-minions`"):
+            self.assertEqual(vp.clone_options(form), ["--branch v0.1.0"], form)
+            self.assertTrue(vp.clones_ours(form), form)
+            self.assertEqual(vp.clones_not_read(form), [], form)
+        # two clones on one line with no code span between them are two, never one
+        two = f"run git clone --branch v0.1.0 {url} or git clone {url}"
+        self.assertEqual(vp.clone_options(two), ["--branch v0.1.0", ""])
+        # not this repository whole, not listed: not read, and named by its line, never skipped
+        for other in (f"{url}-other", f"{url}s", f"{url}.github.io", f"{url}_x",
+                      "https://github.com/TheWindstorm/windstorm-pit-board", "a git clone of it"):
+            text = f"`git clone --branch v0.1.0 {other}`" if "://" in other else other
+            self.assertEqual(vp.clone_options(text), [], other)
+            self.assertEqual(vp.clones_not_read(text), [text], other)  # the line as it stands, named
+        # (3) a status heading names this version, never one that only starts with it
+        for heading in ("0.1.0-rc1, not released", "0.1.0+local", "0.1.0a", "0.1.01", "0.1.0.1", "0.1.0rc1"):
+            self.assertFalse(vp.heading_names(heading, "0.1.0"), heading)
+        for heading in ("0.1.0, released 2026-11-27", "0.1.0 (the first release)", "0.1.0"):
+            self.assertTrue(vp.heading_names(heading, "0.1.0"), heading)
+
+
+def release_place(readme, tags):
+    """Run the release-place CI step, as written in tests.yml, on main with this README; tags: those on GitHub's copy,
+    None when it cannot be read. A tag v0.1.0 is in the checkout in every case: a tag only there must not count."""
+    text = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+    job = text[text.index("\n  release-place:"):]
+    lines = job.splitlines()
+    i = next(n for n, x in enumerate(lines) if x.strip() == "run: |")
+    indent = len(lines[i]) - len(lines[i].lstrip()) + 2
+    body = []
+    for x in lines[i + 1:]:
+        if x.strip() and len(x) - len(x.lstrip()) < indent:
+            break
+        body.append(x[indent:])
+    script = "set -e\n" + "\n".join(body) + "\n"  # GitHub runs a step with no shell named as bash -e
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
+                                                                                     "GIT_CONFIG_NOSYSTEM")}
+    env.update(BRANCH="main", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "README.md"), "w", encoding="utf-8") as f:
+            f.write(readme)
+        run = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)
+        run("git", "init", "-q"); run("git", "add", "."); run("git", "commit", "-qm", "r")
+        run("git", "tag", "v0.1.0")
+        origin = os.path.join(d, "origin.git")
+        run("git", "init", "-q", "--bare", origin)
+        for tag in tags or []:
+            run("git", "push", "-q", origin, f"refs/tags/{tag}")
+        run("git", "remote", "add", "origin", origin if tags is not None else os.path.join(d, "gone.git"))
+        return run("bash", "-c", script)
+
 
 @atexit.register
 def _say_what_did_not_run():
@@ -328,4 +446,9 @@ def tearDownModule():
 
 
 if __name__ == "__main__":
-    unittest.main()
+    # R169 (the gate recipe's ninth case): the gate's own last line, written only after its whole run has ended; the
+    # CI job is green only with it (and with each file's own "Ran"/"OK" summary), so a run that ends early is red
+    result = unittest.main(exit=False).result
+    print(f"gate: {'passed' if result.wasSuccessful() else 'FAILED'}: {result.testsRun} test(s) of the gate, every "
+          "other test file run in its own process to its end", flush=True)
+    sys.exit(0 if result.wasSuccessful() else 1)
