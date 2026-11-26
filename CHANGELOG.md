@@ -80,6 +80,12 @@ the cap (row R94).
   second copy beside it; the one step back is `restore`, a new command, which keeps the file that could not be
   read under a dated name and puts the copy in its place; when no copy reads, the stop says so and names the
   README's list of what the tool makes on a computer (row R205).
+- With the record removed and its second copy still there, no command run by hand takes the computer for one
+  where the tool made nothing: each stops before it changes or asks anything and says the record was removed while
+  the tool's parts stay, with `restore` as its step when the copy reads. Before, `doctor` and `uninstall` of a
+  repository said there was nothing to check or uninstall, `status` sent the person to `setup`, and `uninstall
+  --all` took the watch off, with the runner still serving. `uninstall --all` deletes the copy before the record,
+  so a cut between its last removals never leaves that state (row R205).
 - `setup` never writes over a runner `.env` it could not read; it stops, names the file, and gives one step that
   keeps the file's lines. Before, such a file was written over with only the tool's own lines (row R206).
 - The tool's own commands and its watch take turns with its record: a command that changes it holds one lock
@@ -93,12 +99,14 @@ the cap (row R94).
   own lock and is never skipped; a pass ends within 4 minutes. A command whose hold made the watch skip a pass
   says so at its end. The watch never takes its record, or the folder of its record and lock, for a fresh home
   when it is not there: it makes nothing, says so at each pass, and `restore` puts a copy that reads back in its
-  place (row R208).
+  place. `status --rerun` asks GitHub nothing while another of the tool's commands holds the record: it names
+  that command, says the job was not run again, and gives the same command again (row R208).
 - No road of the tool deletes a runner's `.env` that is not as the tool left it. `uninstall`, and `setup` run
   again after a setup that was cut short, read the file before the runner's folder goes; a file with lines
   added after setup wrote it is kept in `~/repo-minions-record/`, readable by its owner only, and named by path
   with its count of lines, never its lines. A line already in the file when setup wrote it is part of what
-  setup left and goes with the folder. Where it cannot be kept and compared, the file and its folder stay, named.
+  setup left and goes with the folder. Where it cannot be kept and compared, the file and its folder stay, named, and
+  `setup` gives the step that ends that stop for its kind (for the person's own file: move it, never remove it).
   `uninstall --delete-record` names the kept files before the word is typed. Before, those lines were deleted
   with the folder and nothing was said (row R209).
 - Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
