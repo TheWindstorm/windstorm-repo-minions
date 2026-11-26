@@ -73,6 +73,34 @@ the cap (row R94).
   stop on gh's answer about the login says gh's own words on standard error and nothing of what it wrote on
   standard output, where a token comes when the call works; before, such a stop quoted that output's last
   lines, holding back only a line shaped like a GitHub token (row R204).
+- A record of what the tool made that could not be read (empty, cut short, not its format, unreadable) is never
+  taken for an empty one or written over, by any command or by the watch's timer: every command stops before it
+  changes anything, naming the file and why. Before, the watch wrote a new record over it without the runners,
+  and `uninstall` then said there was nothing to uninstall, with the runner still there. The record now has a
+  second copy beside it; the one step back is `restore`, a new command, which keeps the file that could not be
+  read under a dated name and puts the copy in its place; when no copy reads, the stop says so and names the
+  README's list of what the tool makes on a computer (row R205).
+- `setup` never writes over a runner `.env` it could not read; it stops, names the file, and gives one step that
+  keeps the file's lines. Before, such a file was written over with only the tool's own lines (row R206).
+- The tool's own commands and its watch take turns with its record: a command that changes it holds one lock
+  from its first read to its end. A command run by hand waits up to a minute for another, then stops and names
+  it (only the process that holds the lock, never one that only has its file open); the watch never waits, and a pass that finds the record held is skipped and said. Before, two at the
+  same time could undo each other's changes, lose an entry, or leave the record unreadable; seen in a stand-in
+  trial with two processes writing in a tight loop, not on a real machine. No wait for a person is inside the
+  hold: at a prompt, at the admin password and while a command waits for a running job, the lock is let go, and
+  after the answer the command takes it again and reads the record afresh; when what the person was shown has
+  changed meanwhile, it says so and asks again. The watch pass `setup` starts and waits for is handed `setup`'s
+  own lock and is never skipped; a pass ends within 4 minutes. A command whose hold made the watch skip a pass
+  says so at its end. The watch never takes its record, or the folder of its record and lock, for a fresh home
+  when it is not there: it makes nothing, says so at each pass, and `restore` puts a copy that reads back in its
+  place (row R208).
+- No road of the tool deletes a runner's `.env` that is not as the tool left it. `uninstall`, and `setup` run
+  again after a setup that was cut short, read the file before the runner's folder goes; a file with lines
+  added after setup wrote it is kept in `~/repo-minions-record/`, readable by its owner only, and named by path
+  with its count of lines, never its lines. A line already in the file when setup wrote it is part of what
+  setup left and goes with the folder. Where it cannot be kept and compared, the file and its folder stay, named.
+  `uninstall --delete-record` names the kept files before the word is typed. Before, those lines were deleted
+  with the folder and nothing was said (row R209).
 - Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
   path of Claude Code's own list of plugins and the plugin's name, never its version folder, and the tool says the
   skill was removed from Claude Code only when that list was read and names it nowhere: an update of the plugin says

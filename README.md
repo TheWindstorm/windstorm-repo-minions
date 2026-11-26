@@ -24,6 +24,29 @@ Anything a job wrote anywhere else outside the runner's own folders is not looke
 If you later give the runner's user more rights (a container engine's group, a sudo rule), its jobs can leave files
 that user does not own. Uninstall does not delete those. It names them.
 
+## What it makes on a computer
+
+If this tool's record of what it made (`~/.minions/minions.json`) and its second copy both cannot be read, the tool
+cannot tell what it made, and it changes nothing. These are the places it makes, so you can look by hand:
+
+- the user `minions-runner`, and its home, with one folder per repository under `/home/minions-runner/runners/`;
+- one service per runner, named `actions.runner.` then the repository and the runner's name, `.service`, with a
+  drop-in folder beside it in `/etc/systemd/system/`;
+- the slice `minions.slice`, which holds the limits for jobs, in `/etc/systemd/system/`;
+- the watch, `minions-watch.timer` and `minions-watch.service`, in `/etc/systemd/system/`;
+- the job hooks and the copy of this tool the watch runs, in `/usr/local/lib/windstorm-repo-minions/`;
+- each job's start and end, and when the watch last read the repository private, in `/var/lib/windstorm-repo-minions/`;
+- in your own home: `~/.minions/` (the record, its copy, the journal and the lock its commands take turns by) and
+  `~/repo-minions-record/` (your record of what it did, which is yours and stays).
+
+A runner's settings file (`.env` in its folder) that holds lines you added is not deleted with the runner: it is
+kept in `~/repo-minions-record/`, readable by you only, and the command names it.
+
+The lock keeps this tool's own commands on one computer from changing the record at the same time. A home
+folder shared by two computers is not held apart by it: set this tool up from one of them only.
+
+On GitHub, a repository's runners are listed in its Settings, under Actions, then Runners.
+
 ## Family
 
 Part of the Windstorm skills: [Pit Stop](https://github.com/TheWindstorm/windstorm-pit-stop),
