@@ -2572,7 +2572,7 @@
   },
   {
    "id": "R210",
-   "seen": "2026-11-26, by the maintainer, in a stand-in trial (the test suite's own stand-in computer, with this tool's runner installed, its service running, then the tool's whole state folder removed): status said no runner of ours serves the repository and sent the person to setup; setup then stopped saying a user named minions-runner is there and this tool did not make it, with the step 'sudo userdel -r minions-runner' while that user's runner service ran; uninstall --all, after its stop at the slice and the person's stop of the service, said 'ok this tool is off this computer' and said of the runner user, its home and the repository's folders that this tool did not make them and that they were the person's, with the runner's service file there, enabled, and its runner still registered on GitHub, unnamed. Run 1 of uninstall --all there took the watch off before its stop at the slice. Not seen on a real machine: the state folder has to be removed by hand, by a disk fault or by another program.",
+   "seen": "2026-11-26, by the maintainer, in a stand-in trial (the test suite's own stand-in computer, with this tool's runner installed, its service running, then the tool's whole state folder removed): status said no runner of ours serves the repository and sent the person to setup; setup then stopped saying a user named minions-runner is there and this tool did not make it, with the step 'sudo userdel -r minions-runner' while that user's runner service ran; uninstall --all, after its stop at the slice and the person's stop of the service, said 'ok this tool is off this computer' and said of the runner user, its home and the repository's folders that this tool did not make them and that they were the person's, with the runner's service file there, enabled, and its runner still registered on GitHub, unnamed. Run 1 of uninstall --all there took the watch off before its stop at the slice. On a stock Ubuntu 22.04 guest (systemd 249), the same day, systemd's list of unit files answers as on 24.04's systemd 255 (its count line on standard output, exit 1 for none, exit 0 for some), and status and setup in a fresh home went past that read. Not seen on a real machine: the state folder has to be removed by hand, by a disk fault or by another program.",
    "promise": "On a computer that holds what carries this tool's own names (the runner user, its home, a runner service of the tool's naming form, a repository's folder in its hooks or records folder) and its record here does not name it, no line says this tool did not make it or that it is the person's: each line says what was read, that the record here does not name it, and what else of this tool's names is on this computer. A runner service of the form is read from systemd's loaded units and from its unit files, as a unit that is disabled and does not run is often not loaded; each read has three answers, and one that did not answer is said, never taken for none. status, doctor, drain, resume, uninstall of a repository and setup stop before any change or any call to GitHub, naming what was read: for a runner service, whether it runs now and whether it starts when the computer restarts (three answers each, as systemd answers; enabled-runtime, which does not outlast a restart, said as read), and the repository whose owner and name its name carries, for which GitHub may still list a runner; with the README's section 'What it makes on a computer' and where GitHub lists a repository's runners. None of them sends the person to setup, or says there is nothing to check or to uninstall, when a runner service of this tool's form, more of its names beside the runner user, or a read that did not answer is here; with the runner user alone, status's step is setup, whose stop says what was read with its step. No printed step deletes the runner user while a runner service of this tool's form is here or while a process of that user runs: the step is printed only when that user's processes were read and none runs (three answers: none, some, could not be read), and taken as printed, the same setup goes on. uninstall --all stops before any change, the watch's removal included, while such a service runs now, starts at a restart, or either could not be read, or while a read did not answer: it says what was read, that it would take the limits, the watch and the job hooks from that service and leave it, and one step, once GitHub shows that runner idle or gone: `sudo systemctl disable --now` with that service's name, as an administrator, then the same command again; and that if another account on this computer set this tool up, that service is theirs and the leave is run from that account. With such a service neither running nor starting at a restart, both read, the leave goes on, says before any change what it will leave, and its unit file stays, named. Its last line says the tool is off this computer only when nothing of this tool's names that no record here names can still run or start (no such service runs, starts at a restart or was not read; no process of the runner user runs or was not read), and names what stayed as what this tool's record here does not name; otherwise it says the tool is not off, what is left that can still run, and that GitHub may still list a runner for the repository that service's name carries, which this run could not ask, with where GitHub lists a repository's runners, and the command exits 1. Nothing is taken on by its marks, nothing more is deleted than before, and the tool itself still switches off, takes on and removes nothing its record does not name.",
    "codon": "G6.38",
    "first_ship_in": "0.1.0",
@@ -2580,7 +2580,7 @@
    "test": "test_G6_38_road_i_every_command_names_what_was_read_and_none_sends_the_person_to_setup",
    "owner": "maintainer",
    "proven": "",
-   "issue": null,
+   "issue": 397,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2594,7 +2594,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": null,
+   "issue": 398,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2608,7 +2608,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": null,
+   "issue": 399,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2622,7 +2622,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": null,
+   "issue": 400,
    "moved_why": "",
    "moved_by_person": ""
   },
@@ -2636,7 +2636,35 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
-   "issue": null,
+   "issue": 401,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R215",
+   "seen": "2026-11-26, from reading how the runner service's start at a restart is read: an is-enabled answer this tool does not know (static, linked, indirect, generated, transient, alias, bad, not-found) is said as could not be read, though systemd answered. It stops uninstall --all before any change, the safe side, but its printed step, `sudo systemctl disable --now` with that service, may not settle it (for a unit with no unit file, disable may refuse; not seen), so the same stop can come again. Not seen on a real machine.",
+   "promise": "Every answer systemd gives to is-enabled for a runner service of this tool's form is said as systemd gave it, with whether that service starts when the computer restarts as that answer means, and a stop that follows from it has a step that settles it: taken as printed, the same command goes on or says why not. The answers and their steps are read on a real machine before the code.",
+   "codon": "G6.43",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 402,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R216",
+   "seen": "2026-11-26, by the maintainer, on a stock Ubuntu 22.04 guest, at setup's Enter with nothing typed (its input closed, under a terminal): setup printed 'ok after your answer this command took this tool's lock again and read its record afresh: what you were shown reads the same, so it goes on' on the line before 'stop no Enter was read: nothing was changed. Run the same command again in your own terminal'. The first line says an answer came where none was read.",
+   "promise": "At a wait for the person that ends with no answer read, no line says an answer came: the stop says that none was read and that nothing was changed.",
+   "codon": "G6.44",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 403,
    "moved_why": "",
    "moved_by_person": ""
   }
