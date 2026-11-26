@@ -1077,10 +1077,11 @@ def login_kept(host: Host) -> tuple[str, str]:
     whether one line came back is read. gh older than 2.17 has no `auth token` and keeps a login only in its file or
     the shell (a keyring came in 2.26), so there its file is read for whether a token line is there.
     R204 (seen 2026-11-26, a stock Ubuntu 22.04 with the distribution's gh 2.4.0): such a gh is known only by the
-    answer seen from it to this very call, `unknown flag: --hostname` as the first line on standard error with exit
-    1; any other answer is could not be read, never the older road. This call's standard output is a token when it
-    works, so nothing of it is ever printed or logged, whatever the exit: a stop says only its length, and gh's own
-    first line on standard error, quoted as read."""
+    answer seen from it to this very call: exit 1, nothing on standard output, and `unknown flag: --hostname` as one
+    whole line on standard error (any line of it, so a warning line before or after it changes nothing); any other
+    answer is could not be read, never the older road. This call's standard output is a token when it works, so
+    nothing of it is ever printed or logged, whatever the exit: a stop says only its length, and the first two lines
+    gh wrote on standard error, each quoted as read."""
     rc, out = host.run(["gh", "auth", "token", "--hostname", "github.com"])
     got = [x.strip(BLANKS) for x in lines_of(out) if x.strip(BLANKS)]
     if rc == 0 and len(got) == 1 and re.fullmatch(r"[^ \t]+", got[0]):
@@ -1089,25 +1090,31 @@ def login_kept(host: Host) -> tuple[str, str]:
         return "no", (f"{NO_LOGIN}: gh has none for github.com that it can read when nobody is logged in (a login "
                       "kept only in a keyring, or only in a shell's GH_TOKEN, cannot be read then)")
     err = [x.strip(BLANKS) for x in lines_of(getattr(out, "err", "")) if x.strip(BLANKS)]
-    head = err[0] if err else ""  # R204: gh 2.4.0's answer, as seen: its first line on standard error, exit 1
-    if rc == 1 and re.fullmatch(r"unknown flag: --hostname", head):
+    # R204: gh 2.4.0's answer, as seen: exit 1, nothing on standard output, the phrase as one whole line on standard
+    # error (any line: a warning line beside it changes nothing)
+    if rc == 1 and str(out) == "" and any(re.fullmatch(r"unknown flag: --hostname", head) for head in err):
         return hosts_file_login(host)
-    first = [x for x in err if not TOKEN_SHAPE.search(x)][:1]
-    heard = (f"on standard error {as_read(first[0])}" if first else "no words on standard error") + \
-        f"; its standard output, {len(str(out))} character(s), is not shown"
-    if rc == 127:  # Host.run: gh not found with this PATH, or it could not be run at all
+    first = [x for x in err if not TOKEN_SHAPE.search(x)][:2]
+    if rc == 127:  # Host.run: gh not found with this PATH, or it could not be started: the words are Python's, not gh's
         return "unread", ("the GitHub CLI (gh) could not be found or run with this PATH, so it could not be asked "
-                          f"for its login: {heard}")
+                          "for its login" + (f": {as_read(first[0])}" if first else ""))
+    heard = (("on standard error " + ", then ".join(as_read(x) for x in first)) if first else
+             "no words on standard error") + f"; its standard output, {len(str(out))} character(s), is not shown"
     return "unread", f"gh could not be asked whether it has a login for github.com: gh exit {rc}, {heard}"
 
 
 def hosts_file_login(host: Host) -> tuple[str, str]:
     """R160: for a gh with no `auth token`: is a token line under github.com in gh's own file? Only whether one is
-    there is read; its value is never kept."""
+    there is read; its value is never kept. R204: a file that is not there is no login (gh 2.4.0, seen 2026-11-26 on
+    a stock Ubuntu 22.04, leaves no folder of its own at all before its first login); a file there that cannot be
+    opened, or a folder on its path that cannot be read, is could not be read."""
     path = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
-    text = host.read(path)
+    text, why = host.read_checked(path)
+    if text is None and why is None:
+        return "no", f"{NO_LOGIN}: {path} is not there, so gh has no login saved"
     if text is None:
-        return "unread", f"gh could not be asked whether it has a login for github.com, and {path} could not be read"
+        return "unread", (f"gh could not be asked whether it has a login for github.com, and {path} could not be "
+                          f"read: {as_read(why)}")
     here = False
     for line in lines_of(text):
         if line and not line[0].isspace():

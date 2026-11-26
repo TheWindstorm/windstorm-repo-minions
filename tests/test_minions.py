@@ -320,6 +320,9 @@ class FakeHost(M.Host):
         w = getattr(self, "sudo_warning", "")
         if w and argv[:1] in (["sudo"], ("sudo",)):
             out = M.Out(out, w + out.err) if isinstance(out, getattr(M, "Out", ())) else w + out  # sudo's: standard error
+        if os.environ.get("MINIONS_TEST_STREAMS") == "1" and isinstance(out, getattr(M, "Out", ())) and \
+                tuple(argv[:3]) == ("gh", "auth", "token") and rc != 127:
+            return rc, M.Out(out, STREAM_WARNING + out.err)  # R204: gh auth token's planted streams, a warning first too
         if os.environ.get("MINIONS_TEST_STREAMS") != "1" or isinstance(out, getattr(M, "Out", ())):
             return rc, out
         a = list(argv)
@@ -8199,9 +8202,14 @@ class RuleTwo(unittest.TestCase):
         self.assertEqual(kept((0, "made-up-login-value\n")), ("yes", ""))
         self.assertEqual(kept(no_token)[0], "no")
         for answer in ((1, "error connecting to the keyring\n"), (0, "two\nlines\n"), (0, ""),
-                       (127, "[Errno 2] No such file or directory: 'gh'")):
+                       (127, M.Out("", "[Errno 2] No such file or directory: 'gh'"))):
             self.assertEqual(kept(answer)[0], "unread", answer)
-        self.assertIn("could not be found", kept((127, "[Errno 2] No such file or directory: 'gh'"))[1])
+        # R204: planted as the real Host gives it (Python's words on the err side), and not called gh's: gh did not run
+        not_run = kept((127, M.Out("", "[Errno 2] No such file or directory: 'gh'")))[1]
+        self.assertIn("could not be found", not_run)
+        self.assertIn("'[Errno 2] No such file or directory: ", not_run)
+        self.assertNotIn("standard error", not_run)
+        self.assertNotIn("standard output", not_run)
         self.assertNotIn("ghp_made_up_value", kept((1, "ghp_made_up_value\nsomething else\n"))[1])
         old = (1, M.Out("", "unknown flag: --hostname\n\nUsage:  gh auth <command> [flags]\n"))  # R204: as gh 2.4.0 says it
         h = linux_host(runs={("gh", "auth", "token"): old})
@@ -8211,6 +8219,8 @@ class RuleTwo(unittest.TestCase):
         h.files[path] = "github.com:\n    user: example-person\n    git_protocol: https\n"
         self.assertEqual(M.login_kept(h)[0], "no")
         del h.files[path]
+        self.assertEqual(M.login_kept(h)[0], "no")  # R204: no file is no login (gh 2.4.0 leaves none before a login)
+        h.files[path], h.unreadable = "github.com:\n    oauth_token: made-up-login-value\n", {path}
         self.assertEqual(M.login_kept(h)[0], "unread")
         # could not be read: a stop that says so, nothing made, never a login step
         host = linux_host(runs={("gh", "auth", "token"): (1, "error connecting to the keyring\n")})
@@ -8235,23 +8245,66 @@ class RuleTwo(unittest.TestCase):
             return h
         login = "github.com:\n    oauth_token: made-up-login-value\n    user: example-person\n"
         none = "github.com:\n    user: example-person\n    git_protocol: https\n"
-        # the answer seen: gh's own file is read, in three answers, as R160 promises for a gh older than 2.17
-        self.assertEqual(M.login_kept(host_with(flag, login)), ("yes", ""))
-        self.assertEqual(M.login_kept(host_with(flag, none))[0], "no")
-        self.assertEqual(M.login_kept(host_with(flag, None))[0], "unread")
+        # the answer seen: gh's own file is read, in three answers, as R160 promises for a gh older than 2.17; the
+        # phrase is one whole line on standard error, so the suite's warning line before or after it changes nothing
+        warn = STREAM_WARNING
+        for name, seen in (("as seen", flag), ("a warning line before", (1, M.Out("", warn + flag[1].err))),
+                           ("a warning line after", (1, M.Out("", flag[1].err + warn)))):
+            with self.subTest(name):
+                self.assertEqual(M.login_kept(host_with(seen, login)), ("yes", ""))
+                self.assertEqual(M.login_kept(host_with(seen, none))[0], "no")
+                # no file is no login: gh 2.4.0 leaves no folder of its own before its first login (seen on the guest)
+                kept, why = M.login_kept(host_with(seen, None))
+                self.assertEqual(kept, "no", why)
+                self.assertIn("is not there", why)
+                refused = host_with(seen, login)
+                refused.unreadable = {os.path.join(refused.gh_env()["GH_CONFIG_DIR"], "hosts.yml")}
+                kept, why = M.login_kept(refused)
+                self.assertEqual(kept, "unread", why)
+                self.assertIn("Permission denied", why)
+                self.assertNotIn("made-up-login-value", why)
+        # a newcomer who has not logged in: look says the login step, never "running it again changes nothing"
+        code, lines = look(StandIn([]), host_with(flag, None))
+        self.assertTrue(any("gh auth login" in x for x in lines), lines)
+        self.assertFalse(any("Running it again changes nothing" in x for x in lines), lines)
+        # the real reader tells the three apart: a file not there, a folder not there, a folder it may not enter
+        if os.geteuid() != 0:
+            with tempfile.TemporaryDirectory() as d:
+                self.assertEqual(M.Host().read_checked(os.path.join(d, "hosts.yml")), (None, None))
+                self.assertEqual(M.Host().read_checked(os.path.join(d, "gh", "hosts.yml")), (None, None))
+                os.mkdir(os.path.join(d, "gh"))
+                open(os.path.join(d, "gh", "hosts.yml"), "w").close()
+                os.chmod(os.path.join(d, "gh"), 0)
+                try:
+                    text, why = M.Host().read_checked(os.path.join(d, "gh", "hosts.yml"))
+                    self.assertIsNone(text)
+                    self.assertIn("Permission denied", why or "")
+                finally:
+                    os.chmod(os.path.join(d, "gh"), 0o700)
         # any answer not seen for this call is could not be read, never the older road, even with a login in the file
         for name, answer in (("the bare form's words, never asked", bare),
                              ("those words on standard error", (1, M.Out("", bare[1]))),
                              ("the seen words with another exit", (2, flag[1])),
-                             ("the seen words on standard output", (1, M.Out(str(flag[1].err), "")))):
+                             ("the seen words on standard output", (1, M.Out(str(flag[1].err), ""))),
+                             ("the seen words with a line on standard output", (1, M.Out("a line\n", flag[1].err)))):
             with self.subTest(name):
                 self.assertEqual(M.login_kept(host_with(answer, login))[0], "unread")
         # a stop carries gh's first line on standard error, quoted as read; of standard output only its length
         kept, why = M.login_kept(host_with((1, M.Out("", "error connecting to /run/user/1000/bus\n")), login))
         self.assertEqual(kept, "unread")
-        self.assertIn("on standard error 'error connecting to /run/user/1000/bus'", why)
+        self.assertIn("on standard error ", why)
+        self.assertIn("'error connecting to /run/user/1000/bus'", why)
         self.assertIn("its standard output, 0 character(s), is not shown", why)
-        self.assertIn("no words on standard error", M.login_kept(host_with((1, M.Out("", "")), login))[1])
+        # the first two lines of standard error, each quoted: a warning line first does not hide gh's own words
+        pre = "" if os.environ.get("MINIONS_TEST_STREAMS") == "1" else warn  # the warning world puts it there itself
+        kept, why = M.login_kept(host_with((1, M.Out("", pre + "error connecting to /run/user/1000/bus\nthird\n")), login))
+        self.assertIn(f"{M.as_read(warn.strip())}, then 'error connecting to /run/user/1000/bus'", why)
+        self.assertNotIn("third", why)
+        empty = M.login_kept(host_with((1, M.Out("", "")), login))[1]
+        if os.environ.get("MINIONS_TEST_STREAMS") == "1":  # the warning world: the warning is the only line there
+            self.assertIn(f"on standard error {M.as_read(warn.strip())}; its standard output", empty)
+        else:
+            self.assertIn("no words on standard error", empty)
         # a value shaped like a token on standard output, exit 1: neither the stop nor any file written holds it
         made_up = "gho_madeUpTokenR204value000"
         host = host_with((1, M.Out(made_up + "\nsecond line\n", "some refusal\n")), login)

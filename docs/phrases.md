@@ -60,13 +60,16 @@ pack, `LANG=de_DE.UTF-8` and `LANGUAGE=de_DE:de`, on 2026-11-24.
   - translated: gh has no translations; not seen in another language.
 - program: gh (older than 2.17, which has no `auth token`)
   - asked: `gh auth token --hostname github.com`
-  - phrase: `unknown flag: --hostname` (the first line on standard error, with exit 1; then gh's own file is read)
+  - phrase: `unknown flag: --hostname` (one whole line on standard error, any line of it, with exit 1 and nothing on
+    standard output; then gh's own file is read, and a file not there is no login)
   - stream: standard error, exit 1, nothing on standard output.
   - seen: gh 2.4.0 (the distribution's gh on a stock Ubuntu 22.04 virtual machine), 2026-11-26.
   - the other form, not asked by this tool: `gh auth token` with no flag gets `unknown command "token" for "gh auth"`
     on standard output, exit 1, nothing on standard error (the same gh, the same day). Before 2026-11-26 this page
     said that phrase was seen on standard error for the call with the flag; it was not, and the code no longer
     matches it.
+  - before its first login the same gh, in a home of its own, left no folder at all (asked `auth token`,
+    `auth status` and `api user`; the same machine, the same day).
   - translated: not seen in another language.
 - program: gh
   - asked: `gh auth status --hostname github.com`
