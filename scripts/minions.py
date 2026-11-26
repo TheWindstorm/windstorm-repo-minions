@@ -350,6 +350,7 @@ class Report:
         self._tells: list[str] = []
         self.here = False  # G7.15: the block is read by the person on their own screen, not relayed by an agent
         self.stayed: dict = {}  # R136 (rule 8): what a leave left because this tool did not make it, for the census
+        self.not_off = False  # R210: uninstall --all ended with what carries its names still able to run: exit 1
 
     def _put(self, kind: str, text: str) -> None:
         self._flush_tells()
@@ -431,6 +432,8 @@ class Report:
         self._flush_tells()
         if self.stopped:
             return EXIT_STOP
+        if self.not_off:
+            return EXIT_FAILED
         if self.blocked or self.asked:
             return EXIT_NEED
         return EXIT_WAIT if self.waiting else EXIT_OK
@@ -3751,21 +3754,44 @@ def held_words(rep: "Report", paths: list[str], who: str) -> str:
     return "this tool's record here does not name" if own else who
 
 
-def unit_now(host: Host, unit: str) -> tuple[str, str]:
-    """R210, read as the person, three answers each: whether the unit runs now, and whether it starts at a restart
-    (systemctl is-enabled: enabled starts it at boot, disabled or masked does not, any other answer is not read)."""
+def unit_now(host: Host, unit: str) -> tuple[str, str, bool]:
+    """R210, read as the person, three answers each: whether the unit runs now (is-active), and whether it starts at a
+    restart (is-enabled: enabled starts it at boot; disabled, masked and enabled-runtime, which does not outlast a
+    restart, do not; any other answer is not read). The third value: it can still run (runs now, starts at a
+    restart, or either could not be read)."""
     rc, out = host.run(systemctl("is-active", unit))
     w = (words_of(out) or [""])[0]
-    run = ("it runs now" if w in RUNNING_STATES else "it does not run now" if w in ("inactive", "failed") else
-           f"whether it runs now could not be read (systemctl answered code {rc}: {tail(out) or 'nothing'})")
+    run_k = "yes" if w in RUNNING_STATES else "no" if w in ("inactive", "failed") else "unread"
+    run = {"yes": "it runs now", "no": "it does not run now"}.get(
+        run_k, f"whether it runs now could not be read ({first_words(rc, out)})")
     rc, out = host.run(systemctl("is-enabled", unit))
     w = (words_of(out) or [""])[0]
-    boot = (f"it starts again when this computer restarts, as systemd reads it {w}" if w in ("enabled", "enabled-runtime")
-            else f"it does not start when this computer restarts, as systemd reads it {w}"
-            if w in ("disabled", "masked", "masked-runtime") else
-            f"whether it starts when this computer restarts could not be read (systemctl answered code {rc}: "
-            f"{tail(out) or 'nothing'})")
-    return run, boot
+    if w == "enabled":
+        boot_k, boot = "yes", "it starts again when this computer restarts, as systemd reads it enabled"
+    elif w in ("disabled", "masked", "masked-runtime"):
+        boot_k, boot = "no", f"it does not start when this computer restarts, as systemd reads it {w}"
+    elif w == "enabled-runtime":
+        boot_k, boot = "no", ("systemd reads it enabled-runtime: enabled until this computer restarts, and not after "
+                              "it")
+    else:
+        boot_k, boot = "unread", f"whether it starts when this computer restarts could not be read ({first_words(rc, out)})"
+    return run, boot, run_k != "no" or boot_k != "no"
+
+
+def own_unit_files(host: Host) -> tuple[list[str] | None, str]:
+    """R210: the unit files of this tool's naming forms on this computer, read from systemd's list of unit FILES: a
+    unit that is disabled and does not run is often not loaded, so not in list-units (seen on systemd 255). Read with
+    systemd's own legend, whose last line counts what it listed ("N unit files listed.", on standard output, exit 0,
+    or exit 1 for none, as systemd 255 answers): three answers, the names; none; None with why, when that line is not
+    there (a warning on standard error is never read as the answer)."""
+    rc, out = host.run(systemctl("list-unit-files", "actions.runner.*", "minions*"))
+    rows = [x for x in lines_of(out) if x.strip(BLANKS)]
+    m = re.fullmatch(r"(\d+) unit files? listed\.", rows[-1].strip(BLANKS)) if rows else None
+    if rc in (0, 1) and m and (int(m.group(1)) == 0) == (rc == 1):
+        names = sorted({words_of(x)[0] for x in rows[:-1] if not x.startswith("UNIT FILE")})
+        if len(names) <= int(m.group(1)):
+            return names, ""
+    return None, first_words(rc, out)
 
 
 def unit_repo_words(unit: str) -> str:
@@ -3778,28 +3804,37 @@ def unit_repo_words(unit: str) -> str:
 def lost_setup(host: Host, data: dict) -> dict | None:
     """R210: what carries this tool's own names on this computer that its record here does not name: the runner user
     (setup's one name for it) when the record does not say this tool made it, and runner services of this tool's naming
-    form that no entry of the record names; with what else of its names is here (the slice and the watch, the runner
-    user's home, its two folders). Read as the person, no admin rights, three answers: a read with no answer is said,
-    never taken for none. None when nothing unnamed is here: the computer is then read as before."""
+    form that no entry of the record names, read from systemd's loaded units and from its unit files; with what else
+    of its names is here (the slice and the watch, the runner user's home, its two folders). Read as the person, no
+    admin rights, three answers: a read with no answer is kept in "unread" and said, never taken for none. None only
+    when every read answered and nothing unnamed is here, or on a computer where setup never runs (not Linux, or
+    systemd read not running it). "live": something of it can still run (a service that runs now, starts at a
+    restart, or either was not read; a process of the runner user that runs or was not read; a read not answered)."""
+    if host.system() != "Linux" or systemd_runs_here(host) is False:
+        return None
     named = set()
     for part in ("runners", "setting_up"):
         for m in (data.get(part) or {}).values():
             if isinstance(m, dict) and m.get("unit"):
                 named.add(m["unit"])
-    found = {"user": False, "units": [], "more": [], "unread": [], "pids": None}
+    found = {"user": False, "units": [], "more": [], "unread": [], "pids": None, "live": False}
     kind, said_ = runner_user_state(host)
     if kind == "there" and not data.get("runner_user_made"):
         found["user"] = True
     elif kind == "unread":
         found["unread"].append(f"whether the user {RUNNER_USER} is here ({said_})")
     rc, out = host.run(systemctl("list-units", "--all", "--plain", "--no-legend", "actions.runner.*", "minions*"))
-    units = sorted({words_of(x)[0] for x in lines_of(out) if x.strip(BLANKS) and not x.startswith("0 ")}) if rc == 0 else []
+    units = {words_of(x)[0] for x in lines_of(out) if x.strip(BLANKS) and not x.startswith("0 ")} if rc == 0 else set()
     if rc != 0:
-        found["unread"].append(f"systemd's units (systemctl answered code {rc}: {tail(out) or 'nothing'})")
-    for u in units:
+        found["unread"].append(f"systemd's units ({first_words(rc, out)})")
+    files, why = own_unit_files(host)
+    if files is None:
+        found["unread"].append(f"systemd's unit files ({why})")
+    units |= set(files or [])
+    for u in sorted(units):
         if re.fullmatch(OWN_UNIT, u) and u not in named:
             found["units"].append((u, *unit_now(host, u)))
-    if not (found["user"] or found["units"]):
+    if not (found["user"] or found["units"] or found["unread"]):
         return None
     found["more"] = [f"the unit {u}" for u in (SLICE, f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service") if u in units]
     for path in (f"/home/{RUNNER_USER}", HOOKS_ROOT, RECORDS_ROOT):
@@ -3813,6 +3848,8 @@ def lost_setup(host: Host, data: dict) -> dict | None:
             found["pids"] = runner_pgrep(host)
         except PidsUnread as e:
             found["pids"] = str(e)
+    found["live"] = (any(live for _, _, _, live in found["units"]) or bool(found["unread"])
+                     or (found["user"] and found["pids"] != []))
     return found
 
 
@@ -3823,7 +3860,11 @@ def lost_words(host: Host, found: dict) -> str:
     runner service of this tool's form is here; GitHub's place for a repository's runners."""
     path = state_path(host)
     things = ([f"the user {RUNNER_USER}"] if found["user"] else []) + [
-        f"the runner service {u} ({run}; {boot})" for u, run, boot in found["units"]]
+        f"the runner service {u} ({run}; {boot})" for u, run, boot, _ in found["units"]]
+    if not things:  # every read that answered found nothing unnamed; what was not read is said, never taken for none
+        return (f"could not read whether this computer holds what carries this tool's own names that this tool's record "
+                f"here, {path}, does not name. Not read: {'; '.join(found['unread'])}. So nothing is said to be "
+                "here or not, this command changed nothing here and asked GitHub nothing. " + settle_first())
     rec = (f"this tool's record here, {path}, is not there" if not os.path.lexists(path) else
            f"this tool's record here, {path}, does not name {'it' if len(things) == 1 else 'them'}")
     words = (f"this computer holds what carries this tool's own names, and {rec}: {'; '.join(things)}"
@@ -3849,30 +3890,71 @@ def lost_words(host: Host, found: dict) -> str:
     if found["units"]:
         words += (" GitHub may still list a runner for the repository whose owner and name "
                   + ("that service's name carries" if len(found["units"]) == 1 else "each service's name carries")
-                  + f" ({', '.join(unit_repo_words(u) for u, _, _ in found['units'])}).")
+                  + f" ({', '.join(unit_repo_words(u) for u, *_ in found['units'])}).")
     return (words + " Your way out is by hand: the README's section "
             f"\"{README_MAKES_HEAD}\" ({README_MAKES}) lists every place this tool makes on a computer, and GitHub lists "
             "a repository's runners in its Settings, under Actions, then Runners")
 
 
 def left_words(found: dict) -> str:
-    """R210: uninstall --all's last line when what carries this tool's names stays, with no record naming it: what is
-    left, what of it can still run and whether it starts at a restart (read), and the runner GitHub may still list."""
-    things = ([f"the user {RUNNER_USER}"] if found["user"] else []) + [f"the runner service {u}" for u, _, _ in found["units"]]
+    """R210: uninstall --all's last line when what carries this tool's names stays, no record naming it, and some of
+    it can still run: what is left, what of it runs or starts at a restart (read), and the runner GitHub may list."""
+    things = ([f"the user {RUNNER_USER}"] if found["user"] else []) + [f"the runner service {u}" for u, *_ in found["units"]]
     words = ("this tool is not off this computer: this run left as it is what carries this tool's own names and no "
-             f"record of this tool here names: {', '.join(things)}")
+             f"record of this tool here names" + (f": {', '.join(things)}" if things else ""))
     if found["units"]:
         words += ". What can still run: " + "; ".join(f"the runner service {u}: {run}, and {boot}"
-                                                     for u, run, boot in found["units"])
+                                                     for u, run, boot, _ in found["units"])
         words += (". GitHub may still list a runner for the repository whose owner and name "
                   + ("that service's name carries" if len(found["units"]) == 1 else "each service's name carries")
-                  + f" ({', '.join(unit_repo_words(u) for u, _, _ in found['units'])}); this run could not ask GitHub, "
+                  + f" ({', '.join(unit_repo_words(u) for u, *_ in found['units'])}); this run could not ask GitHub, "
                   "as no record here names that repository. GitHub lists a repository's runners in its Settings, under "
                   "Actions, then Runners")
+    pids = found["pids"]
+    if found["user"] and isinstance(pids, list) and pids:
+        words += (f". {plural(len(pids), 'process')} of the user {RUNNER_USER} "
+                  f"{'runs' if len(pids) == 1 else 'run'} now")
+    elif found["user"] and isinstance(pids, str):
+        words += f". Whether a process of the user {RUNNER_USER} runs now could not be read ({pids})"
     if found["unread"]:
         words += f". Not read: {'; '.join(found['unread'])}"
     return (words + f". What this tool makes on a computer, to take off by hand, is in the README's section "
             f"\"{README_MAKES_HEAD}\" ({README_MAKES})")
+
+
+def off_words(found: dict | None, aside: bool) -> str:
+    """uninstall --all's off line (R136), and with what carries this tool's names that no record here names and none
+    of which can still run (R210): said as read, never as not made by this tool."""
+    if not found:
+        return ("this tool is off this computer; what stayed was not made by this tool or its runner user, or holds "
+                "what was not" + (", or is a record of this tool's that could not be read, kept for you" if aside else "")
+                + ", named above with why each stayed")
+    things = ([f"the user {RUNNER_USER}"] if found["user"] else []) + [f"the runner service {u} ({run}; {boot})"
+                                                                     for u, run, boot, _ in found["units"]]
+    return ("this tool is off this computer: nothing of this tool's names here runs now or starts when this computer "
+            "restarts, as read. What stayed is named above with why each stayed; of it, this tool's record here does "
+            f"not name: {'; '.join(things + found['more'])}")
+
+
+def lost_all_stop(host: Host, rep: Report, found: dict) -> None:
+    """R210: uninstall --all stops before any change while a runner service of this tool's form that no record here
+    names can still run (runs now, starts at a restart, or either was not read), or a read did not answer: it would
+    take the limits, the watch and the job hooks from that service and leave it running without them."""
+    live = [u for u, _, _, lv in found["units"] if lv]
+    if not live:
+        rep.stop(lost_words(host, found))
+        return
+    words = lost_words(host, found).split(" Your way out is by hand")[0]
+    line = "sudo systemctl disable --now " + " ".join(shlex.quote(u) for u in live)
+    rep.stop(words + " This command would take the limits (the slice), the watch and the job hooks from "
+             + ("that service" if len(live) == 1 else "those services") + " and leave "
+             + ("it" if len(live) == 1 else "them") + " as "
+             + ("it is" if len(live) == 1 else "they are") + ", so it stops here, before any change. Your next step, "
+             "once GitHub shows that runner idle or gone (Settings, under Actions, then Runners): switch "
+             + ("that service" if len(live) == 1 else "those services") + " off and keep "
+             + ("it" if len(live) == 1 else "them") + f" off at a restart, as an administrator: {C0}{line}{C1}; then "
+             f"run the same command again. If another account on this computer set this tool up, that service is "
+             "theirs: the leave is run from that account, not from this one")
 
 
 def lost_stop(host: Host, rep: Report, data: dict | None = None, alone: bool = False) -> bool:
@@ -3880,7 +3962,7 @@ def lost_stop(host: Host, rep: Report, data: dict | None = None, alone: bool = F
     would send the person to setup stops on a runner service of this tool's form, or on the runner user with more of
     this tool's names beside it; setup (alone=True) stops on the runner user alone too, as it cannot take that user."""
     found = lost_setup(host, load_state(host) if data is None else data)
-    if found and not alone and not (found["units"] or found["more"]):
+    if found and not alone and not (found["units"] or found["more"] or found["unread"]):
         found = None  # the runner user alone: setup says what was read of it, and its step
     if found:
         rep.stop(lost_words(host, found))
@@ -3889,7 +3971,8 @@ def lost_stop(host: Host, rep: Report, data: dict | None = None, alone: bool = F
 
 def not_ours_user(host: Host) -> str:
     """R210: the runner user there and this tool's record not saying it made it: said from what was read."""
-    found = lost_setup(host, load_state(host)) or {"user": True, "units": [], "more": [], "unread": [], "pids": None}
+    found = lost_setup(host, load_state(host)) or {"user": True, "units": [], "more": [], "unread": [], "pids": None,
+                                                     "live": False}
     if found["pids"] is None and found["user"]:
         try:
             found["pids"] = runner_pgrep(host)
@@ -9036,6 +9119,10 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     units = sorted({words_of(x)[0] for x in lines_of(out) if x.strip(BLANKS) and not x.startswith("0 ")}) if rc == 0 else []
     if rc != 0:  # R167: a list systemd did not give is not "none"
         rep.warn(f"census: systemd's units of ours: not read (systemctl answered code {rc}: {tail(out) or 'nothing'})")
+    files_u, why_u = own_unit_files(host)  # R210: a unit not loaded is still named by its file
+    if files_u is None:
+        rep.warn(f"census: systemd's unit files of this tool's naming form: not read ({why_u})")
+    units = sorted(set(units).union(u for u in files_u or [] if re.fullmatch(OWN_UNIT, u)))
     mark = len(unread)
     files = [u for u in ("minions.slice", f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service")
              if there(unit_path(u))]
@@ -9274,6 +9361,11 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
         rep.ok(f"no runner of ours serves {repo} on this computer: nothing to uninstall")
         census(gh, host, [repo], False, rep)
         return rep.code()
+    if everything:
+        found = lost_setup(host, data)  # R210: before any change, the watch's removal included
+        if found and found["live"] and (found["unread"] or any(lv for *_, lv in found["units"])):
+            lost_all_stop(host, rep, found)
+            return rep.code()
     if interactive is None:
         interactive = host.isatty()
     target = "--all" if everything else (repo or "")
@@ -9319,12 +9411,11 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
                skill_folder=kept_skill_from(data), packages={k: data.get(k) for k in (
                    "dependency_packages", "dependency_packages_unread")})
         left = None if rep.stopped else lost_setup(host, load_state(host))  # R210: read again at the very end
-        if left:  # R210: never "off this computer" while what carries its names stays and can still run
+        if left and left["live"]:  # R210: never "off this computer" while what carries its names can still run
             rep.warn(left_words(left))
-        elif set(rep.stayed) - HANDED_ONLY and not rep.stopped:  # R136: the leave went to its end
-            rep.ok("this tool is off this computer; what stayed was not made by this tool or its runner user, or holds "
-                   "what was not" + (", or is a record of this tool's that could not be read, kept for you"
-                                     if rep.stayed.get("aside") else "") + ", named above with why each stayed")
+            rep.not_off = True
+        elif (left or set(rep.stayed) - HANDED_ONLY) and not rep.stopped:  # R136: the leave went to its end
+            rep.ok(off_words(left, bool(rep.stayed.get("aside"))))
         return rep.code()
     if delete_record:
         delete_record_if_typed(host, rep)
@@ -9483,7 +9574,7 @@ def uninstall_lines(host: Host, repo: str | None, everything: bool, data: dict) 
     found = lost_setup(host, data) if everything else None  # R210: read before it is said, as at the end
     if found:
         left = "; ".join(([f"the user {RUNNER_USER}"] if found["user"] else [])
-                         + [f"the runner service {u}" for u, _, _ in found["units"]])
+                         + [f"the runner service {u}" for u, *_ in found["units"]])
         lines = ["This takes off this computer every runner of this tool that its record here names, the watch, the "
                  "slice and this tool's copy, holding new jobs first so that none starts here while it works. It leaves "
                  f"as it is what carries this tool's own names and no record of this tool here names ({left}): that "

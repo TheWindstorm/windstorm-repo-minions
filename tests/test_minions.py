@@ -335,6 +335,9 @@ class FakeHost(M.Host):
         a = list(argv)
         words_on_out = rc == 0 or any(a[i:i + 2] in (["systemctl", "is-active"], ["systemctl", "is-enabled"],
                                                      ["gh", "api"]) for i in range(len(a)))  # gh api: the answer too
+        # R210: list-unit-files writes its list and its count line on standard output at exit 1 too (none listed;
+        # seen, systemd 255.4); its refusals go to standard error
+        words_on_out = words_on_out or ("list-unit-files" in a and "unit files listed." in out)
         stdout, stderr = (out, STREAM_WARNING) if words_on_out else ("", STREAM_WARNING + out)
         if not hasattr(M, "Out"):  # the code before R168 (a red run): its Host joined the two streams, as here
             return rc, stdout + stderr
@@ -467,13 +470,19 @@ TCP = ("  sl  local_address rem_address   st\n"
 GH_LOGIN_HELP = "      --insecure-storage     Save authentication credentials in plain text instead of credential store\n"
 
 
+LUF_NONE = "UNIT FILE STATE PRESET\n\n0 unit files listed.\n"  # R210: systemd 255's list-unit-files with no match
+
+
 def linux_host(**kw):
     files = {"/etc/os-release": 'PRETTY_NAME="Example Linux 1"\nID=ubuntu\nID_LIKE=debian\n',
              "/proc/meminfo": MEMINFO, "/proc/net/route": ROUTE, "/proc/net/tcp": TCP,
              "/sys/devices/nvme0n1/queue/rotational": "0\n"}
     files.update(kw.pop("files", {}))
     runs = {("gh", "auth", "status"): (0, SCOPES), ("gh", "api", "-i", "user"): (0, USER_OK), ("sudo", "-n", "true"): (0, ""),
-            ("systemctl", "is-enabled"): (0, "enabled\nenabled\n")}
+            ("systemctl", "is-enabled"): (0, "enabled\nenabled\n"),
+            # R210: as systemd 255 answers on a computer with none of these: list-units prints nothing, exit 0;
+            # list-unit-files its legend and "0 unit files listed.", exit 1 (seen on this suite's own machine, 255.4)
+            ("systemctl", "list-units"): (0, ""), ("systemctl", "list-unit-files"): (1, LUF_NONE)}
     runs.update(kw.pop("runs", {}))
     links = {"/sys/dev/block/259:2": "/sys/devices/nvme0n1/nvme0n1p2"}
     with open(os.path.join(FIX, "billing-page-excerpt.html"), encoding="utf-8") as f:
@@ -1521,7 +1530,9 @@ class G2(unittest.TestCase):
             self.assertEqual(code, M.EXIT_STOP, lines)
             self.assertEqual(admin_steps(host), [], "nothing is touched")
             self.assertIn("this computer holds what carries this tool's own names, and this tool's record here, "
-                          if answer[0] == 0 else "could not read whether the user", lines[-1])  # R210: what was read
+                          if answer[0] == 0 else "Not read: whether the user minions-runner is here (", lines[-1])
+            if answer[0] != 0:  # R210: the unread said, with getent's own words (after a warning line, if one)
+                self.assertIn("enumeration not supported", lines[-1])
             if answer[0] == 0:
                 # never "open an issue" for a user that may be the person's own: what is true, and where that leaves them
                 self.assertNotIn("open an issue", lines[-1])
@@ -4477,7 +4488,21 @@ class World:
             st = self.active.get(a[2], "inactive")
             return (0 if st == "active" else 3), st + "\n"
         if a[:2] == ["systemctl", "list-units"]:
-            return 0, "".join(f"{u} loaded {self.active.get(u, 'inactive')}\n" for u in sorted(self.loaded))
+            # R210: systemd keeps loaded what runs, what is enabled and what a loaded unit pulls in (the watch's
+            # service by its timer); a unit disabled and not running is let go, and list-units --all no longer
+            # names it (seen on systemd 255: 36 of 39 disabled, inactive service files not in the list)
+            held = [u for u in sorted(self.loaded) if self.active.get(u) == "active" or u in self.enabled
+                    or u.endswith(".slice") or (u == f"{M.WATCH_UNIT}.service" and f"{M.WATCH_UNIT}.timer" in self.loaded)]
+            return 0, "".join(f"{u} loaded {self.active.get(u, 'inactive')}\n" for u in held)
+        if a[:2] == ["systemctl", "list-unit-files"]:  # R210: by the files there, as systemd 255 answers
+            pats = [x for x in a[2:] if not x.startswith("--")]
+            have = sorted(p_.rsplit("/", 1)[1] for p_ in self.paths if p_.startswith("/etc/systemd/system/")
+                          and p_.endswith((".service", ".timer", ".slice")) and p_.count("/") == 4
+                          and any(__import__("fnmatch").fnmatch(p_.rsplit("/", 1)[1], q) for q in pats))
+            if not have:
+                return 1, LUF_NONE
+            return 0, ("UNIT FILE STATE PRESET\n" + "".join(f"{u} {'enabled' if u in self.enabled else 'disabled'} "
+                                                           "enabled\n" for u in have) + f"\n{len(have)} unit files listed.\n")
         if a[:1] == ["getent"]:  # R172: as glibc's getent answers: its line, or exit 2 for a key not found
             return (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n") if self.user else (2, "")
         if a[:2] == ["pgrep", "-u"]:
@@ -4909,10 +4934,12 @@ class G6(unittest.TestCase):
         for x in census:
             if "kept:" in x and "your record of what this tool did" not in x:
                 self.assertNotIn("`", x, "no command for what is the person's")
-        # R210: the runner user stays, and it carries this tool's own name: the last line does not say the tool is off.
-        self.assertTrue(lines[-1].startswith("warn this tool is not off this computer: this run left as it is what "
-                                             "carries this tool's own names and no record of this tool here names: "
-                                             "the user minions-runner."), lines[-1])
+        # R210: the runner user stays, none of its processes runs and no service of this tool's form is here: the
+        # off line, naming it as what this tool's record does not name, never as not made by this tool.
+        self.assertEqual(lines[-1], "ok this tool is off this computer: nothing of this tool's names here runs now or "
+                         "starts when this computer restarts, as read. What stayed is named above with why each "
+                         "stayed; of it, this tool's record here does not name: the user minions-runner; the folder "
+                         "/home/minions-runner")
         # Seen on a stock Ubuntu 24.04 machine (2026-11-25, the end part, part 3): a file put by hand, as root, at the
         # top of the jobs' records folder stopped uninstall --all after the slice ("could not delete
         # /var/lib/windstorm-repo-minions"), exit 2, with the runner user and the tool's copy still there. It is not
@@ -6193,7 +6220,9 @@ class G6(unittest.TestCase):
         # too, a runner unit whose record was lost included. Its own units are read first (systemd's SliceOf, and,
         # for a systemd that does not know that field, each unit of our names whose Slice= is ours); while one reads
         # running the slice is not stopped and its file stays; a read with no answer is the same refusal.
-        LOST = "actions.runner.example-org-lost.minions-box-1.service"
+        # (A runner unit of this tool's own naming form that no record names stops uninstall --all before any change,
+        # R210, G6.38; this one is not of that form.)
+        LOST = "actions.runner.example-org-lost.box-2.service"
         for old in (False, True):
             gh, world, host = remove_setup()
             world.old_systemd = old
@@ -6211,14 +6240,18 @@ class G6(unittest.TestCase):
             self.assertNotIn(code, (M.EXIT_STOP, M.EXIT_WAIT), lines)
             self.assertNotIn(SLICE_FILE, world.paths)
         # The slice's own list not read: nothing of the slice is stopped or deleted.
-        for match in (lambda a: a[:4] == ["systemctl", "show", M.SLICE, "-p"] and "SliceOf" in a,
-                      lambda a: a[:2] == ["systemctl", "list-units"]):
+        for which, match in (("SliceOf", lambda a: a[:4] == ["systemctl", "show", M.SLICE, "-p"] and "SliceOf" in a),
+                             ("list-units", lambda a: a[:2] == ["systemctl", "list-units"])):
             gh, world, host = remove_setup()
             host._answer = (lambda real, m: lambda a, i=None: (1, "Failed to connect to bus: No such file or "
                             "directory\n") if m(list(a)) else real(a, i))(world.answer, match)
             code, lines = run_uninstall(gh, host, repo=None, everything=True)
             self.assertEqual(code, M.EXIT_STOP, lines)
-            self.assertIn(f"{M.SLICE} is not stopped", lines[-1])
+            if which == "SliceOf":
+                self.assertIn(f"{M.SLICE} is not stopped", lines[-1])
+            else:  # R210: systemd's units not read: uninstall --all stops before any change, saying so
+                self.assertIn("Not read: systemd's units (systemctl answered code 1", lines[-1])
+                self.assertEqual(world.order, [])
             self.assertIn("systemctl answered code 1: Failed to connect to bus", lines[-1])
             self.assertNotIn(f"stop {M.SLICE}", world.order)
             self.assertIn(SLICE_FILE, world.paths)
@@ -9532,10 +9565,14 @@ class Rule31(unittest.TestCase):
         # when this was written); fewer means a world stopped before them and reads nothing. Setup was in this set
         # until R204 (2026-11-26) only through its stop on `gh auth token`, which printed that call's standard output
         # (in these worlds the made-up login value with the bent value after it): that output is a token when the
-        # call works, so it is never printed now, only its length, and setup's other roads print no such value.
+        # call works, so it is never printed now, only its length. Setup is in it again with R210 (2026-11-26): a
+        # bent last line of list-unit-files is no longer systemd's count line, so that read is said not answered,
+        # with systemctl's last line, shown changed (with a warning written after it, test_G6_28's run, that last
+        # line is the warning, so setup is not in the set there).
         self.assertGreaterEqual(len(shown), 11, sorted(shown))
+        base = {"look", "doctor", "move", "status", "uninstall", "uninstall --all"}
         self.assertEqual({n for n, _ in shown},
-                         {"look", "doctor", "move", "status", "uninstall", "uninstall --all"})
+                         base if os.environ.get("MINIONS_TEST_STREAMS") == "1" else base | {"setup"})
 
     # Rule 31 (vi), "a line ends at a line feed" (2026-11-24). Two markers of one length, each
     # shown changed the same way (plain() makes every slot ?): LE0 holds U+0001 in its 8 slots, where no reader
@@ -9666,8 +9703,11 @@ class Rule31(unittest.TestCase):
                     self.assertEqual(len(a), len(b))
         self.assertEqual(runs, 77)
         # the marker reached what is compared in these commands when this was written; fewer means a world
-        # stopped before the roads that read it
-        self.assertEqual(reached, {"look", "setup", "doctor", "move", "status", "uninstall", "uninstall --all"})
+        # stopped before the roads that read it. Setup reaches it through R210's read of list-unit-files: a marker
+        # after systemd's count line makes that read not answered, said with systemctl's last line; with a warning
+        # written after it (test_G6_28's run) that last line is the warning, so setup is not in the set there.
+        every = {"look", "doctor", "move", "status", "uninstall", "uninstall --all"}
+        self.assertEqual(reached, every if os.environ.get("MINIONS_TEST_STREAMS") == "1" else every | {"setup"})
 
     def test_rule_31_vi_a_line_ends_at_a_line_feed_on_the_way_in(self):
         # 2026-11-24: Python's text mode turns a lone carriage return into a line feed before any
@@ -9786,7 +9826,13 @@ for name, make, run in runs:
                     self.assertNotRegex(x, r"Traceback|Unicode(De|En)codeError|ValueError|surrogate", (lang, x[:200]))
                 # the byte was read, and said: the workflow file named by look and by move, others' words changed
                 self.assertEqual(said.count(".github/workflows/ff.yml: " + M.NOT_TEXT), 2, said[-800:])
-                self.assertGreaterEqual(said.count(M.SHOWN_CHANGED), 2, said[-800:])
+                # uninstall --all: the byte after systemd's count line makes R210's read of the unit files not
+                # answered, and it is said so, before any change; the words shown with it are systemctl's last line,
+                # the byte's line changed, or (test_G6_28's run) the warning written after it
+                self.assertRegex(said, r"(?m)^stop could not read whether this computer holds .* Not read: systemd's "
+                                       r"unit files \(systemctl answered code 0: .*\n(?=DONE uninstall --all 2$)")
+                streams = os.environ.get("MINIONS_TEST_STREAMS") == "1"
+                self.assertGreaterEqual(said.count(M.SHOWN_CHANGED), 1 if streams else 2, said[-800:])
 
     def test_rule_31_vi_a_workflow_file_that_is_not_text_is_named_and_the_others_go_on(self):
         # 2026-11-24, seen in the planted trial: one workflow file whose content is not UTF-8 stopped
@@ -11919,74 +11965,167 @@ class G6Lost(unittest.TestCase):
                                   if kind == "one runs" else
                                   "Whether a process of the user minions-runner runs now could not be read", lines[-1])
 
-    def test_G6_38_road_ii_uninstall_all_says_what_is_left_that_can_run_and_where_github_lists_it(self):
-        # World (a), road (ii): uninstall --all stops at the slice that holds the running service, with its step;
-        # the person stops the service as printed; the same command goes to its end. Its last line does not say the
-        # tool is off: it names the service left, that it does not run now, that it starts at a restart (read), the
-        # runner GitHub may still list for the repository the service's name carries, and where GitHub lists it. The
-        # census names a service of this tool's naming form even when its User could not be read.
+    def test_G6_38_road_ii_uninstall_all_stops_before_any_change_while_that_service_can_still_run(self):
+        # World (a), road (ii): a runner service of this tool's form that no record here names, running and enabled.
+        # uninstall --all stops before any change (the watch, the slice and the hooks stay with it), saying what was
+        # read, what it would take from that service, one step that switches it off and keeps it off at a restart,
+        # and whose it is when another account set this tool up. The step taken as printed, then the same command
+        # to its end: the off line, the unit file named (read from systemd's unit files: the unit is no longer
+        # loaded), nothing of this tool's names running or starting at a restart, and GitHub's runner still listed.
         gh, world, host = world_a(user_answer=False)
         code, lines = run_uninstall(gh, host, repo=None, everything=True)
-        # Before anything changes, what it will not take off is said, never "the user minions-runner" as taken.
-        said = " ".join(tells_of(lines))
-        self.assertNotIn(f"the user {M.RUNNER_USER} and this tool's copy", said)
-        self.assertIn("It leaves as it is what carries this tool's own names and no record of this tool here names "
-                      f"(the user minions-runner; the runner service {UNIT}): that stays, and this run's last line "
-                      "names it.", said)
+        self.assertEqual(world.order, [], "no change, the watch's removal included")
+        self.assertEqual(world.active.get(f"{M.WATCH_UNIT}.timer"), "active")
+        self.assertIn(SLICE_FILE, world.paths)
         self.assertEqual(code, M.EXIT_STOP, lines)
+        self.assertFalse([x for x in lines if x.startswith(("tell the person", "need you"))], "a stop before the tell")
         stop = [x for x in lines if x.startswith("stop ")]
-        self.assertTrue(stop and stop[0].startswith(f"stop minions.slice still holds {UNIT} (active)"), lines)
-        # its step: the same command, said inline or on the line below
-        self.assertRegex(stop[0], r"stop that service yourself; then (`\S+ -I \S+ uninstall --all`|the command below) "
-                                  r"finishes$")
-        self.assertEqual(world.answer(["sudo", "-n", "systemctl", "stop", UNIT, "--no-pager"]), (0, ""))  # the step
+        self.assertEqual(len(stop), 1, lines)
+        self.assertIn(f"the runner service {UNIT} (it runs now; it starts again when this computer restarts, as "
+                      "systemd reads it enabled)", stop[0])
+        self.assertIn("This command would take the limits (the slice), the watch and the job hooks from that service "
+                      "and leave it as it is, so it stops here, before any change. Your next step, once GitHub shows "
+                      "that runner idle or gone (Settings, under Actions, then Runners): switch that service off and "
+                      "keep it off at a restart, as an administrator: ", stop[0])
+        self.assertIn("If another account on this computer set this tool up, that service is theirs: the leave is run "
+                      "from that account, not from this one", stop[0])
+        step = re.search(r"`(sudo systemctl disable --now [^`]+)`|\n(sudo systemctl disable --now .+)\n",
+                         out_text := "\n".join(lines) + "\n")
+        self.assertTrue(step, out_text)
+        argv = shlex.split(step.group(1) or step.group(2))
+        self.assertEqual(argv, ["sudo", "systemctl", "disable", "--now", UNIT])
+        self.assertEqual(world.answer(["sudo", "-n", *argv[1:], "--no-pager"]), (0, ""))  # the step, as printed
+        self.assertNotIn(UNIT, world.answer(list(M.systemctl("list-units", "--all", "--plain", "--no-legend",
+                                                             "actions.runner.*", "minions*")))[1],
+                         "the stand-in lets a disabled, stopped unit go, as systemd does")
         code, lines = run_uninstall(gh, host, repo=None, everything=True)
         self.assertEqual(code, M.EXIT_OK, lines)
-        self.assertFalse([x for x in lines if " is off this computer" in x], lines)
-        self.assertEqual(lines[-1],
-            "warn this tool is not off this computer: this run left as it is what carries this tool's own names and "
-            f"no record of this tool here names: the user minions-runner, the runner service {UNIT}. What can still "
-            f"run: the runner service {UNIT}: it does not run now, and it starts again when this computer restarts, as "
-            "systemd reads it enabled. GitHub may still list a runner for the repository whose owner and name that "
-            "service's name carries (example-org-example-repo); this run could not ask GitHub, as no record here "
-            "names that repository. GitHub lists a repository's runners in its Settings, under Actions, then Runners. "
-            "What this tool makes on a computer, to take off by hand, is in the README's section "
-            f"\"{M.README_MAKES_HEAD}\" ({M.README_MAKES})")
+        self.assertEqual(lines[-1], "ok this tool is off this computer: nothing of this tool's names here runs now or "
+                         "starts when this computer restarts, as read. What stayed is named above with why each "
+                         f"stayed; of it, this tool's record here does not name: the user minions-runner; the runner "
+                         f"service {UNIT} (it does not run now; it does not start when this computer restarts, as "
+                         "systemd reads it disabled); the folder /home/minions-runner; the folder "
+                         f"{M.HOOKS_ROOT}; the folder {M.RECORDS_ROOT}")
         self.assertIn(f"warn census: runner services: {UNIT}", lines)
         self.assertEqual(said_of_ours_as_not_made(lines), [], lines)
         self.assertTrue(world.user, "a user its record does not show it made is never removed")
-        # The end state: the service's file stays, enabled; a restart starts it; GitHub still lists its runner.
+        # The end state: the file stays, disabled; a restart starts nothing of it; GitHub still lists its runner.
         self.assertIn(f"/etc/systemd/system/{UNIT}", world.paths)
-        self.assertIn(UNIT, world.enabled)
+        self.assertNotIn(UNIT, world.enabled)
         world.restart()
-        self.assertEqual(world.active.get(UNIT), "active")
+        self.assertNotEqual(world.active.get(UNIT), "active")
         self.assertEqual((gh.runner or {}).get("name"), OURS)
+
+    def test_G6_38_road_ii_a_service_stopped_but_enabled_or_not_read_still_stops_before_any_change(self):
+        # Only a service that neither runs nor starts at a restart, both read, lets the leave go on.
+        enabled_q = list(M.systemctl("is-enabled", UNIT))
+        for kind in ("stopped, still enabled", "is-enabled not read", "is-active not read"):
+            with self.subTest(kind=kind):
+                gh, world, host = world_a(user_answer=False)
+                if kind != "is-active not read":
+                    world.answer(["sudo", "-n", "systemctl", "stop", UNIT, "--no-pager"])
+                real = host._answer
+                host._answer = lambda a, i=None, real=real, kind=kind: (
+                    (1, "Failed to connect to bus: No such file or directory\n")
+                    if (kind == "is-enabled not read" and list(a) == enabled_q)
+                    or (kind == "is-active not read" and list(a[:2]) == ["systemctl", "is-active"] and UNIT in a)
+                    else real(a, i))
+                code, lines = run_uninstall(gh, host, repo=None, everything=True)
+                self.assertEqual(world.order, [] if kind == "is-active not read" else [f"stop {UNIT}"], kind)
+                self.assertEqual(code, M.EXIT_STOP, lines)
+                self.assertIn(f"sudo systemctl disable --now {UNIT}", "\n".join(lines))
+                self.assertFalse([x for x in lines if " is off this computer" in x], lines)
+
+    def test_G6_38_the_new_reads_each_not_answered_is_said_and_never_taken_for_none(self):
+        # Each of the reads that tell what carries this tool's names (the runner user, systemd's units, its unit
+        # files, each folder beside the user), failed in turn on a computer with no record: the read not answered is
+        # said, and no line says "off", "nothing to check", "nothing to uninstall" or sends the person to setup.
+        bus = (1, "Failed to connect to bus: No such file or directory\n")
+        user_there = (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n")
+        worlds = [
+            ("the runner user", {("getent", "passwd", "minions-runner"): (3, "getent: enumeration not supported\n")},
+             None, "whether the user minions-runner is here (getent: enumeration not supported)"),
+            ("systemd's units", {("systemctl", "list-units"): bus}, None,
+             "systemd's units (systemctl answered code 1: Failed to connect to bus"),
+            ("systemd's unit files", {("systemctl", "list-unit-files"): bus}, None,
+             "systemd's unit files (systemctl answered code 1: Failed to connect to bus"),
+        ] + [(f"the folder {f}", {("getent", "passwd", "minions-runner"): user_there}, f, f"whether the folder {f} is here")
+             for f in ("/home/minions-runner", M.HOOKS_ROOT, M.RECORDS_ROOT)]
+        commands = {
+            "status": lambda h, o: M.status(REPO, host=h, gh=StatusGH(), out=o),
+            "doctor": lambda h, o: M.doctor(None, host=h, gh=StatusGH(), out=o, interactive=True),
+            "uninstall REPO": lambda h, o: M.uninstall(REPO, host=h, gh=StatusGH(), out=o, interactive=True),
+            "uninstall --all": lambda h, o: M.uninstall(None, everything=True, host=h, gh=StatusGH(), out=o,
+                                                        interactive=True),
+        }
+        for read, runs, folder, said in worlds:
+            for name, run in commands.items():
+                with self.subTest(read=read, command=name):
+                    host, _sha = setup_host(runs=runs)
+                    if folder:
+                        there = host.there
+                        host.there = lambda p_, there=there, folder=folder: None if p_ == folder else there(p_)
+                    out = Out()
+                    code = run(host, out)
+                    lines = out.getvalue().splitlines()
+                    bad = [x for x in lines if re.search(r"is off this computer|nothing to check|nothing to uninstall"
+                                                         r"|sets one up", x) or x == f"setup {REPO}"]
+                    self.assertEqual(bad, [], lines)
+                    # the read by name, then what its program wrote (which may follow a warning line)
+                    head, _, inner = said.partition(" (")
+                    self.assertIn(head + (" (" if inner else ""), out.getvalue())
+                    self.assertIn(inner.split(": ")[-1], out.getvalue())
+                    self.assertEqual(code, M.EXIT_STOP, lines)
+                    self.assertEqual(admin_steps(host), [], "nothing is touched")
+
+    def test_G6_38_uninstall_all_ends_not_off_with_exit_1_while_a_process_of_the_runner_user_runs(self):
+        # The runner user alone stays (its record does not show this tool made it) and a process of it runs: the
+        # last line is "not off", and the exit is 1, so an agent that trusts exit codes does not report the tool gone.
+        gh, world, host = remove_setup(moved=False)
+        d = M.load_state(host)
+        d.pop("runner_user_made")
+        M.save_state(host, d)
+        real = host._answer
+        host._answer = lambda a, i=None: (0, "4444\n") if list(a) == ["pgrep", "-u", "1001"] and not world.listener \
+            else real(a, i)
+        code, lines = run_uninstall(gh, host, everything=True)
+        self.assertEqual(code, M.EXIT_FAILED, lines)
+        self.assertTrue(lines[-1].startswith("warn this tool is not off this computer: this run left as it is what "
+                                             "carries this tool's own names and no record of this tool here names: "
+                                             "the user minions-runner. 1 process of the user minions-runner runs now"),
+                        lines[-1])
 
     def test_G6_38_a_unit_s_two_reads_have_three_answers_each(self):
         # Whether it runs now (is-active) and whether it starts at a restart (is-enabled): yes, no, or not read,
-        # with what systemctl answered; an answer that is not one of the known words is never taken for no.
+        # with what systemctl answered; an answer that is not one of the known words is never taken for no, and
+        # enabled-runtime, which does not outlast a restart, is said as read, never as a yes. The third value: it can
+        # still run (runs, starts, or either not read).
         cases = [
             ((0, "active\n"), (0, "enabled\n"), "it runs now",
-             "it starts again when this computer restarts, as systemd reads it enabled"),
+             "it starts again when this computer restarts, as systemd reads it enabled", True),
             ((3, "inactive\n"), (1, "disabled\n"), "it does not run now",
-             "it does not start when this computer restarts, as systemd reads it disabled"),
+             "it does not start when this computer restarts, as systemd reads it disabled", False),
             ((3, "failed\n"), (1, "masked\n"), "it does not run now",
-             "it does not start when this computer restarts, as systemd reads it masked"),
+             "it does not start when this computer restarts, as systemd reads it masked", False),
+            ((3, "inactive\n"), (0, "enabled-runtime\n"), "it does not run now",
+             "systemd reads it enabled-runtime: enabled until this computer restarts, and not after it", False),
+            ((3, "inactive\n"), (0, "enabled\n"), "it does not run now",
+             "it starts again when this computer restarts, as systemd reads it enabled", True),
             ((4, ""), (1, f"Failed to get unit file state for {UNIT}: No such file or directory\n"),
              "whether it runs now could not be read (systemctl answered code 4",
-             "whether it starts when this computer restarts could not be read (systemctl answered code 1"),
+             "whether it starts when this computer restarts could not be read (systemctl answered code 1", True),
             ((1, "Failed to connect to bus\n"), (0, "static\n"),
              "whether it runs now could not be read (systemctl answered code 1",
-             "whether it starts when this computer restarts could not be read (systemctl answered code 0"),
+             "whether it starts when this computer restarts could not be read (systemctl answered code 0", True),
         ]
-        for active, enabled, run_w, boot_w in cases:
+        for active, enabled, run_w, boot_w, live_w in cases:
             with self.subTest(active=active, enabled=enabled):
                 host = linux_host(runs={tuple(M.systemctl("is-active", UNIT)): active,
                                         tuple(M.systemctl("is-enabled", UNIT)): enabled})
-                run, boot = M.unit_now(host, UNIT)
+                run, boot, live = M.unit_now(host, UNIT)
                 self.assertTrue(run.startswith(run_w), run)
                 self.assertTrue(boot.startswith(boot_w), boot)
-
+                self.assertEqual(live, live_w)
 
 if __name__ == "__main__":
     unittest.main()
