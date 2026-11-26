@@ -273,11 +273,11 @@ class Strand(unittest.TestCase):
             with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
                 f.write(early)
             with self.assertRaises(AssertionError) as caught:
-                tests_that_ran(d)
+                names_that_ran(d)
             self.assertIn("ended before its run finished (exit 0, no outcome written)", str(caught.exception))
             with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
                 f.write(printed)
-            self.assertEqual(tests_that_ran(d), {"test_probe_writes"})
+            self.assertEqual(names_that_ran(d), {"test_probe_writes"})
         step = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
         for line in ("set -o pipefail", "python \"$t\" -v 2>&1 | tee \"$log\" || exit 1",
                      "grep -qE '^Ran [0-9]+ tests? in ' \"$log\" && grep -qE '^OK( \\(.*\\))?$' \"$log\" || {",
