@@ -3004,6 +3004,62 @@
    "issue": 403,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R217",
+   "seen": "2026-11-26, on a stock Ubuntu 24.04 virtual machine, in a walk of the README's road at the release head: setup, run from the agent's shell, printed two lines that each hand over a command after the words \"the command below\". First the limits line, \"the one way to change that is the command below, with the number of processors and the percent of memory in place of PROCESSORS and PERCENT\", followed by `setup OWNER/REPO --limits PROCESSORS,PERCENT`, with no python3 and no path; then the need-you line, followed by the whole command to run. The walk's own harness took the first command after \"the command below\" for the step: setup ran with the placeholders, refused them, exited 64 and changed nothing.",
+   "promise": "In what setup prints, only the line that hands the person their step says \"the command below\", and the first command after setup's need-you line is the one to run now. The way to change the limits is said in its own words, printed as a whole command made like the step's (python3 -I and the tool's path) with its placeholders named, and it comes after the step and its command, never before them. A test reads setup's printed lines in each form, from the agent's shell and from the person's terminal: every line that says \"the command below\" and the line after it.",
+   "codon": "G8.25",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 407,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R218",
+   "seen": "2026-11-26: release 0.1.0 was tagged without an agent following its README from a cold start. The last such walk was on 2026-11-23, with Claude Code 2.1.330; the README and the changelog say so, and that the passages added to the README since were not walked by an agent.",
+   "promise": "Before a version is tagged, an agent on the smallest Claude model follows the README of the release head from a cold start on a stock machine, to the end of its road: look, the person's setup, move, verify, status and uninstall --all. The README and the changelog name that walk's date, the Claude Code version and the model, and any passage added after it is said as not walked by an agent. A test reads that the README and the changelog name the walk and agree on it.",
+   "codon": "G9.18",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 408,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R219",
+   "seen": "2026-11-26, the family's rule made that day: the suite runs with the tag at its head before the tag is pushed. For 0.1.0 it was run by hand before the push (a fresh clone, an annotated tag made on the commit in that clone only, every test file, the gate) and passed; nothing in this repository holds the step.",
+   "promise": "Before a version's tag is pushed, the whole suite runs in a fresh clone whose head is that annotated tag, made in the clone only, every test file to its end and then the gate, and the push goes on only after it passed. The step is one script of this repository, and the release steps name it. A test runs that script on a scratch repository with a local tag, once as it is and once with a failing test planted, and reads that the planted failure stops it.",
+   "codon": "G9.19",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 409,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R220",
+   "seen": "2026-11-26, read before the family catalog was to name this skill: 0.1.0 is installed by the README's clone line, and every walk that ran the tool went by the clone. R121 (2026-11-23, Claude Code 2.1.331, a stock Ubuntu 24.04.5 virtual machine) saw only that a bare plugin install makes nothing outside Claude Code's plugin places; it did not see the skill listed or loaded, or its script run from the installed copy. R161's road (setup run from the plugin) is built and tested, never seen on a machine. The release carries no plugin manifest.",
+   "promise": "A catalog install is seen to work before the family catalog names this skill. On one stock machine, this skill is installed from a catalog entry in the form the family's catalog uses (an https url source with a ref and a sha) naming the tagged commit; then Claude Code lists the skill, look runs from the plugin's own `../../scripts/minions.py`, and setup, status and uninstall --all run from there with the record read (R161 seen). Whether the catalog needs a plugin manifest in this repository is answered from what Claude Code installs and loads from an entry without one, written \"seen once, when ...\" where it is one sighting; no manifest is added on a guess. The proof is owed: until it is seen, this row is not proven and the catalog does not name the skill.",
+   "codon": "G8.26",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 410,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
