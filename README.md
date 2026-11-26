@@ -27,7 +27,11 @@ that user does not own. Uninstall does not delete those. It names them.
 ## What it makes on a computer
 
 If this tool's record of what it made (`~/.minions/minions.json`) and its second copy both cannot be read, the tool
-cannot tell what it made, and it changes nothing. These are the places it makes, so you can look by hand:
+cannot tell what it made, and it changes nothing. If neither is there while what carries the tool's names is on the
+computer (left by an earlier setup whose record was lost, or made from another account on this computer), the tool
+names what it reads and takes none of it on; `uninstall --all` goes on only once no runner service of its naming form
+runs or starts at a restart, and then leaves that service's file, the user and its home as they are. These are the
+places it makes, so you can look by hand:
 
 - the user `minions-runner`, and its home, with one folder per repository under `/home/minions-runner/runners/`;
 - one service per runner, named `actions.runner.` then the repository and the runner's name, `.service`, with a

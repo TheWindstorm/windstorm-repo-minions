@@ -114,10 +114,13 @@ the cap (row R94).
   is yours: each says what was read. `status`, `doctor`, `drain`, `resume`, `uninstall` of a repository and `setup`
   stop before any change, naming whether that service runs now and starts at a restart, the repository its name
   carries (GitHub may still list a runner for it), the README's list of what the tool makes on a computer and where
-  GitHub lists runners. No step deletes the runner user while such a service is here or a process of that user runs.
-  `uninstall --all` says before it starts what it will leave, and no longer ends saying the tool is off
-  this computer while such a service stays. Before, `status` sent the person to `setup`, whose step deleted a
-  user whose runner was running (row R210).
+  GitHub lists runners. A read that did not answer is said, never taken for none. No step deletes the runner user
+  while such a service is here or a process of that user runs. `uninstall --all` stops before any change while such
+  a service runs, starts at a restart, or could not be read, with one step that switches it off and keeps it off,
+  and says that it is another account's if another account set the tool up; with it off, the leave goes on and
+  names it. It ends saying the tool is off only when nothing of its names can still run; otherwise it says what can,
+  and exits 1. Before, `status` sent the person to `setup`, whose step deleted a user whose runner was running, and
+  `uninstall --all` took the watch from that runner and ended "off this computer" (row R210).
 - Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
   path of Claude Code's own list of plugins and the plugin's name, never its version folder, and the tool says the
   skill was removed from Claude Code only when that list was read and names it nowhere: an update of the plugin says
