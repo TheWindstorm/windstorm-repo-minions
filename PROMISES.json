@@ -2760,7 +2760,7 @@
    "codon": "G3.9",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
-   "test": "",
+   "test": "test_G8_24_a_step_never_carries_a_name_no_command_may_and_every_step_runs_as_printed",
    "owner": "maintainer",
    "proven": "",
    "issue": 386,
