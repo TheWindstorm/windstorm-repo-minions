@@ -1520,7 +1520,8 @@ class G2(unittest.TestCase):
             code, lines = run_setup(setup_gh(sha), host)
             self.assertEqual(code, M.EXIT_STOP, lines)
             self.assertEqual(admin_steps(host), [], "nothing is touched")
-            self.assertIn(M.NOT_OURS_USER if answer[0] == 0 else "could not read whether the user", lines[-1])
+            self.assertIn("this computer holds what carries this tool's own names, and this tool's record here, "
+                          if answer[0] == 0 else "could not read whether the user", lines[-1])  # R210: what was read
             if answer[0] == 0:
                 # never "open an issue" for a user that may be the person's own: what is true, and where that leaves them
                 self.assertNotIn("open an issue", lines[-1])
@@ -4100,6 +4101,9 @@ class World:
                       M.RECORDS_ROOT, M.records_dir_of(FOLDER), "/home/minions-runner"}
         self.active = {UNIT: "active", M.SLICE: "active", f"{M.WATCH_UNIT}.timer": "active"}
         self.loaded = set(self.active) | {f"{M.WATCH_UNIT}.service"}
+        # R210: what setup enabled (the runner's unit has WantedBy=multi-user.target, the watch's timer
+        # WantedBy=timers.target): `restart` starts each that is enabled with its file there, as systemd does at boot
+        self.enabled = {UNIT, f"{M.WATCH_UNIT}.timer"}
         self.user, self.listener, self.worker, self.order = True, True, False, []
         self.slice_of, self.old_systemd = {UNIT: M.SLICE}, False  # R167: which units are in our slice (Slice=)
         self.files, self.links = {}, set()  # remove_setup shares the host's files; links a job planted (R128)
@@ -4124,6 +4128,21 @@ class World:
         # find's line as the real 4.9.0 writes it (the owner's trial and vm/run64, 2026-11-25): the path in curly quotes
         # in the tool's C.UTF-8, in straight quotes in plain C; a FOLDER gone still gives its line WITH the option
         self.quotes, self.gone_words = ("\u2018", "\u2019"), "No such file or directory"
+
+    def restart(self):
+        """R210: the computer restarted. Every unit stops; each enabled one whose file is there starts again, as
+        systemd does at boot; a runner unit whose slice file is gone starts in a slice systemd makes from its name
+        (Slice=minions.slice), with none of the tool's limits."""
+        self.order.append("restart")
+        self.active = {}
+        for u in sorted(self.enabled):
+            if f"/etc/systemd/system/{u}" in self.paths:
+                self.active[u] = "active"
+                self.loaded.add(u)
+                if u == UNIT:
+                    self.listener = True
+                    self.active[M.SLICE] = "active"
+        self.loaded = {u for u in self.loaded if f"/etc/systemd/system/{u}" in self.paths or u in self.active}
 
     def owner_of(self, path):
         if path in self.owner:
@@ -4420,6 +4439,10 @@ class World:
             gone = [u for u in rest if verb == "disable" and f"/etc/systemd/system/{u}" not in self.paths]
             if gone:  # as systemd 255 answered (rule 30, ONE CALL, ONE UNIT): no unit of that call is stopped
                 return 1, f"Failed to disable unit: Unit file {gone[0]} does not exist.\n"
+            if verb == "disable":
+                self.enabled -= set(rest)
+            if verb == "enable":
+                self.enabled |= set(rest)
             if verb == "stop" or (verb == "disable" and "--now" in a):
                 for u in rest:
                     self.order.append(f"stop {u}")
@@ -4446,6 +4469,10 @@ class World:
                 have["SliceOf"] = " ".join(in_slice)
             asked = [a[i + 1] for i in range(3, len(a) - 1) if a[i] == "-p"]
             return 0, "".join(f"{k}={have[k]}\n" for k in asked if k in have)
+        if a[:2] == ["systemctl", "is-enabled"] and (a[2].startswith("actions.runner.") or a[2].startswith("minions")):
+            if f"/etc/systemd/system/{a[2]}" not in self.paths:  # as systemd 255 answers for a unit with no file
+                return 1, f"Failed to get unit file state for {a[2]}: No such file or directory\n"
+            return (0, "enabled\n") if a[2] in self.enabled else (1, "disabled\n")
         if a[:2] == ["systemctl", "is-active"]:
             st = self.active.get(a[2], "inactive")
             return (0 if st == "active" else 3), st + "\n"
@@ -4522,6 +4549,7 @@ def remove_setup(own_removal_works=True, interrupt_on=None, busy=(False,), moved
     host.listdir_or_none = lambda path: (sorted({p[len(path) + 1:].split("/")[0] for p in world.paths
                                                  if p.startswith(path.rstrip("/") + "/")}) if path in world.paths else [])
     host.isdir = world.is_dir
+    host.there = lambda path, h=host: path in world.paths or path in h.files or path in h.dirs  # R210: as the person
     Clock(host)
     data = {"runners": {REPO: {"name": OURS, "folder": FOLDER, "unit": UNIT, "labels": ["minions", "minions-medium"]}},
             "runner_user_made": True,  # R129: setup made the runner user, and its record says so
@@ -4869,10 +4897,10 @@ class G6(unittest.TestCase):
         self.assertNotIn("userdel", world.order)
         self.assertIsNone(gh.runner)  # the leave went to its end: GitHub's side, the service, the watch, the slice
         census = [x for x in lines if x.startswith(("ok census:", "warn census:"))]
-        self.assertIn("ok census: the runner user: minions-runner (kept: its record here does not say this tool made "
-                      "it, so it is yours)", census)
+        self.assertIn("ok census: the runner user: minions-runner (kept: this tool's record here does not name it as "
+                      "one this tool made)", census)
         self.assertIn("ok census: the folder /home/minions-runner: kept: it is the home of the user minions-runner, "
-                      "which this tool did not make; it is yours", census)
+                      "which this tool's record here does not name as one this tool made", census)
         self.assertIn(f"ok census: this tool's state folder: {host.state_dir()} (kept: it holds my-notes.txt, which "
                       "this tool did not write; that and the folder are yours)", census)
         self.assertIn("ok census: the slice and the watch (scheduled checks): none", census)
@@ -4881,7 +4909,10 @@ class G6(unittest.TestCase):
         for x in census:
             if "kept:" in x and "your record of what this tool did" not in x:
                 self.assertNotIn("`", x, "no command for what is the person's")
-        self.assertEqual(lines[-1], R136_LAST)
+        # R210: the runner user stays, and it carries this tool's own name: the last line does not say the tool is off.
+        self.assertTrue(lines[-1].startswith("warn this tool is not off this computer: this run left as it is what "
+                                             "carries this tool's own names and no record of this tool here names: "
+                                             "the user minions-runner."), lines[-1])
         # Seen on a stock Ubuntu 24.04 machine (2026-11-25, the end part, part 3): a file put by hand, as root, at the
         # top of the jobs' records folder stopped uninstall --all after the slice ("could not delete
         # /var/lib/windstorm-repo-minions"), exit 2, with the runner user and the tool's copy still there. It is not
@@ -5935,7 +5966,7 @@ class G6(unittest.TestCase):
     def test_G2_14_setup_with_a_kept_home_and_no_record_says_only_what_it_read(self):
         # Change 2 (case c): setup with the home there, the user not, and no record of this tool: the stop says what
         # was read and that the record does not say this tool made such a user; the rm line is offered only as "if
-        # you know it is left from this tool's runner", and moving it away as the other step (as NOT_OURS_USER).
+        # you know it is left from this tool's runner", and moving it away as the other step (as R210's words say it).
         home = f"/home/{M.RUNNER_USER}"
         host, sha = setup_host()
         host.dirs[home] = True
@@ -9978,7 +10009,7 @@ for name, make, run in runs:
         # R205: the guard reads it first, and restore puts the copy in its place through save_state
         self.assertEqual(where.get("state_path"), {"load_state", "save_state", "record_look", "names_unread",
                                                    "known_folders", "record_guard", "guarded", "restore",
-                                                   "last_whole_pass", "watch_no_record"})
+                                                   "last_whole_pass", "watch_no_record", "lost_words"})
         # R208: the watch's words, read only; (s): watch_no_record names the record that is not there and writes nothing
         docs = {id(d.body[0].value) for d in ast.walk(tree)
                 if isinstance(d, (ast.Module, ast.ClassDef, ast.FunctionDef)) and d.body
@@ -11756,6 +11787,205 @@ class G2Env(unittest.TestCase):
                 self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
                 env = next(x for a, x in host.fed if a[-1] == f"{FOLDER}/.env")
                 self.assertEqual(env.split("ACTIONS_RUNNER_HOOK_JOB_")[0], "LANG=C.UTF-8\n" + want)
+
+
+
+def world_a(user_answer=True):
+    """R210, world (a): the suite's installed stand-in (remove_setup: our runner's service running and enabled, its
+    slice, the watch, the runner user, its home, both folders, the registration on the GitHub stand-in) with this
+    tool's whole state folder gone. gh's own answers (its login) are linux_host's; the runner service's User is
+    minions-runner, as the unit the tool writes says, unless `user_answer` is False (a stand-in that does not say)."""
+    gh, world, host = remove_setup(moved=False)
+    shutil.rmtree(host.state_dir())
+    user_q = list(M.systemctl("show", "-p", "User", "--value", UNIT))
+
+    def answer(argv, input=None, wa=world.answer):
+        if list(argv[:1]) == ["gh"]:
+            return FakeHost._answer(host, argv, input)
+        if user_answer and list(argv) == user_q:
+            return 0, "minions-runner\n"
+        return wa(argv, input)
+    host._answer = answer
+    return gh, world, host
+
+
+def look_done(host):
+    """A finished look on this home, stamped by the host's own clock (Clock), as a look writes it."""
+    when = M.stamp(host.now() - M.dt.timedelta(minutes=5))
+    M.save_state(host, {"looks": {REPO: {"time": when, "stopped": False, "survey": {
+        "system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024, "free": 100 * 1024 ** 3,
+        "serves": False, "serves_what": ""}}}})
+
+
+def said_of_ours_as_not_made(lines):
+    """Lines that say of what carries this tool's own names that this tool did not make it, or that it is the
+    person's (R210: what was read is said, never what a record that does not name it does not say)."""
+    names = ("minions-runner", "example-org-example-repo", M.HOOKS_ROOT, M.RECORDS_ROOT)
+    return [x for x in lines if any(n in x for n in names)
+            and re.search(r"did not make|did not write|it is yours|so it is yours|are yours", x)]
+
+
+class G6Lost(unittest.TestCase):
+    """R210 (G6.38): a computer that holds what carries this tool's own names and its record here does not name."""
+
+    def test_G6_38_road_i_every_command_names_what_was_read_and_none_sends_the_person_to_setup(self):
+        # World (a), road (i). Each command that would read the record stops before any change or call to GitHub,
+        # naming what was read: the runner user, the runner service (running, enabled), what else of this tool's
+        # names is here, the repository the service's name carries. No step deletes the user while its service runs,
+        # and no line sends the person to setup, whose stop would be the same.
+        runs = {
+            "status": lambda gh, host, out: M.status(REPO, host=host, gh=gh, out=out),
+            "doctor": lambda gh, host, out: M.doctor(None, host=host, gh=gh, out=out, interactive=True),
+            "drain": lambda gh, host, out: M.drain(REPO, host=host, gh=gh, out=out, interactive=True),
+            "resume": lambda gh, host, out: M.resume(REPO, host=host, gh=gh, out=out, interactive=True),
+            "uninstall REPO": lambda gh, host, out: M.uninstall(REPO, host=host, gh=gh, out=out, interactive=True),
+            "setup, after a finished look": None,
+        }
+        for name, run in runs.items():
+            with self.subTest(command=name):
+                gh, world, host = world_a()
+                out = Out()
+                if run is None:
+                    look_done(host)
+                    code = M.setup(REPO, host=host, gh=gh, out=out, interactive=True)
+                else:
+                    code = run(gh, host, out)
+                lines = out.getvalue().splitlines()
+                self.assertFalse([x for x in lines if x == f"setup {REPO}" or "sets one up" in x], lines)
+                self.assertNotIn("userdel", out.getvalue())  # its service runs: no step deletes that user
+                self.assertEqual(code, M.EXIT_STOP, lines)
+                stop = [x for x in lines if x.startswith("stop ")]
+                self.assertEqual(len(stop), 1, lines)
+                rec = "is not there" if run else "does not name them"
+                self.assertTrue(stop[0].startswith(
+                    f"stop this computer holds what carries this tool's own names, and this tool's record here, "
+                    f"{M.state_path(host)}, {rec}: the user minions-runner; the runner service {UNIT} (it runs now; "
+                    "it starts again when this computer restarts, as systemd reads it enabled). Also of this tool's "
+                    "names here: the unit minions.slice, the unit minions-watch.timer, the unit minions-watch.service, "
+                    f"the folder /home/minions-runner, the folder {M.HOOKS_ROOT}, the folder {M.RECORDS_ROOT}."),
+                    stop[0])
+                self.assertIn("GitHub may still list a runner for the repository whose owner and name that "
+                              "service's name carries (example-org-example-repo)", stop[0])
+                self.assertIn("Settings, under Actions, then Runners", stop[0])
+                self.assertIn(M.README_MAKES, stop[0])
+                self.assertEqual(said_of_ours_as_not_made(lines), [], lines)
+                # The end state: nothing changed, on this computer or on GitHub.
+                self.assertEqual(world.order, [], name)
+                self.assertEqual(world.active.get(UNIT), "active")
+                self.assertTrue(world.user and FOLDER in world.paths)
+                self.assertEqual((gh.runner or {}).get("name"), OURS)
+                self.assertFalse([a for a in host.ran if a[:1] == ("sudo",) and a[2:3] not in (("true",), ("test",))],
+                                 "no admin step")
+                if run is not None:
+                    self.assertFalse(os.path.exists(M.state_path(host)), "no record written")
+
+    def test_G6_38_road_i_a_runner_user_alone_gets_the_userdel_step_only_when_none_of_its_processes_runs(self):
+        # The runner user alone (no runner service of this tool's form, no record naming it). status says setup sets
+        # one up (setup's stop is the next stop); setup stops before any admin step. Its userdel step is printed only
+        # when the user's processes were read and none runs; taken as printed, the same setup goes to its end.
+        there = (0, "minions-runner:x:1001:1001::/home/minions-runner:/bin/bash\n")
+        for kind, pg in (("none runs", None), ("one runs", (0, "4321\n")),
+                         ("not read", (2, "pgrep: could not read /proc\n"))):
+            with self.subTest(processes=kind):
+                runs = {("getent", "passwd", "minions-runner"): there}
+                if pg is not None:
+                    runs[("pgrep", "-u", "minions-runner")] = pg
+                host, sha = setup_host(runs=runs)
+                out = Out()
+                M.status(REPO, host=host, gh=StatusGH(), out=out)
+                self.assertTrue(f"`setup {REPO}` sets one up" in out.getvalue()
+                                or f"setup {REPO}" in out.getvalue().splitlines(), out.getvalue())  # its step: setup
+                fresh_look(host)
+                code, lines = run_setup(setup_gh(sha), host)
+                step = "(sudo userdel -r minions-runner; none of its processes runs now); then run the same command again"
+                if kind == "none runs":
+                    self.assertIn(step, lines[-1])  # read first: printed only when none of its processes runs
+                else:
+                    self.assertNotIn("userdel", lines[-1])
+                self.assertEqual(code, M.EXIT_STOP, lines)
+                self.assertEqual(admin_steps(host), [], "nothing is touched")
+                self.assertTrue(lines[-1].startswith("stop this computer holds what carries this tool's own names, "
+                                                     f"and this tool's record here, {M.state_path(host)}, does not "
+                                                     "name it: the user minions-runner."), lines[-1])
+                self.assertEqual(said_of_ours_as_not_made(lines), [], lines)
+                if kind == "none runs":
+                    # The step taken as printed: the user is gone (and its home with -r), then the same setup.
+                    host.runs[("getent", "passwd", "minions-runner")] = (2, "")
+                    code, lines = run_setup(setup_gh(sha), host)
+                    self.assertEqual(code, M.EXIT_OK, lines)
+                    self.assertTrue(M.load_state(host).get("runner_user_made"))
+                else:
+                    self.assertIn("1 process of the user minions-runner runs now, so no step here deletes that user"
+                                  if kind == "one runs" else
+                                  "Whether a process of the user minions-runner runs now could not be read", lines[-1])
+
+    def test_G6_38_road_ii_uninstall_all_says_what_is_left_that_can_run_and_where_github_lists_it(self):
+        # World (a), road (ii): uninstall --all stops at the slice that holds the running service, with its step;
+        # the person stops the service as printed; the same command goes to its end. Its last line does not say the
+        # tool is off: it names the service left, that it does not run now, that it starts at a restart (read), the
+        # runner GitHub may still list for the repository the service's name carries, and where GitHub lists it. The
+        # census names a service of this tool's naming form even when its User could not be read.
+        gh, world, host = world_a(user_answer=False)
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        # Before anything changes, what it will not take off is said, never "the user minions-runner" as taken.
+        said = " ".join(tells_of(lines))
+        self.assertNotIn(f"the user {M.RUNNER_USER} and this tool's copy", said)
+        self.assertIn("It leaves as it is what carries this tool's own names and no record of this tool here names "
+                      f"(the user minions-runner; the runner service {UNIT}): that stays, and this run's last line "
+                      "names it.", said)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        stop = [x for x in lines if x.startswith("stop ")]
+        self.assertTrue(stop and stop[0].startswith(f"stop minions.slice still holds {UNIT} (active)"), lines)
+        # its step: the same command, said inline or on the line below
+        self.assertRegex(stop[0], r"stop that service yourself; then (`\S+ -I \S+ uninstall --all`|the command below) "
+                                  r"finishes$")
+        self.assertEqual(world.answer(["sudo", "-n", "systemctl", "stop", UNIT, "--no-pager"]), (0, ""))  # the step
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertFalse([x for x in lines if " is off this computer" in x], lines)
+        self.assertEqual(lines[-1],
+            "warn this tool is not off this computer: this run left as it is what carries this tool's own names and "
+            f"no record of this tool here names: the user minions-runner, the runner service {UNIT}. What can still "
+            f"run: the runner service {UNIT}: it does not run now, and it starts again when this computer restarts, as "
+            "systemd reads it enabled. GitHub may still list a runner for the repository whose owner and name that "
+            "service's name carries (example-org-example-repo); this run could not ask GitHub, as no record here "
+            "names that repository. GitHub lists a repository's runners in its Settings, under Actions, then Runners. "
+            "What this tool makes on a computer, to take off by hand, is in the README's section "
+            f"\"{M.README_MAKES_HEAD}\" ({M.README_MAKES})")
+        self.assertIn(f"warn census: runner services: {UNIT}", lines)
+        self.assertEqual(said_of_ours_as_not_made(lines), [], lines)
+        self.assertTrue(world.user, "a user its record does not show it made is never removed")
+        # The end state: the service's file stays, enabled; a restart starts it; GitHub still lists its runner.
+        self.assertIn(f"/etc/systemd/system/{UNIT}", world.paths)
+        self.assertIn(UNIT, world.enabled)
+        world.restart()
+        self.assertEqual(world.active.get(UNIT), "active")
+        self.assertEqual((gh.runner or {}).get("name"), OURS)
+
+    def test_G6_38_a_unit_s_two_reads_have_three_answers_each(self):
+        # Whether it runs now (is-active) and whether it starts at a restart (is-enabled): yes, no, or not read,
+        # with what systemctl answered; an answer that is not one of the known words is never taken for no.
+        cases = [
+            ((0, "active\n"), (0, "enabled\n"), "it runs now",
+             "it starts again when this computer restarts, as systemd reads it enabled"),
+            ((3, "inactive\n"), (1, "disabled\n"), "it does not run now",
+             "it does not start when this computer restarts, as systemd reads it disabled"),
+            ((3, "failed\n"), (1, "masked\n"), "it does not run now",
+             "it does not start when this computer restarts, as systemd reads it masked"),
+            ((4, ""), (1, f"Failed to get unit file state for {UNIT}: No such file or directory\n"),
+             "whether it runs now could not be read (systemctl answered code 4",
+             "whether it starts when this computer restarts could not be read (systemctl answered code 1"),
+            ((1, "Failed to connect to bus\n"), (0, "static\n"),
+             "whether it runs now could not be read (systemctl answered code 1",
+             "whether it starts when this computer restarts could not be read (systemctl answered code 0"),
+        ]
+        for active, enabled, run_w, boot_w in cases:
+            with self.subTest(active=active, enabled=enabled):
+                host = linux_host(runs={tuple(M.systemctl("is-active", UNIT)): active,
+                                        tuple(M.systemctl("is-enabled", UNIT)): enabled})
+                run, boot = M.unit_now(host, UNIT)
+                self.assertTrue(run.startswith(run_w), run)
+                self.assertTrue(boot.startswith(boot_w), boot)
 
 
 if __name__ == "__main__":

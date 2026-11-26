@@ -3642,7 +3642,7 @@ def kept_home_why(host: Host) -> str:
 
 def kept_home_next(host: Host, then: str = "", made: bool | None = None) -> str:
     """Change 2: the rm line is THE step only where the record says this tool made the user; with no record it is
-    said as NOT_OURS_USER says it: if it is left from this tool's runner, that line; if it is something else of
+    said by what was read of it: if it is left from this tool's runner, that line; if it is something else of
     yours, move it away. `then` is what follows each (setup's "then run the same command again")."""
     after = f"; then {then}" if then else ""
     if kept_home_made(host) if made is None else made:
@@ -3730,12 +3730,172 @@ def schedules_stayed(found: list[tuple[str, str]], unread: list[str]) -> str:
     return "; ".join(parts)
 
 
-NOT_OURS_USER = (f"a user named {RUNNER_USER} is already on this computer, and this tool did not make it (its record "
-                 "here says so): nothing is touched. This tool never takes over, or removes, a user it did not make. If "
-                 f"you know it is left from an earlier copy of this tool, your next step: remove it yourself first (sudo "
-                 f"userdel -r {RUNNER_USER}); then run the same command again. If it is someone else's user, this "
-                 f"version cannot run on this computer: its runner's user must be named {RUNNER_USER}, and that name "
-                 "is taken here")
+# R210: a runner service of this tool's own naming form: unit_name's, with setup's runner name (minions-HOST)
+OWN_UNIT = r"actions\.runner\.[A-Za-z0-9_.@-]+-[A-Za-z0-9_.@-]+\.minions-[A-Za-z0-9-]+\.service"
+# R210: a part of this tool's naming form in its two folders: a repository's owner-name (hook_dir, records_dir_of)
+OWN_PART = r"[A-Za-z0-9-]+-[A-Za-z0-9._-]+"
+
+
+def own_form_parts(path: str, what: list[str]) -> list[str]:
+    """R210: of what a folder of this tool's holds (each "NAME (kind)"), the parts of this tool's own naming form."""
+    if path not in (HOOKS_ROOT, RECORDS_ROOT):
+        return []
+    return [w for w in what if " (a folder" in w and re.fullmatch(OWN_PART, w.split(" (")[0])]  # a repository's is a folder
+
+
+def held_words(rep: "Report", paths: list[str], who: str) -> str:
+    """R210: what a folder that stays holds, said from what was read: where a part of this tool's naming form is there,
+    "this tool's record here does not name" (never "did not make")."""
+    foreign = rep.stayed.get("foreign") or {}
+    own = any(own_form_parts(p_, foreign[p_][1]) for p_ in paths if p_ in foreign)
+    return "this tool's record here does not name" if own else who
+
+
+def unit_now(host: Host, unit: str) -> tuple[str, str]:
+    """R210, read as the person, three answers each: whether the unit runs now, and whether it starts at a restart
+    (systemctl is-enabled: enabled starts it at boot, disabled or masked does not, any other answer is not read)."""
+    rc, out = host.run(systemctl("is-active", unit))
+    w = (words_of(out) or [""])[0]
+    run = ("it runs now" if w in RUNNING_STATES else "it does not run now" if w in ("inactive", "failed") else
+           f"whether it runs now could not be read (systemctl answered code {rc}: {tail(out) or 'nothing'})")
+    rc, out = host.run(systemctl("is-enabled", unit))
+    w = (words_of(out) or [""])[0]
+    boot = (f"it starts again when this computer restarts, as systemd reads it {w}" if w in ("enabled", "enabled-runtime")
+            else f"it does not start when this computer restarts, as systemd reads it {w}"
+            if w in ("disabled", "masked", "masked-runtime") else
+            f"whether it starts when this computer restarts could not be read (systemctl answered code {rc}: "
+            f"{tail(out) or 'nothing'})")
+    return run, boot
+
+
+def unit_repo_words(unit: str) -> str:
+    """R210: the repository a runner service's name carries, as its name carries it (owner and name, joined by a dash
+    as setup joins them, so it is not split back)."""
+    m = re.fullmatch(r"actions\.runner\.(.+)\.minions-[A-Za-z0-9-]+\.service", unit)
+    return m.group(1) if m else unit
+
+
+def lost_setup(host: Host, data: dict) -> dict | None:
+    """R210: what carries this tool's own names on this computer that its record here does not name: the runner user
+    (setup's one name for it) when the record does not say this tool made it, and runner services of this tool's naming
+    form that no entry of the record names; with what else of its names is here (the slice and the watch, the runner
+    user's home, its two folders). Read as the person, no admin rights, three answers: a read with no answer is said,
+    never taken for none. None when nothing unnamed is here: the computer is then read as before."""
+    named = set()
+    for part in ("runners", "setting_up"):
+        for m in (data.get(part) or {}).values():
+            if isinstance(m, dict) and m.get("unit"):
+                named.add(m["unit"])
+    found = {"user": False, "units": [], "more": [], "unread": [], "pids": None}
+    kind, said_ = runner_user_state(host)
+    if kind == "there" and not data.get("runner_user_made"):
+        found["user"] = True
+    elif kind == "unread":
+        found["unread"].append(f"whether the user {RUNNER_USER} is here ({said_})")
+    rc, out = host.run(systemctl("list-units", "--all", "--plain", "--no-legend", "actions.runner.*", "minions*"))
+    units = sorted({words_of(x)[0] for x in lines_of(out) if x.strip(BLANKS) and not x.startswith("0 ")}) if rc == 0 else []
+    if rc != 0:
+        found["unread"].append(f"systemd's units (systemctl answered code {rc}: {tail(out) or 'nothing'})")
+    for u in units:
+        if re.fullmatch(OWN_UNIT, u) and u not in named:
+            found["units"].append((u, *unit_now(host, u)))
+    if not (found["user"] or found["units"]):
+        return None
+    found["more"] = [f"the unit {u}" for u in (SLICE, f"{WATCH_UNIT}.timer", f"{WATCH_UNIT}.service") if u in units]
+    for path in (f"/home/{RUNNER_USER}", HOOKS_ROOT, RECORDS_ROOT):
+        t = host.there(path)
+        if t:
+            found["more"].append(f"the folder {path}")
+        elif t is None:
+            found["unread"].append(f"whether the folder {path} is here")
+    if found["user"]:
+        try:
+            found["pids"] = runner_pgrep(host)
+        except PidsUnread as e:
+            found["pids"] = str(e)
+    return found
+
+
+def lost_words(host: Host, found: dict) -> str:
+    """R210: said from what was read, never from a record that does not name a thing: what carries this tool's own
+    names here and its record does not name; what else of its names is here; that this version has no road to take it
+    on again or off; a step that deletes the runner user only when none of its processes runs (read first) and no
+    runner service of this tool's form is here; GitHub's place for a repository's runners."""
+    path = state_path(host)
+    things = ([f"the user {RUNNER_USER}"] if found["user"] else []) + [
+        f"the runner service {u} ({run}; {boot})" for u, run, boot in found["units"]]
+    rec = (f"this tool's record here, {path}, is not there" if not os.path.lexists(path) else
+           f"this tool's record here, {path}, does not name {'it' if len(things) == 1 else 'them'}")
+    words = (f"this computer holds what carries this tool's own names, and {rec}: {'; '.join(things)}"
+             + (f". Also of this tool's names here: {', '.join(found['more'])}" if found["more"] else "")
+             + (f". Not read: {'; '.join(found['unread'])}" if found["unread"] else "")
+             + ". It may be left by an earlier setup of this tool whose record was lost, or be someone else's of the "
+             "same names: this version has no road of its own to take it on again or to take it off, and it never takes "
+             "over, or removes, what its record does not show it made, so this command changed nothing here and asked "
+             "GitHub nothing.")
+    pids = found["pids"]
+    if found["user"] and not found["units"]:
+        if pids == []:
+            words += (f" If you know the user is left from an earlier copy of this tool, your next step: remove it "
+                      f"yourself first (sudo userdel -r {RUNNER_USER}; none of its processes runs now); then run the same "
+                      f"command again. If it is someone else's user, this version cannot run on this computer: its "
+                      f"runner's user must be named {RUNNER_USER}, and that name is taken here.")
+        elif isinstance(pids, list):
+            words += (f" {plural(len(pids), 'process')} of the user {RUNNER_USER} {'runs' if len(pids) == 1 else 'run'} "
+                      "now, so no step here deletes that user.")
+        else:
+            words += (f" Whether a process of the user {RUNNER_USER} runs now could not be read ({pids}), so no step "
+                      "here deletes that user.")
+    if found["units"]:
+        words += (" GitHub may still list a runner for the repository whose owner and name "
+                  + ("that service's name carries" if len(found["units"]) == 1 else "each service's name carries")
+                  + f" ({', '.join(unit_repo_words(u) for u, _, _ in found['units'])}).")
+    return (words + " Your way out is by hand: the README's section "
+            f"\"{README_MAKES_HEAD}\" ({README_MAKES}) lists every place this tool makes on a computer, and GitHub lists "
+            "a repository's runners in its Settings, under Actions, then Runners")
+
+
+def left_words(found: dict) -> str:
+    """R210: uninstall --all's last line when what carries this tool's names stays, with no record naming it: what is
+    left, what of it can still run and whether it starts at a restart (read), and the runner GitHub may still list."""
+    things = ([f"the user {RUNNER_USER}"] if found["user"] else []) + [f"the runner service {u}" for u, _, _ in found["units"]]
+    words = ("this tool is not off this computer: this run left as it is what carries this tool's own names and no "
+             f"record of this tool here names: {', '.join(things)}")
+    if found["units"]:
+        words += ". What can still run: " + "; ".join(f"the runner service {u}: {run}, and {boot}"
+                                                     for u, run, boot in found["units"])
+        words += (". GitHub may still list a runner for the repository whose owner and name "
+                  + ("that service's name carries" if len(found["units"]) == 1 else "each service's name carries")
+                  + f" ({', '.join(unit_repo_words(u) for u, _, _ in found['units'])}); this run could not ask GitHub, "
+                  "as no record here names that repository. GitHub lists a repository's runners in its Settings, under "
+                  "Actions, then Runners")
+    if found["unread"]:
+        words += f". Not read: {'; '.join(found['unread'])}"
+    return (words + f". What this tool makes on a computer, to take off by hand, is in the README's section "
+            f"\"{README_MAKES_HEAD}\" ({README_MAKES})")
+
+
+def lost_stop(host: Host, rep: Report, data: dict | None = None, alone: bool = False) -> bool:
+    """R210: True when it stopped (what carries this tool's names here and its record does not name). A command that
+    would send the person to setup stops on a runner service of this tool's form, or on the runner user with more of
+    this tool's names beside it; setup (alone=True) stops on the runner user alone too, as it cannot take that user."""
+    found = lost_setup(host, load_state(host) if data is None else data)
+    if found and not alone and not (found["units"] or found["more"]):
+        found = None  # the runner user alone: setup says what was read of it, and its step
+    if found:
+        rep.stop(lost_words(host, found))
+    return bool(found)
+
+
+def not_ours_user(host: Host) -> str:
+    """R210: the runner user there and this tool's record not saying it made it: said from what was read."""
+    found = lost_setup(host, load_state(host)) or {"user": True, "units": [], "more": [], "unread": [], "pids": None}
+    if found["pids"] is None and found["user"]:
+        try:
+            found["pids"] = runner_pgrep(host)
+        except PidsUnread as e:
+            found["pids"] = str(e)
+    return lost_words(host, found)
 
 
 def runner_user_is_ours_or_absent(host: Host, rep: Report) -> bool:
@@ -3747,7 +3907,7 @@ def runner_user_is_ours_or_absent(host: Host, rep: Report) -> bool:
                  + settle_first())
         return False
     if kind == "there" and not load_state(host).get("runner_user_made"):
-        rep.stop(NOT_OURS_USER)
+        rep.stop(not_ours_user(host))
         return False
     home = f"/home/{RUNNER_USER}"
     if kind == "absent":
@@ -3807,7 +3967,7 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
         save_state(host, known)
         rep.ok(f"made the user {RUNNER_USER}")
     elif not load_state(host).get("runner_user_made"):
-        rep.stop(NOT_OURS_USER)
+        rep.stop(not_ours_user(host))
         return False
     else:
         rep.ok(f"the user {RUNNER_USER} is there already (made by this tool, as its record here says)")
@@ -4291,6 +4451,8 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     why = watch_values_refused(host, path_for(resolve_programs(host, sorted(PROGRAMS))[0]))
     if why:  # R190: setup's own refusal, before its first write and before any admin step
         rep.stop(why)
+        return rep.code()
+    if lost_stop(host, rep, alone=True):  # R210: what carries this tool's names and its record does not name, before any change
         return rep.code()
     if not runner_user_is_ours_or_absent(host, rep):  # R129: before the person's lines and before any admin step
         return rep.code()
@@ -5266,6 +5428,8 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
     else:
         repos = [repo] if repo in runners else []
     if not repos:
+        if lost_stop(host, rep, data):  # R210: never sent to setup over what carries this tool's names
+            return rep.code()
         rep.stop(f"no runner of ours serves {repo} on this computer: {C0}setup {repo}{C1} sets one up" if repo else
                  f"no runner of ours on this computer: {C0}look {PLACEHOLDER}{C1}, then {C0}setup {PLACEHOLDER}{C1}, sets one up, "
                  f"{PLACE_WORDS}")
@@ -5342,6 +5506,8 @@ def resume(repo: str, host: Host | None = None, gh: GitHub | None = None, out=No
     data = load_state(host)
     mine = (data.get("runners") or {}).get(repo)
     if not mine:
+        if lost_stop(host, rep, data):  # R210
+            return rep.code()
         rep.stop(f"no runner of ours serves {repo} on this computer: {C0}setup {repo}{C1} sets one up")
         return rep.code()
     if mine.get("public_stop"):
@@ -5670,6 +5836,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                      + f". Your next step: {C0}setup {rp}{C1} finishes it; or {C0}uninstall {rp}{C1} takes it away, read back")
         return rep.code()
     if not repos or any(r not in runners for r in repos):
+        if lost_stop(host, rep, data):  # R210: never sent to setup over what carries this tool's names
+            return rep.code()
         rep.stop(f"no runner of ours serves {repo} on this computer: {C0}setup {repo}{C1} sets one up" if repo else
                  f"no runner of ours on this computer: {C0}look {PLACEHOLDER}{C1}, then {C0}setup {PLACEHOLDER}{C1}, sets one up, "
                  f"{PLACE_WORDS}")
@@ -7844,8 +8012,8 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report, for_setup: bo
             "its hooks are deleted, read back" + stays if stays else
             "the runner's folders and its hooks are deleted, read back")
            + (f"; its jobs' records are in your record ({host.record_dir()})" if kept == "kept" else "")
-           + (f"; what is ours in {', '.join(foreign)} is deleted, and each stays: it holds what this tool or the "
-              "runner user did not make, named at the end" if foreign else ""))
+           + (f"; what is ours in {', '.join(foreign)} is deleted, and each stays: it holds what "
+              f"{held_words(rep, foreign, 'this tool or the runner user did not make')}, named at the end" if foreign else ""))
     return True
 
 
@@ -7950,6 +8118,8 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                  if (wanted is None or r in wanted) and (m.get("removing") or m.get("unfinished")))
     repos = sorted(r for r in (data.get("runners") or {}) if wanted is None or r in wanted)
     if not (half or repos):
+        if lost_stop(host, rep, data):  # R210: "nothing to check" is never said over what carries this tool's names
+            return rep.code()
         rep.ok(f"no runner of ours serves {repo} on this computer: nothing to check" if repo else
                "no runner of ours on this computer: nothing to check")
         return rep.code()
@@ -8291,8 +8461,8 @@ def remove_shared(host: Host, rep: Report) -> bool:
         stays = [p_ for p_ in (rep.stayed.get("foreign") or {}) if p_ == RECORDS_ROOT or p_.startswith(RECORDS_ROOT + "/")]
         rep.ok("the jobs' records are " + (f"kept where they are, not deleted: {', '.join(kept_here)}" if kept_here
                                            else f"in your record ({host.record_dir()})")
-               + (f"; what is ours in {', '.join(stays)} is deleted, and it stays: it holds what this tool or the "
-                  "runner user did not make, named at the end" if stays else
+               + (f"; what is ours in {', '.join(stays)} is deleted, and it stays: it holds what "
+                  f"{held_words(rep, stays, 'this tool or the runner user did not make')}, named at the end" if stays else
                   "" if kept_here else f", and {RECORDS_ROOT} is deleted"))
     return ok and remove_runner_user(host, rep)
 
@@ -8333,7 +8503,7 @@ def remove_copy(host: Host, rep: Report, src: dict) -> bool:
         t = True
     if t and stays and root_test(host, TOOL_COPY) is False:
         rep.ok(f"the tool's copy and the job hooks are deleted, the very last removal; {', '.join(stays)} "
-               "stays: it holds what this tool did not write, named at the end")
+               f"stays: it holds what {held_words(rep, stays, 'this tool did not write')}, named at the end")
         return True
     if t is None:
         rep.stop(f"whether {HOOKS_ROOT} (the tool's copy and the job hooks) is deleted could not be read: everything "
@@ -8415,8 +8585,8 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
         return True
     if kind == "there":
         if not load_state(host).get("runner_user_made"):  # R129 (rule 28): never a user this tool did not make
-            rep.ok(f"the user {RUNNER_USER} is left as it is: this tool's record here does not say it made it, so it "
-                   "is yours (named in the census)")
+            rep.ok(f"the user {RUNNER_USER} is left as it is: this tool's record here does not name it as one this "
+                   "tool made, and this tool never removes a user its record does not show it made (named in the census)")
             rep.stayed["user"] = True  # R136 (rule 8): a foreign thing does not stop a leave
             return True
         if not end_runner_users_processes(host, rep):
@@ -8876,8 +9046,8 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     named, yours, others = [], 0, 0
     for u in (u for u in units if u.startswith("actions.runner.")):
         urc, who = host.run(systemctl("show", "-p", "User", "--value", u))
-        if urc == 0 and who.strip(BLANKS) == RUNNER_USER:
-            named.append(u)
+        if urc == 0 and who.strip(BLANKS) == RUNNER_USER or re.fullmatch(OWN_UNIT, u):
+            named.append(u)  # R210: one of this tool's naming form is named, never counted as another person's
         elif urc == 0 and who.strip(BLANKS) == host.user():
             yours += 1
         else:
@@ -8901,7 +9071,7 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         rep.warn(f"census: the runner user: not read ({uwords})")
     else:
         line("the runner user", [RUNNER_USER] if rc == 0 else [],
-             "kept: its record here does not say this tool made it, so it is yours" if theirs else
+             "kept: this tool's record here does not name it as one this tool made" if theirs else
              "" if everything or not ours_left else f"kept for this tool's other runners here; {C0}uninstall --all{C1} takes "
              "it")
     mark = len(unread)
@@ -8917,8 +9087,8 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         rep.stayed["again"] = True  # what stayed is named below, so the leave's last line says so
     if theirs and home in folders:
         folders.remove(home)
-        rep.ok(f"census: the folder {home}: kept: it is the home of the user {RUNNER_USER}, which this "
-               "tool did not make; it is yours")
+        rep.ok(f"census: the folder {home}: kept: it is the home of the user {RUNNER_USER}, which this tool's "
+               "record here does not name as one this tool made")
     if (rep.stayed.get("home") or ukind == "absent") and home in folders and home not in foreign_now \
             and home not in again:  # R167 (FAULT 2)
         folders.remove(home)  # named with why, every run; R136's own leave names it below with what it holds
@@ -8957,8 +9127,12 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
             else:
                 theirs.append(w)
         who = "the runner user did not make" if kind == "runner" else "this tool did not write"
+        own = own_form_parts(path, theirs)  # R210: a part of this tool's naming form: what was read, never "not made"
+        theirs = [w for w in theirs if w not in own]
         more = f" and {len(theirs) - LEFT_ON_SCREEN} more" if len(theirs) > LEFT_ON_SCREEN else ""
-        holds = ([f"{', '.join(theirs[:LEFT_ON_SCREEN])}{more}, which {who}"] if theirs else []) + (
+        holds = ([f"{', '.join(own)}, of this tool's naming form for a repository's folder, which its record here "
+                  "does not name"] if own else []) + (
+            [f"{', '.join(theirs[:LEFT_ON_SCREEN])}{more}, which {who}"] if theirs else []) + (
             [f"the folder{'s' if len(kept) > 1 else ''} {', '.join(kept)}, which stayed"] if kept else [])
         rep.ok(f"census: the folder {path}: kept: it holds {'; and '.join(holds)}; that stays, and the folders above it "
                "with it" + (f" (the whole list is in {listed})" if listed and more else "")
@@ -9095,6 +9269,8 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
     adopt_unfinished(host, data, None if everything or not repo else {repo})
     runners = data.get("runners") or {}
     if repo and repo not in runners and not everything and not user_left_to_finish(data):
+        if lost_stop(host, rep, data):  # R210: "nothing to uninstall" is never said over what carries its names
+            return rep.code()
         rep.ok(f"no runner of ours serves {repo} on this computer: nothing to uninstall")
         census(gh, host, [repo], False, rep)
         return rep.code()
@@ -9142,7 +9318,10 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
         census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()),
                skill_folder=kept_skill_from(data), packages={k: data.get(k) for k in (
                    "dependency_packages", "dependency_packages_unread")})
-        if set(rep.stayed) - HANDED_ONLY and not rep.stopped:  # R136 (rule 8): the leave went to its end
+        left = None if rep.stopped else lost_setup(host, load_state(host))  # R210: read again at the very end
+        if left:  # R210: never "off this computer" while what carries its names stays and can still run
+            rep.warn(left_words(left))
+        elif set(rep.stayed) - HANDED_ONLY and not rep.stopped:  # R136: the leave went to its end
             rep.ok("this tool is off this computer; what stayed was not made by this tool or its runner user, or holds "
                    "what was not" + (", or is a record of this tool's that could not be read, kept for you"
                                      if rep.stayed.get("aside") else "") + ", named above with why each stayed")
@@ -9301,7 +9480,15 @@ def uninstall_lines(host: Host, repo: str | None, everything: bool, data: dict) 
     is kept, and the pull request that puts moved jobs back (theirs to merge; its own checks start when it opens)."""
     record = os.path.join(host.home(), RECORD_NAME)
     moves = data.get("moves") or {}
-    if everything:
+    found = lost_setup(host, data) if everything else None  # R210: read before it is said, as at the end
+    if found:
+        left = "; ".join(([f"the user {RUNNER_USER}"] if found["user"] else [])
+                         + [f"the runner service {u}" for u, _, _ in found["units"]])
+        lines = ["This takes off this computer every runner of this tool that its record here names, the watch, the "
+                 "slice and this tool's copy, holding new jobs first so that none starts here while it works. It leaves "
+                 f"as it is what carries this tool's own names and no record of this tool here names ({left}): that "
+                 "stays, and this run's last line names it."]
+    elif everything:
         lines = ["This takes off this computer every runner of this tool, the watch, the slice, the user "
                  f"{RUNNER_USER} and this tool's copy, holding new jobs first so that none starts here while it works."]
     elif repo not in (data.get("runners") or {}):  # R130 (item 7): a last uninstall that stopped before its user went
