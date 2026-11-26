@@ -6849,7 +6849,7 @@ class G6(unittest.TestCase):
         code, lines = run_setup(gh, host)
         self.assertEqual(code, M.EXIT_STOP, lines)
         self.assertIn("run the same command again from the terminal where you typed the password", lines[-2])
-        self.assertIsNone(M._LOCK["fd"], "the lock is let go at the stop (the owner's r)")
+        self.assertIsNone(M._LOCK["fd"], "the lock is let go at the stop")
         self.assertEqual(M.load_state(host)["setting_up"][REPO]["folder"], FOLDER)
         # uninstall finds it, never "nothing to uninstall", and takes it away, read back.
         out = Out()
@@ -10206,7 +10206,7 @@ def printed_command(lines: list[str], line: str) -> str:
 
 
 class G6Record(unittest.TestCase):
-    """R205, codon G6.35 (the owner's ruling of 2026-11-25)."""
+    """R205, codon G6.35."""
 
     def test_G6_35_a_record_that_could_not_be_read_is_never_written_over_and_every_command_names_it(self):
         # Seen 2026-11-26 in a stand-in trial on 35515f9: on a damaged record, watch and look wrote a new one over it
@@ -10233,13 +10233,13 @@ class G6Record(unittest.TestCase):
                     self.assertEqual(len(stop), 1, (name, dname, lines))
                     self.assertIn("so nothing is deleted on its word", stop[0])
                     self.assertTrue(G8Words.NEXT.search(stop[0]), stop[0])
-                    self.assertIn(M.watch_unread(), stop[0])  # the owner's point 3: what the watch does not do
+                    self.assertIn(M.watch_unread(), stop[0])  # What the watch does not do
                     self.assertNotIn("Traceback", out.getvalue())
                     if dname == "not UTF-8":
                         self.assertNotIn("\\xff", stop[0])  # where the read stopped, never a value of the file
 
     def test_G6_35_the_way_out_is_restore_as_printed_then_status_then_uninstall_to_nothing_of_ours(self):
-        # The owner's condition 1: one command of the tool's own, taken as printed, in a plain home and in homes 1
+        # One command of the tool's own, taken as printed, in a plain home and in homes 1
         # and 5 of the walk; then status reads the record; then uninstall leaves nothing of ours and 0 runners.
         for label in ("plain", "a space", "a backslash"):
             with self.subTest(home=label):
@@ -10410,7 +10410,7 @@ class G6Record(unittest.TestCase):
         self.assertEqual(removed[-1], "(the folder)", removed)  # then the folder itself, the last removal
 
     def test_G6_35_with_no_copy_that_reads_the_stop_says_so_and_names_the_readme_place(self):
-        # The owner's condition 3: both copies unreadable, or no copy: no road in the tool, said plainly, with the
+        # Both copies unreadable, or no copy: no road in the tool, said plainly, with the
         # README's place that lists what the tool makes and where GitHub lists a repository's runners.
         for cdamage in (None, b"", b"[]"):
             with self.subTest(copy=cdamage):
@@ -10445,7 +10445,7 @@ class G6Record(unittest.TestCase):
             self.assertIn(place, part, place)
 
     def test_G6_35_the_watch_says_its_line_when_the_state_begins_and_changes_never_each_pass(self):
-        # The owner's point 3: said when the state begins and when it changes; status says it while it stands.
+        # Said when the state begins and when it changes; status says it while it stands.
         gh, world, host = remove_setup(moved=False)
         p = M.state_path(host)
         jpath = os.path.join(host.state_dir(), "journal.log")
@@ -10514,7 +10514,7 @@ CAT_ENV = ("sudo", "-n", "-u", "minions-runner", "--", "cat", f"{FOLDER}/.env")
 PERSONS_ENV = "LANG=C.UTF-8\nJAVA_HOME=/opt/java\nMADE_BY_THE_PERSON=made-value-r206\n"
 
 
-# R208 (G6.36, the owner's ruling 2026-11-26): one lock per home. The writers here are real processes on real files in
+# R208 (G6.36): one lock per home. The writers here are real processes on real files in
 # a made home, each one of this tool's commands by its name, through the tool's own guard.
 TOOLS_ENV = ("LANG=C.UTF-8\nJAVA_HOME=/opt/java\nACTIONS_RUNNER_HOOK_JOB_STARTED=/x/job-started.sh\n"
              "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/x/job-completed.sh\n")  # as setup's install_hooks wrote it
@@ -10539,7 +10539,7 @@ def kept_of(host):
 
 
 class G6Env(unittest.TestCase):
-    """R209 (the owner's ruling, Thu 11-26, option A): no road of the tool deletes a runner's .env that is not shown to
+    """R209: no road of the tool deletes a runner's .env that is not shown to
     be as the tool left it; such a file is set aside as the person's, named by path with its lines by count."""
 
     def test_G6_37_a_line_the_person_added_to_an_installed_runner_s_env_is_kept_by_uninstall_never_deleted(self):
@@ -10557,7 +10557,7 @@ class G6Env(unittest.TestCase):
         self.assertIn(f"its lines are not the ones this tool wrote there): it is kept as yours in {path} (yours "
                       "alone, mode 600; 5 lines, naming ACTIONS_RUNNER_HOOK_JOB_COMPLETED, ACTIONS_RUNNER_HOOK_JOB_STARTED, "
                       "JAVA_HOME, LANG, MADE_BY_THE_PERSON), never deleted; the folder goes", line[0])
-        # nothing of it printed, logged or journaled: names and counts only (the owner's d)
+        # nothing of it printed, logged or journaled: names and counts only
         self.assertNotIn("made-value-r209", "\n".join(lines))
         self.assertNotIn("made-value-r209", host.files.get(os.path.join(host.state_dir(), "journal.log"), "")
                          + "".join(v for k, v in host.files.items() if k.endswith("journal.log")))
@@ -10962,7 +10962,7 @@ def read_whole(path):
 
 class G6Lock(unittest.TestCase):
     def test_G6_36_two_real_processes_lose_nothing_and_leave_the_record_and_its_copy_whole(self):
-        # The owner's condition i: a watch-shaped writer (read, GitHub's time, read again, its pass, save) beside a
+        # A watch-shaped writer (read, GitHub's time, read again, its pass, save) beside a
         # command-shaped one (read, its work, one new look, save), 300 pairs at each of three gaps. Before R208 this
         # lost the runner's entry and hundreds of looks (the stand-in trial, 2026-11-25).
         for gap in (0, 5, 50):
@@ -10989,7 +10989,7 @@ class G6Lock(unittest.TestCase):
                       f"look whole {look['whole']}, held answers {look['held']}")
 
     def test_G6_36_a_command_longer_than_a_pass_the_watch_skips_says_so_ends_failed_then_reads_again(self):
-        # The owner's condition b and i's second shape: the watch never waits behind a command; each pass skipped is
+        # The watch never waits behind a command; each pass skipped is
         # journaled; past SEEN_PASSES in a row it ends failed and says why, naming the holder; after the command
         # ends, the next pass is whole, the skipped count is 0 again, and both writers' changes are in the record.
         home = made_home()
@@ -11015,7 +11015,7 @@ class G6Lock(unittest.TestCase):
         self.assertEqual(rec["watch"]["pass"], 1)
 
     def test_G6_36_a_command_by_hand_waits_says_what_for_then_stops_naming_the_holder_and_the_step_is_taken(self):
-        # The owner's condition c: bounded, said after a moment, a stop that changed nothing with the holder's
+        # Bounded, said after a moment, a stop that changed nothing with the holder's
         # process id and command name (no arguments), and the step taken: the holder ends, the same command again.
         home = made_home()
         sd = os.path.join(home, ".minions")
@@ -11054,7 +11054,7 @@ class G6Lock(unittest.TestCase):
         self.assertEqual(set(rec["looks"]), {"o/held", "o/drain"})
 
     def test_G6_36_no_program_the_tool_starts_holds_the_lock(self):
-        # The owner's condition f: a long child (sleep, through the tool's own Host.run), the tool ended by its
+        # A long child (sleep, through the tool's own Host.run), the tool ended by its
         # exact process id, and the lock free while the child still runs; the child holds no handle on the file.
         home = made_home()
         holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
@@ -11085,7 +11085,7 @@ class G6Lock(unittest.TestCase):
         p.stdout.close()
 
     def test_G6_36_a_command_that_waited_while_uninstall_took_the_folder_makes_nothing(self):
-        # The owner's condition g: the file it locked is no longer the file at that path; it stops, and makes nothing.
+        # The file it locked is no longer the file at that path; it stops, and makes nothing.
         home = made_home()
         sd = os.path.join(home, ".minions")
         holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
@@ -11112,7 +11112,7 @@ class G6Lock(unittest.TestCase):
         self.assertFalse(os.path.lexists(sd), "nothing made again")
 
     def test_G6_36_the_watch_pass_a_command_starts_and_waits_for_runs_under_its_lock(self):
-        # The owner's condition h: setup starts the watch's first pass and waits for it (install_watch); that pass
+        # Setup starts the watch's first pass and waits for it (install_watch); that pass
         # asks for the lend, is handed setup's own lock and is whole; only one pass can take it; without the lend
         # the same pass is skipped. And install_watch starts once more when the timer's pass was skipped.
         home = made_home()
@@ -11295,7 +11295,7 @@ class G6Lock(unittest.TestCase):
             self.assertEqual(M.pass_state(h), want)
 
     def test_G6_36_the_lock_that_could_not_be_asked_stops_before_any_change_and_its_step_is_taken(self):
-        # The owner's condition a's third answer, and e: the lock file is a kept file; nothing stands in it.
+        # The lock's third answer: the lock file is a kept file; nothing stands in it.
         for kind in ("folder", "link"):
             with self.subTest(kind=kind):
                 home = made_home()
@@ -11334,7 +11334,7 @@ class G6Lock(unittest.TestCase):
         self.assertNotIn("os.read(", src)
 
     def test_G6_36_no_wait_for_a_person_is_inside_the_hold_and_after_the_answer_the_record_is_read_afresh(self):
-        # The owner's k: a person who leaves a prompt open never holds the watch. At setup's Enter, at sudo's
+        # A person who leaves a prompt open never holds the watch. At setup's Enter, at sudo's
         # password and at uninstall's typed word the lock is let go: a real watch pass run while the person waits is
         # whole, never skipped. After the answer the command takes the lock again and runs from its first line, so it
         # decides on the record as the watch left it; what it printed before the wait is not printed twice.
@@ -11407,7 +11407,7 @@ class G6Lock(unittest.TestCase):
         self.assertIn("warn after your answer this command read this tool's record afresh, and what you are to read has "
                       "changed meanwhile (another of its commands ran): read it again below", out.getvalue())
         # uninstall's typed word (after its last change to the record): the lock let go first; a save after it is a
-        # stop naming the command, never a traceback (the owner's q)
+        # stop naming the command, never a traceback
         home = made_home()
 
         @M.record_guard
@@ -11424,7 +11424,7 @@ class G6Lock(unittest.TestCase):
                       "never does, so it wrote nothing more and stopped here", out.getvalue())
 
     def test_G6_36_every_wait_for_a_person_and_every_long_wait_runs_with_the_lock_let_go(self):
-        # The owner's k and o, named: every wait for a person in the tool is one of these three, each inside
+        # Every wait for a person in the tool is one of these three, each inside
         # outside_hold or last_wait: the Enter (persons_own_eyes: setup, uninstall), sudo's password (ask_admin_once:
         # setup, uninstall, drain --stop, resume, doctor), the typed word (uninstall --delete-record). The wait for
         # a running job (wait_idle: drain, uninstall, setup over a cut one) lets the lock go before its first sleep.
@@ -11463,7 +11463,7 @@ class G6Lock(unittest.TestCase):
         self.assertIn("ok then: idle", out.getvalue())
 
     def test_G6_36_a_hold_past_the_watch_s_three_passes_heals_at_its_next_pass_with_nothing_for_a_person(self):
-        # The owner's (o), 2: the REAL watch over a computer with our runner, its folder shared with a real process
+        # The REAL watch over a computer with our runner, its folder shared with a real process
         # of this tool's that holds the lock (setup's shape) past SEEN_PASSES passes: each pass skipped, the last
         # failed and says why; no private read is written meanwhile (the job hook's read grows old). The holder ends
         # by itself: the very next pass is whole, writes a fresh private read for the hook, and leaves no mark
@@ -11500,7 +11500,7 @@ class G6Lock(unittest.TestCase):
         self.assertNotIn("no whole pass", st.getvalue())
 
     def test_G6_36_a_command_whose_own_hold_made_the_watch_skip_says_so_at_its_end(self):
-        # The owner's (o), 3: the person at the command that held the lock is told, at its end, how many passes its
+        # The person at the command that held the lock is told, at its end, how many passes its
         # hold made the watch skip, what that meant for jobs past SEEN_PASSES, and that nothing else is theirs to do.
         # Passes another command's hold made skip, before this one began, are not counted for it.
         home = made_home()
@@ -11528,7 +11528,7 @@ class G6Lock(unittest.TestCase):
             self.assertEqual(f"at {M.SEEN_PASSES} in a row it ended failed" in text, n >= M.SEEN_PASSES, text)
 
     def test_G6_36_a_watch_pass_with_its_folder_or_record_gone_says_so_makes_nothing_and_the_next_pass_reads(self):
-        # The owner's (s): the folder this tool keeps its record and lock in is gone, or the record alone is, when the
+        # The folder this tool keeps its record and lock in is gone, or the record alone is, when the
         # watch fires. The watch never takes that for a fresh home (it runs only after a setup): each pass says so,
         # makes nothing (no folder, no lock file, no record) and ends; where the copy reads, its step is restore, taken
         # as printed, and the next pass is whole. A home this tool cannot write in: the stop's words fit, no mv line.
@@ -11614,7 +11614,7 @@ class G6Lock(unittest.TestCase):
         self.assertIn("nor a copy of it, so this tool made nothing here yet", out.getvalue())
 
     def test_G6_36_a_process_with_the_lock_file_open_that_does_not_hold_it_is_never_named_its_holder(self):
-        # The owner, after the btrfs run (11-26): /proc/locks is matched by inode number only (its device is not the
+        # /proc/locks is matched by inode number only (its device is not the
         # one stat gives on btrfs), so a process that has this lock file open WITHOUT holding it (another command
         # waiting at it) and holds a FLOCK on another file with the same inode number elsewhere was named the holder.
         # The holder is now the process whose own descriptor of THIS file carries the FLOCK line (/proc/PID/fdinfo).
@@ -11650,7 +11650,7 @@ class G6Lock(unittest.TestCase):
         self.assertNotEqual(pid, waiter.pid)
 
     def test_G6_36_a_download_that_trickles_ends_within_its_bound_plus_one_read(self):
-        # The owner's (o): the runner's download is inside the hold, so its bound must hold on a line that trickles. A
+        # The runner's download is inside the hold, so its bound must hold on a line that trickles. A
         # real server on this computer's loopback sends a long body one byte every 0.3 s: with the whole bound 2 s and
         # one read's wait 1 s, the download ends by the tool's own words within 2 + 1 s and a margin, never waiting on
         # each byte. Red on a read of a fixed size (1 MiB at 1 byte per 0.3 s: days).
@@ -11701,7 +11701,7 @@ class G6Lock(unittest.TestCase):
         self.assertIn("TimeoutError: the download took longer than 1 minute, so it was stopped (a slow line)", got["end"])
 
     def test_G6_36_the_mv_step_is_taken_as_printed_from_a_home_with_a_space_and_never_moves_into_a_folder(self):
-        # The owner's p: the lock's mv line goes through the helper every printed command does (R200),
+        # The lock's mv line goes through the helper every printed command does (R200),
         # is taken as printed from a home whose path holds a space; a kept name that stands already (a folder): -T
         # never moves INTO it, -n never over it; a path no printed line may carry gets words, no command.
         home = tempfile.mkdtemp(dir=TMP, prefix="lock home with a space-")
@@ -11733,7 +11733,7 @@ class G6Lock(unittest.TestCase):
         self.assertIn("aside_step(path)", inspect_source(M.lock_unasked))
 
     def test_G6_36_status_never_waits_and_saves_nothing_while_another_holds_the_record(self):
-        # The owner's condition d (taken: none): status reads on, says who holds the record, and writes nothing.
+        # Status reads on, says who holds the record, and writes nothing.
         home = made_home()
         sd = os.path.join(home, ".minions")
         holding = os.path.join(TMP, f"holding-{os.getpid()}-{time.monotonic_ns()}")
@@ -11780,7 +11780,7 @@ inspect_source = inspect.getsource
 
 
 class G2Env(unittest.TestCase):
-    """R206, codon G2.29 (the owner's ruling of 2026-11-25)."""
+    """R206, codon G2.29."""
 
     def test_G2_29_a_runner_env_that_could_not_be_read_is_never_written_over(self):
         # Seen 2026-11-26 in a stand-in trial on 35515f9: a .env the runner user could not open was taken for an
@@ -11813,7 +11813,7 @@ class G2Env(unittest.TestCase):
                 # The step's effect (the file the runner user's own and readable), then setup: the person's lines
                 # stay, byte for byte, with the hooks' two lines after them. The stand-in has no GitHub for a setup
                 # run again over one that stopped part-way, so this is a fresh world; the step itself, as printed,
-                # and the same setup again are the owner's walk (b) on a real guest.
+                # and the same setup again are walked on a real guest.
                 host, sha = setup_host()
                 fresh_look(host)
                 host.runs[ENV_KEY] = (0, "minions-env: readable\n")

@@ -780,7 +780,7 @@ class Host:
             return ""
 
     def fetch_to(self, url: str, path: str, timeout: int = 60, whole_s: int = 0) -> None:
-        """R208 (the owner's o): the whole download ends within DOWNLOAD_MAX_S plus one read's wait (`timeout`), so a
+        """R208: the whole download ends within DOWNLOAD_MAX_S plus one read's wait (`timeout`), so a
         line that trickles never holds a command without end. Each read is ONE read of the socket (read1), its wait
         the time left, never more than `timeout`: a read of a fixed size could wait `timeout` for each byte."""
         limit = whole_s or DOWNLOAD_MAX_S
@@ -2373,7 +2373,7 @@ def save_state(host: Host, data: dict) -> None:
     goes through a temporary name of this writer's own (its process id and 8 random hex digits)."""
     if not lock_mine():
         if _LOCK["readonly"]:
-            return  # R208 (the owner's condition d): status, while another holds the record, saves nothing
+            return  # R208: status, while another holds the record, saves nothing
         if _GUARD["depth"]:
             raise UnlockedSave("the record was to be written without this tool's lock (R208); nothing was written")
         fd, why = lock_open(host)
@@ -2413,7 +2413,7 @@ def save_state(host: Host, data: dict) -> None:
 README_MAKES = ("https://github.com/TheWindstorm/windstorm-repo-minions#what-it-makes-on-a-computer")  # R205
 README_MAKES_HEAD = "What it makes on a computer"
 def watch_unread() -> str:
-    """R205 (the owner's point 3): what the watch does not do for the runners while its record could not be read."""
+    """R205: what the watch does not do for the runners while its record could not be read."""
     return ("While this stands, the watch reads nothing for the runners here: it does not read whether a "
                 f"repository is still private, so the job hook here refuses each job once the watch's last read of it "
                 f"is {SEEN_PASSES} passes old {HOOK_CAVEAT}; it takes no runner off GitHub when a repository turns "
@@ -2428,7 +2428,7 @@ def copy_time(path: str) -> str:
 
 
 def no_road_words(copy: str, cwhy: str | None) -> str:
-    """R205 (the owner's condition 3): both copies unreadable, or no copy: no road in the tool, said plainly."""
+    """R205: both copies unreadable, or no copy: no road in the tool, said plainly."""
     return (f"its second copy, {copy}, " + (f"could not be read either ({cwhy})" if cwhy else "is not there")
             + ", so this tool cannot tell from this computer what it made here, and it has no road of its own back, "
             "it changes nothing here while this stands. Your way out is by hand: check the README's section "
@@ -2461,7 +2461,7 @@ def record_unread_words(host: Host, path: str, why: str, begun: bool) -> str:
 
 
 def last_watch_said(host: Host) -> str | None:
-    """R205 (the owner's point 3): the watch's last line in the journal, which is append-only: read (its text), not
+    """R205: the watch's last line in the journal, which is append-only: read (its text), not
     there or could not be read (None: then the line is said again, never kept back)."""
     try:
         with open(os.path.join(host.state_dir(), "journal.log"), encoding="utf-8", errors="replace") as f:
@@ -2490,7 +2490,7 @@ _GUARD = {"depth": 0}
 # R208: one lock per home. A command that changes the record holds it from its first read to its end (record_guard);
 # nothing stands in the lock file and nothing is decided by it: the kernel holds the lock (flock) and says who holds it
 LOCK_NAME = "minions.lock"
-LEND_NAME = "minions.lend"  # R208 (the owner's condition h): the holder's socket while it starts a watch pass
+LEND_NAME = "minions.lend"  # R208: the holder's socket while it starts a watch pass
 LEND_ACCEPT_S = 1.0  # the lender's listener looks this often whether its pass has ended
 LEND_CONNECT_S = 5  # the watch's ask of a lend: a lender that does not answer within this is "could not be asked"
 _LEND = {"sock": None, "thread": None, "took": False, "end": None}
@@ -2538,7 +2538,7 @@ def lock_open(host: Host) -> tuple[int | None, str | None]:
 
 
 def lock_try(fd: int) -> tuple[str, str]:
-    """R208 (the owner's condition a): three answers: ("taken", ""), ("held", ""), ("unasked", why)."""
+    """R208: three answers: ("taken", ""), ("held", ""), ("unasked", why)."""
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return "taken", ""
@@ -2549,7 +2549,7 @@ def lock_try(fd: int) -> tuple[str, str]:
 
 
 def lock_same(fd: int, path: str) -> bool:
-    """R208 (the owner's condition g): the file locked is still the file at that path."""
+    """R208: the file locked is still the file at that path."""
     try:
         a, b = os.fstat(fd), os.stat(path, follow_symlinks=False)
     except OSError:
@@ -2560,7 +2560,7 @@ def lock_same(fd: int, path: str) -> bool:
 def lock_holder(fd: int) -> tuple[int | None, str]:
     """R208: who holds the lock, as the kernel says: a FLOCK line of /proc/locks on this file's inode number, kept only
     when that process's own descriptor of this very file holds it (its /proc/PID/fd read by stat: device and inode
-    as stat gives them; that descriptor's fdinfo carries the FLOCK line). No device number of /proc/locks is compared: on btrfs it is not the one stat gives (the owner, l). Its
+    as stat gives them; that descriptor's fdinfo carries the FLOCK line). No device number of /proc/locks is compared: on btrfs it is not the one stat gives. Its
     command: the first word of its own argument list that is one of this tool's commands (never an argument).
     (None, "") when it cannot be named; nothing is decided by the name, it is only said."""
     try:
@@ -2583,7 +2583,7 @@ def lock_holder(fd: int) -> tuple[int | None, str]:
 
 
 def holds_open(pid: int, st: os.stat_result) -> bool:
-    """R208 (the owner, after the btrfs run): the process holds THIS file's lock: one of its own descriptors is this
+    """R208: the process holds THIS file's lock: one of its own descriptors is this
     file (device and inode as stat gives them) and that descriptor's /proc/PID/fdinfo carries a FLOCK line. A process
     that only has the file open (another command waiting at it) is never named, whatever else it holds."""
     try:
@@ -2650,7 +2650,7 @@ def lend_peer_ok(pid: int) -> bool:
 
 
 def lend_pass(host: Host) -> str:
-    """R208 (the owner's conditions h, l, m and the four worlds of the lend): the watch pass this command starts and
+    """R208: the watch pass this command starts and
     waits for runs under its lock. The holder listens on a socket of its own, minions.lend in the state folder
     (closed to others, mode 700; the socket made 600 from its first moment), and hands its own lock to the one
     pass that asks and is the watch's own service, of this same account (SCM_RIGHTS: the pass then holds the same
@@ -2748,7 +2748,7 @@ def lend_clear(path: str) -> None:
 
 
 def lend_take(host: Host, fd: int) -> tuple[str, str]:
-    """R208 (the owner's m): the watch asks for a lend while the lock is held. Three answers: ("taken", ""), the
+    """R208: the watch asks for a lend while the lock is held. Three answers: ("taken", ""), the
     lock is now this pass's too; ("none", why), no lend stands or no one listens (a lend a killed lender left);
     ("unasked", why). The lock handed over is checked to be the very file this pass opened (n)."""
     path = lend_path(host)
@@ -2825,7 +2825,7 @@ def journal_size(host: Host) -> int:
 
 
 def my_hold_skipped(host: Host, since: int) -> int:
-    """R208 (the owner's o, 3): the watch's passes this command's own hold made it skip: the skipped-pass lines
+    """R208: the watch's passes this command's own hold made it skip: the skipped-pass lines
     journaled after `since` (the journal's size when this command began) that name this process as the holder."""
     mine = f"process {os.getpid()} holds this tool's record"
     try:
@@ -2854,7 +2854,7 @@ def last_whole_pass(host: Host) -> str:
 
 
 def watch_held(host: Host, out, fd: int, lend_why: str = "") -> int:
-    """R208 (the owner's condition b): the watch never waits. This pass is skipped, and its journal line says so; a
+    """R208: the watch never waits. This pass is skipped, and its journal line says so; a
     watch with no whole pass for SEEN_PASSES passes in a row ends failed and says why, as a blind pass does."""
     who = holder_words(fd)
     rep = Report(out)
@@ -2895,7 +2895,7 @@ def lock_take(host: Host, out, command: str, again: int = 0) -> int | None:
             return watch_held(host, out, fd, why if lent == "unasked" else "")
         finally:
             os.close(fd)
-    if answer == "held" and command == "status":  # the owner's condition d: never waits; its one save, none
+    if answer == "held" and command == "status":  # Never waits; its one save, none
         _LOCK.update(readonly=True, held_by=holder_words(fd))
         os.close(fd)
         return None
@@ -2936,7 +2936,7 @@ def lock_take(host: Host, out, command: str, again: int = 0) -> int | None:
 
 
 def lock_leftovers(host: Host) -> None:
-    """R208 (the owner's m and q): what a writer killed part-way leaves, taken away by the next command that takes
+    """R208: what a writer killed part-way leaves, taken away by the next command that takes
     the lock, since no writer can be at work while it holds it: a temporary name of the record or its copy (never read
     as the record), and a lend's socket. Only those exact names, only a plain file or a socket, never followed."""
     d = host.state_dir()
@@ -2959,7 +2959,7 @@ def lock_leftovers(host: Host) -> None:
 
 
 def aside_step(path: str) -> str:
-    """R208 (the owner's p): the step that sets a path of this tool's folder aside under a dated name, never deleted:
+    """R208: the step that sets a path of this tool's folder aside under a dated name, never deleted:
     a name free when printed; -T: never moved INTO a folder that stands at that name; -n: never over one that
     appeared since (coreutils 9.2 on: it then says so and ends nonzero; before 9.2 it skips silently, and this
     tool's stop comes again with a new name). R200: a path no printed line may carry gets words only."""
@@ -2979,7 +2979,7 @@ def lock_unasked(out, path: str, why: str) -> int:
     rep = Report(out)
     head = (f"could not ask for this tool's lock, {path} ({why}): a command that changes this tool's record runs "
             "only while it holds that lock, so nothing was changed here. ")
-    if why.startswith("its folder cannot be made"):  # the owner's (s): nothing stands at the path to set aside
+    if why.startswith("its folder cannot be made"):  # Nothing stands at the path to set aside
         folder = os.path.dirname(path)
         rep.stop(head + f"Your next step: make {os.path.dirname(folder)} a folder you can write to (this tool makes "
                  f"{os.path.basename(folder)} in it, as you), then run the same command again")
@@ -2993,12 +2993,12 @@ def stamp_now() -> str:
 
 
 class AskedOutside(Exception):
-    """R208 (the owner's k): a wait for a person was answered with the lock let go; the command runs again from its
+    """R208: a wait for a person was answered with the lock let go; the command runs again from its
     first line under a lock taken afresh, with that answer kept."""
 
 
 class UnlockedSave(RuntimeError):
-    """R208 (the owner's q): a save without the lock, which this tool never makes; said as a stop, never a traceback."""
+    """R208: a save without the lock, which this tool never makes; said as a stop, never a traceback."""
 
 
 ASK_ROUNDS = 5  # a command whose lines change under the person this many times in a row stops, having changed nothing
@@ -3006,7 +3006,7 @@ _ASKED = {"answers": {}, "last": None, "quiet": None}
 
 
 class Quiet:
-    """R208 (the owner's k): a round after an answer prints nothing until it comes back to the wait that was
+    """R208: a round after an answer prints nothing until it comes back to the wait that was
     answered (what it printed before that is what the person has read already); then it prints on as usual. A round
     that does not come back to it, or comes to another wait first, prints all it held, under a line saying why."""
 
@@ -3040,7 +3040,7 @@ class Quiet:
 
 
 def outside_hold(key: tuple, ask):
-    """R208 (the owner's k): every wait for a person runs with this tool's lock let go, so a prompt left open never
+    """R208: every wait for a person runs with this tool's lock let go, so a prompt left open never
     holds the watch. The answer is kept for this command; the command then runs again from its first line, under a
     lock taken afresh, so it decides on the record as it reads after the answer, never on a copy from before it. An
     answer is used again only at the same wait with the same words shown; words that changed are asked again."""
@@ -3063,7 +3063,7 @@ def outside_hold(key: tuple, ask):
 
 
 def last_wait(text: str, ask):
-    """R208 (the owner's k): a wait after this command's last change to the record (uninstall's typed word for the
+    """R208: a wait after this command's last change to the record (uninstall's typed word for the
     person's own record): the lock is let go first, and nothing after it writes the record (UnlockedSave)."""
     if _LOCK["fd"] is not None:
         lock_free()
@@ -3155,7 +3155,7 @@ def copy_only_stop(host: Host, out, path: str) -> int:
 
 
 def watch_no_record(host: Host, out) -> int:
-    """The owner's (s): the watch runs only after a setup made this tool's record, so a record that is not there
+    """The watch runs only after a setup made this tool's record, so a record that is not there
     (it or its whole folder removed by hand or by another program) is never a fresh home to the watch. It makes
     nothing (no folder, no lock file, no record) and changes nothing, says so at each pass, and the timer fires again."""
     path, copy = state_path(host), copy_path(host)
@@ -3175,7 +3175,7 @@ def watch_no_record(host: Host, out) -> int:
 
 @record_guard(read=False)
 def restore(host: Host | None = None, out=None) -> int:
-    """R205 (the owner's condition 1): one name, one job. The record's second copy goes in the record's place; the
+    """R205: one name, one job. The record's second copy goes in the record's place; the
     record that could not be read is set aside beside it under a dated name, never deleted. It says what it does
     before it acts, and what it did."""
     host = host or Host()
@@ -3195,7 +3195,7 @@ def restore(host: Host | None = None, out=None) -> int:
         rep.stop(no_road_stop(path, why, copy, cwhy))
         return rep.code()
     when = copy_time(copy)
-    if gone:  # the owner's (s): the record removed, its copy whole: the copy goes back, nothing to set aside
+    if gone:  # The record removed, its copy whole: the copy goes back, nothing to set aside
         rep.ok(f"{path} is not there. Its second copy, {copy}, reads whole and was written at {when} (its file's own "
                "time): anything this tool made here after that time is not in it. It goes in the record's place now")
         aside = ""
@@ -4848,7 +4848,7 @@ def delete_record_if_typed(host: Host, rep: Report) -> None:
         rep.need(f"deleting your record ({d}) is your own choice, typed at your own terminal: run the same command "
                  "there and type delete when it asks; until then it is kept", blocks=False)
         return
-    kept = kept_envs(host)  # R209 (the owner's e): the person's kept settings go with it, so they are named first
+    kept = kept_envs(host)  # R209: the person's kept settings go with it, so they are named first
     held = (f" It holds {len(kept)} settings file{'s' if len(kept) != 1 else ''} of a runner's kept for you, which go "
             f"with it: {', '.join(kept)}." if kept else "")
     word = last_wait(f"Type delete to delete your record of what this tool did ({d}).{held} Or press Enter to keep "
@@ -5140,7 +5140,7 @@ def env_move_step(path: str, folder: str) -> str:
 
 
 def keep_env(host: Host, repo: str, folder: str, mine: dict, rep: Report) -> list[tuple[str, str]]:
-    """R209 (the owner's ruling, Thu 11-26): no road of this tool deletes a runner's .env that is not shown to be as
+    """R209: no road of this tool deletes a runner's .env that is not shown to be as
     the tool left it. Called only after the runner's stop is read back (no process of it left: stop_runner, in
     remove_one), before anything in its folder is deleted. Read as the runner user, never as root; its kind first:
     only a plain file is read, a link, a folder, a pipe or a device is never opened (it goes or stays as clear_folder
@@ -6008,7 +6008,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now, host.slept_s())
     rest.append(("ok" if ok_ else "warn", words))
-    held = held_passes(host)  # R208 (the owner's condition b): how many passes were skipped since the last whole one
+    held = held_passes(host)  # R208: how many passes were skipped since the last whole one
     if held:
         rest.append(("warn", f"the watch's last whole pass was at {last_whole_pass(host)}; {held} pass(es) skipped "
                              "since, each finding this tool's record held by another of its commands (the journal "
@@ -6960,7 +6960,7 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
     # G5.15: one real pass now, as the timer runs it, and what it read, read back.
     before = (load_state(host).get("watch") or {}).get("pass")  # G5.19: the count, never the time to the second
     journal(host, "the watch's first pass")
-    for _ in range(2):  # R208 (the owner's condition h): the pass runs under this command's lock, lent to it
+    for _ in range(2):  # R208: the pass runs under this command's lock, lent to it
         why = lend_pass(host)
         if why:
             path = lend_path(host)
@@ -9430,7 +9430,7 @@ ASIDE_WHY = ("set aside by restore: a record of this tool's that could not be re
 
 
 def aside_files(host: Host) -> list[str]:
-    """R205 (the owner's condition 1): what restore set aside in the state folder, by its exact name format."""
+    """R205: what restore set aside in the state folder, by its exact name format."""
     try:
         return sorted(n for n in os.listdir(host.state_dir()) if RECORD_ASIDE.fullmatch(n))
     except OSError:
