@@ -11700,6 +11700,44 @@ class G6Lock(unittest.TestCase):
         self.assertLess(got["s"], 4.5, got)
         self.assertIn("TimeoutError: the download took longer than 1 minute, so it was stopped (a slow line)", got["end"])
 
+    def test_G6_36_a_download_that_ends_is_kept_whole_with_its_length_and_without_it(self):
+        # A real server on this computer's loopback answers twice: once with a Content-Length (http.client
+        # closes the answer and its socket after the last byte, as GitHub's download does), once with none, closed at
+        # the end. Both downloads end well and the file is the body byte for byte. Red where the loop sets a timeout
+        # on that closed socket: Bad file descriptor after the last byte.
+        import http.server
+        body = os.urandom(300_000)
+
+        class Whole(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                if self.path == "/with-length":
+                    self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                for i in range(0, len(body), 50_000):
+                    self.wfile.write(body[i:i + 50_000])
+                    self.wfile.flush()
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Whole)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        for kind in ("with-length", "without-length"):
+            with self.subTest(kind):
+                path = os.path.join(tempfile.mkdtemp(dir=TMP), "runner.tar.gz")
+                try:
+                    M.Host().fetch_to(f"http://127.0.0.1:{srv.server_address[1]}/{kind}", path, timeout=5, whole_s=20)
+                    end = "finished"
+                except Exception as e:  # noqa: BLE001
+                    end = f"{type(e).__name__}: {e}"
+                self.assertEqual(end, "finished")
+                with open(path, "rb") as f:
+                    self.assertEqual(hashlib.sha256(f.read()).hexdigest(), hashlib.sha256(body).hexdigest())
+
     def test_G6_36_the_mv_step_is_taken_as_printed_from_a_home_with_a_space_and_never_moves_into_a_folder(self):
         # The lock's mv line goes through the helper every printed command does (R200),
         # is taken as printed from a home whose path holds a space; a kept name that stands already (a folder): -T

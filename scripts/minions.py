@@ -791,6 +791,10 @@ class Host:
         with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:
             sock = getattr(getattr(getattr(r, "fp", None), "raw", None), "_sock", None)
             while True:
+                # R208: once an answer with a Content-Length is read whole, http.client closes it and its socket; a
+                # timeout set on that socket fails (Bad file descriptor), so the loop ends here, before any is set.
+                if r.isclosed():
+                    break
                 left = end - time.monotonic()
                 if left <= 0:
                     raise late
