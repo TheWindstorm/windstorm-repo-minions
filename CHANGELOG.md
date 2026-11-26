@@ -67,6 +67,8 @@ the cap (row R94).
   its own in a home where it never ran, and the tool does not claim them (row R160).
 - A GitHub CLI with no `auth token` command (gh 2.4.0, Ubuntu 22.04's own) has its login read from gh's own file,
   and no file there is no login yet, with the login step; before, `look` stopped there on every such computer.
+  A person who has never logged in is told that gh has no login saved here yet, or that it may have none, never
+  that where gh keeps it could not be read.
   Only the answer seen from that gh is taken for it, and a
   stop on gh's answer about the login says gh's own words on standard error and nothing of what it wrote on
   standard output, where a token comes when the call works; before, such a stop quoted that output's last

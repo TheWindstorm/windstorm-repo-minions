@@ -1103,6 +1103,9 @@ def login_kept(host: Host) -> tuple[str, str]:
     return "unread", f"gh could not be asked whether it has a login for github.com: gh exit {rc}, {heard}"
 
 
+NO_FILE = " is not there, so gh has no login saved here yet"  # R204: read, not guessed (hosts_file_login)
+
+
 def hosts_file_login(host: Host) -> tuple[str, str]:
     """R160: for a gh with no `auth token`: is a token line under github.com in gh's own file? Only whether one is
     there is read; its value is never kept. R204: a file that is not there is no login (gh 2.4.0, seen 2026-11-26 on
@@ -1111,7 +1114,7 @@ def hosts_file_login(host: Host) -> tuple[str, str]:
     path = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
     text, why = host.read_checked(path)
     if text is None and why is None:
-        return "no", f"{NO_LOGIN}: {path} is not there, so gh has no login saved"
+        return "no", f"{NO_LOGIN}: {path}{NO_FILE}"
     if text is None:
         return "unread", (f"gh could not be asked whether it has a login for github.com, and {path} could not be "
                           f"read: {as_read(why)}")
@@ -1137,8 +1140,8 @@ def login_where(host: Host) -> tuple[str, str]:
         where = "gh keeps it in this computer's keyring, which only a logged-in session can open"
     elif env:
         where = f"gh reads it from your shell's {env.group(1)}, which the check every 5 minutes does not have"
-    else:
-        where = "where gh keeps it could not be read here"
+    else:  # R204: true of a gh never logged in too; no phrase of gh's is matched for it
+        where = "gh names no place where it keeps one here, and it may have none saved yet"
     return where, scopes
 
 
@@ -1151,12 +1154,14 @@ def login_step(host: Host) -> str:
     return cmd("gh auth login --insecure-storage" if "--insecure-storage" in out else "gh auth login")
 
 
-def keyring_step_words(host: Host, repo: str | None, rep: Report) -> None:
+def keyring_step_words(host: Host, repo: str | None, rep: Report, why: str = "") -> None:
     """R160 (owner's ruling 11-24, option A): the stop, the one step, and the six things the person hears before
     choosing it (the git question's line added by the owner's ruling of 11-24, as seen on a desktop login). This tool
-    made nothing when this is said."""
+    made nothing when this is said. R204: where login_kept read that gh's file is not there, the stop says that."""
     where, scopes = login_where(host)
     hosts = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
+    if why == f"{NO_LOGIN}: {hosts}{NO_FILE}" and not where.startswith(("gh keeps", "gh reads")):
+        where = f"{hosts}{NO_FILE}"  # the same path hosts_file_login read
     again = f"{C0}look {repo}{C1}" if repo else "the same command"
     rep.stop(f"{NO_LOGIN} the way this computer's check every 5 minutes will read it, when nobody is logged in: "
              f"{where}. This tool made nothing, on this computer or on GitHub. Your next step, in your own terminal, if you "
@@ -1189,7 +1194,7 @@ def check_gh_road(host: Host, rep: Report, repo: str | None = None) -> bool:
               "gh saved; your own use of gh is unchanged.") if found else ""
     kept, why = login_kept(host)  # R160: first, read as the watch reads it; nothing is asked of GitHub before it
     if kept == "no":
-        keyring_step_words(host, repo, rep)
+        keyring_step_words(host, repo, rep, why)
         return False
     if kept == "unread":
         rep.stop(f"{why}. This tool made nothing, on this computer or on GitHub. " + settle_first())

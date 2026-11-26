@@ -8157,7 +8157,8 @@ class RuleTwo(unittest.TestCase):
                       next(x for x in lines if x.startswith("stop ")))
         self.assertIn("allowed on your GitHub account, on every repository", " ".join(lines))
         lines = look(StandIn([]), linux_host(runs={("gh", "auth", "token"): no_token}))[1]
-        self.assertIn("where gh keeps it could not be read here", next(x for x in lines if x.startswith("stop ")))
+        self.assertIn("gh names no place where it keeps one here, and it may have none saved yet",  # R204: also true
+                      next(x for x in lines if x.startswith("stop ")))  # of a gh never logged in
         # a gh whose own help names no `--insecure-storage` (no keyring there): the plain step, never a flag it lacks
         lines = look(StandIn([]), linux_host(runs={("gh", "auth", "token"): no_token,
                                                    ("gh", "auth", "login", "--hostname", "github.com", "--help"): (0, "  -w, --web  Open a browser\n")}))[1]
@@ -8263,10 +8264,22 @@ class RuleTwo(unittest.TestCase):
                 self.assertEqual(kept, "unread", why)
                 self.assertIn("Permission denied", why)
                 self.assertNotIn("made-up-login-value", why)
-        # a newcomer who has not logged in: look says the login step, never "running it again changes nothing"
-        code, lines = look(StandIn([]), host_with(flag, None))
+        # a newcomer who has not logged in: look says the login step, never "running it again changes nothing", and
+        # what was read: gh's file is not there (never "could not be read")
+        newcomer = host_with(flag, None)
+        code, lines = look(StandIn([]), newcomer)
         self.assertTrue(any("gh auth login" in x for x in lines), lines)
         self.assertFalse(any("Running it again changes nothing" in x for x in lines), lines)
+        stop = next(x for x in lines if x.startswith("stop "))
+        hosts_path = os.path.join(newcomer.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+        self.assertIn(f"when nobody is logged in: {hosts_path} is not there, so gh has no login saved here yet. This "
+                      "tool made nothing", stop)
+        self.assertNotIn("could not be read", stop)
+        # a file there with no login: gh names no place, and the stop says only what is true of it
+        code, lines = look(StandIn([]), host_with(flag, none))
+        stop = next(x for x in lines if x.startswith("stop "))
+        self.assertIn("gh names no place where it keeps one here, and it may have none saved yet", stop)
+        self.assertNotIn("could not be read", stop)
         # the real reader tells the three apart: a file not there, a folder not there, a folder it may not enter
         if os.geteuid() != 0:
             with tempfile.TemporaryDirectory() as d:
