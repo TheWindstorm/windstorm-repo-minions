@@ -228,7 +228,7 @@ class FakeHost(M.Host):
         self._system, self.files, self.runs = system, dict(files or {}), dict(runs or {})
         # R160: gh has a login it can read with no session bus (a made-up value, one line, as `gh auth token` prints)
         self.runs.setdefault(("gh", "auth", "token"), (0, "made-up-login-value\n"))
-        # R208 (the owner's world 4): the watch's first pass is read to have ended before setup writes again
+        # R208: the watch's first pass is read to have ended before setup writes again
         self.runs.setdefault(tuple(M.systemctl("show", "-p", "ActiveState", "--value", f"{M.WATCH_UNIT}.service")),
                              (0, "inactive\n"))
         # R172: a computer with our runner on it has its user (setup_host starts without it, until useradd)
@@ -11145,7 +11145,7 @@ class G6Lock(unittest.TestCase):
         self.assertTrue(M.held_after(h, "the watch's first pass"))
 
     def test_G6_36_the_lend_goes_only_to_the_watch_s_own_pass_of_this_account_and_a_stranger_is_journaled(self):
-        # The owner's world 2: the lender checks who asks (the same account, a process of the watch's own service);
+        # The lender checks who asks (the same account, a process of the watch's own service);
         # any other who asks gets nothing, and the journal says so. The real check: this suite's own process is not
         # in the watch's service, so a pass of the helper is refused by it, and skipped.
         home = made_home()
@@ -11168,7 +11168,7 @@ class G6Lock(unittest.TestCase):
         self.assertIn(" watch-held this pass skipped", text)
 
     def test_G6_36_a_home_whose_path_is_longer_than_a_socket_s_bound_still_lends_and_the_pass_is_whole(self):
-        # The owner's world 1: a socket's path is bound by 107 bytes; the lend is bound through the folder opened
+        # A socket's path is bound by 107 bytes; the lend is bound through the folder opened
         # by itself, so a long home binds, and its first pass is whole.
         home = tempfile.mkdtemp(dir=TMP, prefix="lock-home-" + "a" * 60 + "-" + "b" * 60 + "-")
         with mock.patch.dict(os.environ, {"HOME": home}):
@@ -11188,7 +11188,7 @@ class G6Lock(unittest.TestCase):
         self.assertEqual((got["why"], got["pass"]["whole"], got["took"]), ("", 1, True))
 
     def test_G6_36_what_stands_at_the_lend_s_path_is_a_stop_or_a_clean_take_over_never_followed(self):
-        # The owner's world 3: a file, a folder, a link: a stop naming it, never followed or taken; a socket a dead
+        # A file, a folder, a link: a stop naming it, never followed or taken; a socket a dead
         # lender left: taken over (stale: the one who makes a lend holds the lock). The watch asks a non-socket:
         # could not be asked, journaled. The next command that takes the lock takes a dead lend away.
         target = os.path.join(TMP, "lend-target")
@@ -11243,7 +11243,7 @@ class G6Lock(unittest.TestCase):
         self.assertFalse(os.path.lexists(path))
 
     def test_G6_36_both_ends_hold_one_lock_and_a_pass_killed_early_leaves_the_lender_to_finish(self):
-        # The owner's world 4: once handed over, the lock is free only when both have closed it: the lender gone
+        # Once handed over, the lock is free only when both have closed it: the lender gone
         # while the pass works, a third command still finds it held; the pass ends, it is free. A pass killed early:
         # lend_back comes back within its bound, and install_watch reads that the pass ended before it writes.
         home = made_home()

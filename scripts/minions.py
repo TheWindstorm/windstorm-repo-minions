@@ -2624,20 +2624,20 @@ def lock_free() -> None:
             except OSError:
                 pass
         # Only closed, never unlocked: a lock handed over (the lend) is one lock held at both ends, free only when
-        # both have closed it, so neither end's close frees the other's hold (the owner's world 4)
+        # both have closed it, so neither end's close frees the other's hold
         os.close(fd)
     _LOCK.update(fd=None, lent=False, readonly=False, held_by="", made=())
 
 
 def lend_at(host: Host) -> tuple[int, str]:
-    """R208 (the owner's world 1): a socket's path is bound by at most 107 bytes; the lend is reached through the
+    """R208: a socket's path is bound by at most 107 bytes; the lend is reached through the
     state folder opened by itself (/proc/self/fd/N/minions.lend), so a home of any length binds and connects."""
     d = os.open(host.state_dir(), os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
     return d, f"/proc/self/fd/{d}/{LEND_NAME}"
 
 
 def lend_peer_ok(pid: int) -> bool:
-    """R208 (the owner's world 2): the one who asks is the pass this command started: a process of the watch's own
+    """R208: the one who asks is the pass this command started: a process of the watch's own
     service (its control group, as the kernel says) running this tool's watch."""
     try:
         with open(f"/proc/{pid}/cgroup", encoding="utf-8", errors="replace") as f:
@@ -6888,7 +6888,7 @@ def watch_units(user: str, every_s: int, path: str = "") -> tuple[str, str]:
 
 
 def pass_state(host: Host) -> str:
-    """R208 (the owner's world 4): "ended" when systemd says the watch's service is not starting or stopping;
+    """R208: "ended" when systemd says the watch's service is not starting or stopping;
     otherwise what it says, or "could not be read"."""
     rc, out = host.run(systemctl("show", "-p", "ActiveState", "--value", f"{WATCH_UNIT}.service"))
     word = str(out).strip(BLANKS)
@@ -6973,7 +6973,7 @@ def install_watch(host: Host, rep: Report, every_s: int = WATCH_EVERY_S, src: st
         finally:
             took = lend_back(host)
         state = pass_state(host)
-        if state != "ended":  # R208 (the owner's world 4): the lender writes nothing while the pass may still write
+        if state != "ended":  # R208: the lender writes nothing while the pass may still write
             rep.stop(f"the watch's first pass has not been read to have ended ({state}), so this command writes nothing "
                      f"more: it may still be writing under the lock it was lent. Read {C0}journalctl -u "
                      f"{WATCH_UNIT}.service{C1}; the pass ends by itself within {WATCH_PASS_S // 60} minutes, and then "

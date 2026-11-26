@@ -2628,7 +2628,7 @@
   },
   {
    "id": "R214",
-   "seen": "2026-11-26, by the owner, reading uninstall's order and the stand-in trial of R210: this tool's record is kept per home, while the runner user, the slice, the watch and both of its system folders are one per computer. Before R210, uninstall --all from an account that never set anything up took the watch, the slice, the tool's copy and the job hooks from another account's working runner, after telling that person to stop the other's service. R210 stops that before any change while such a service can still run. Not seen on a real machine.",
+   "seen": "2026-11-26, from reading uninstall's order and the stand-in trial of R210: this tool's record is kept per home, while the runner user, the slice, the watch and both of its system folders are one per computer. Before R210, uninstall --all from an account that never set anything up took the watch, the slice, the tool's copy and the job hooks from another account's working runner, after telling that person to stop the other's service. R210 stops that before any change while such a service can still run. Not seen on a real machine.",
    "promise": "On a computer where another account set this tool up, every command run from an account whose record names nothing here says that this tool's parts on this computer may be another account's, names what it read, and changes none of them; what each command says from the second account is designed with 0.1.1's plan, before the code.",
    "codon": "G6.42",
    "first_ship_in": "0.1.1",
