@@ -17,6 +17,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -318,6 +319,67 @@ class Strand(unittest.TestCase):
         for name in sorted(os.listdir(TESTS)):
             if name.startswith("test_") and name.endswith(".py"):
                 self.assertEqual(defined_twice(os.path.join(TESTS, name)), [], f"{name} defines a test name twice")
+
+    def test_G9_19_the_suite_runs_with_the_tag_at_its_head_before_the_push(self):
+        # Row R219 (the family's rule of 2026-11-26). The script runs on a scratch repository with a local tag, as it
+        # is and with a failing test planted; the release steps name it before the tag is pushed.
+        script = os.path.join(ROOT, "scripts", "tag_head_suite.py")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
+                                                                                         "GIT_CONFIG_NOSYSTEM")}
+        env.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        files = {
+            "test_a.py": "import unittest\nclass A(unittest.TestCase):\n    def test_a(self):\n        pass\n"
+                         "if __name__ == '__main__':\n    unittest.main()\n",
+            # a stand-in gate: its own last line, as the real one writes it, after its run
+            "test_strand.py": "import subprocess, sys, unittest\nclass G(unittest.TestCase):\n"
+                              "    def test_tag_at_head(self):\n"
+                              "        out = subprocess.run(['git', 'describe', '--exact-match', 'HEAD'],"
+                              " capture_output=True, text=True).stdout.strip()\n"
+                              "        self.assertEqual(out, 'v9.9.9')\n"
+                              "if __name__ == '__main__':\n    r = unittest.main(exit=False).result\n"
+                              "    print('gate: ' + ('passed' if r.wasSuccessful() else 'FAILED') + ': 1 test(s)')\n"
+                              "    sys.exit(0 if r.wasSuccessful() else 1)\n"}
+        with tempfile.TemporaryDirectory() as d:
+            run = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)
+            os.mkdir(os.path.join(d, "tests"))
+            for name, body in files.items():
+                with open(os.path.join(d, "tests", name), "w", encoding="utf-8") as f:
+                    f.write(body)
+            run("git", "init", "-q"); run("git", "add", "."); run("git", "commit", "-qm", "r")
+            run("git", "tag", "v0.0.1")  # a tag the source holds: the fresh clone takes none of them
+            good = run("git", "rev-parse", "HEAD").stdout.strip()
+            r = run(sys.executable, script, "v9.9.9", "--source", d)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("annotated tag v9.9.9 made there only", r.stdout)
+            self.assertIn("ok tests/test_a.py: Ran 1 test in 0.", r.stdout)
+            self.assertIn("ok the gate: gate: passed: 1 test(s)", r.stdout)
+            self.assertTrue(r.stdout.rstrip().splitlines()[-1].startswith("ok: the whole suite passed with v9.9.9"))
+            self.assertLess(r.stdout.index("test_a.py"), r.stdout.index("ok the gate"), "every file, then the gate")
+            self.assertEqual(run("git", "tag", "--list").stdout, "v0.0.1\n", "the tag is made in the clone only")
+            # a failing test planted: it stops the run before the gate, and nothing is tagged here
+            with open(os.path.join(d, "tests", "test_b.py"), "w", encoding="utf-8") as f:
+                f.write(files["test_a.py"].replace("pass", "self.fail('planted')").replace("class A", "class B"))
+            run("git", "add", "."); run("git", "commit", "-qm", "planted")
+            r = run(sys.executable, script, "v9.9.9", "--source", d)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            stop = [x for x in r.stdout.splitlines() if x.startswith("STOP: ")]
+            self.assertEqual(len(stop), 1, r.stdout)
+            self.assertIn("tests/test_b.py failed", stop[0])
+            self.assertNotIn("ok the gate", r.stdout)
+            self.assertNotIn("ok: the whole suite passed", r.stdout)
+            self.assertEqual(run("git", "tag", "--list").stdout, "v0.0.1\n", "a stop tags nothing here either")
+            kept = re.search(r"outside the clone (\S+), which is kept", stop[0]).group(1)
+            self.assertTrue(os.path.isdir(kept), kept)
+            shutil.rmtree(kept)
+            # the commit named is the one tagged: the good commit still passes from behind the planted one
+            r = run(sys.executable, script, "v9.9.9", good, "--source", d)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn(f"head {good}", r.stdout)
+        # the release steps name it, before the tag is pushed
+        steps = fread(os.path.join(ROOT, "docs", "release-steps.md"))
+        self.assertIn("python3 scripts/tag_head_suite.py vX.Y.Z", steps)
+        self.assertLess(steps.index("scripts/tag_head_suite.py"), steps.index("git push origin vX.Y.Z"))
 
     def test_no_codon_is_used_twice_in_the_plan(self):
         seen = collections.Counter(re.findall(r"^\| ((?:G|INV)[0-9.]+) \|", plan_text(), re.M))
