@@ -3860,6 +3860,46 @@ class G5(unittest.TestCase):
         self.assertEqual((code, gh.reruns), (M.EXIT_STOP, [9001]))
         self.assertIn("stop job 1234 is not one this computer cut or its limit stopped: nothing was run again", lines)
 
+    def test_G6_36_status_rerun_while_another_holds_the_record_asks_github_nothing_and_names_the_holder(self):
+        # R208: status, while another of this tool's processes holds the
+        # record, reads it and saves nothing (condition d); with --rerun it still asked GitHub to run the job again,
+        # and the "once" could not be kept, so a second ask ran it again. The holder is most often the watch's own
+        # pass. Now: nothing is asked of GitHub that the record cannot keep; a stop names the holder, says the job
+        # was not run again, and gives the same command again. Plain status stays as built.
+        t0 = int(M.parse_stamp("2026-11-22T22:40:00Z").timestamp())
+        start = f"start {t0} 555 1 0 check\n"
+        cut = {"conclusion": "failure", "steps": self.CUT_STEPS}
+        stopped = {("systemctl", "show", "actions.runner.example-org-example-repo.minions-box-1.service", "-p",
+                    "ActiveEnterTimestamp"): (0, "ActiveEnterTimestamp=@%d\nInactiveEnterTimestamp=@%d\n" % (t0 + 30, t0 + 20))}
+        host, gh, _ = self._named(start, cut, stopped, notes=[M.CANCELED])
+        before = file_bytes(M.state_path(host))
+        code = ("import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600); "
+                "fcntl.flock(fd, fcntl.LOCK_EX); print('ready', flush=True); sys.stdin.readline()")
+        holder = subprocess.Popen([sys.executable, "-I", "-c", code, M.lock_path(host)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline().strip(), "ready")
+        for _ in range(2):  # asked twice while held: GitHub is asked nothing either time
+            code_, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=9001)
+            self.assertEqual(code_, M.EXIT_STOP, lines)
+            self.assertEqual(gh.reruns, [])
+            stop = [x for x in lines if x.startswith("stop ") and "9001" in x]
+            self.assertEqual(len(stop), 1, lines)
+            self.assertIn(f"this tool's record is held by process {holder.pid}", stop[0])
+            self.assertIn("job 9001 was not run again", stop[0])
+            self.assertIn(f"`status {REPO} --rerun 9001`", stop[0])
+            self.assertEqual(file_bytes(M.state_path(host)), before)
+        code_, lines = run_cmd(M.status, REPO, host=host, gh=gh)  # plain status, as built: reads, saves nothing
+        self.assertFalse([x for x in lines if "was not run again" in x], lines)
+        self.assertTrue([x for x in lines if "status read it as it stands and saved nothing" in x], lines)
+        holder.stdin.write("\n")
+        holder.stdin.flush()
+        holder.wait(timeout=10)
+        code_, lines = run_cmd(M.status, REPO, host=host, gh=gh, rerun=9001)  # the same command, once it has ended
+        self.assertEqual(gh.reruns, [9001])
+        self.assertIn(9001, M.load_state(host)["reruns"], "the once is kept")
+
     def test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back(self):
         # The watch writes down since when GitHub has shown our runner offline while its service runs here with no
         # job process; it restarts nothing (no admin rights). Past two intervals, status names it first, with the
@@ -10038,7 +10078,7 @@ def tearDownModule():
 
 
 def damaged_records(real: bytes):
-    """R205 (family rule 6): a record that is there and could not be read, each way."""
+    """R205 (an error is never an absence): a record that is there and could not be read, each way."""
     yield "0 bytes", b""
     yield "cut short", real[: len(real) // 2]
     yield "not the format", b"not json\n"
@@ -10089,7 +10129,7 @@ def printed_command(lines: list[str], line: str) -> str:
 
 
 class G6Record(unittest.TestCase):
-    """R205, codon G6.35 (family rule 6, the owner's ruling of 2026-11-25 9:30 PM ET)."""
+    """R205, codon G6.35 (the owner's ruling of 2026-11-25)."""
 
     def test_G6_35_a_record_that_could_not_be_read_is_never_written_over_and_every_command_names_it(self):
         # Seen 2026-11-26 in a stand-in trial on 35515f9: on a damaged record, watch and look wrote a new one over it
@@ -10174,6 +10214,123 @@ class G6Record(unittest.TestCase):
         self.assertFalse([x for x in lines if "nothing to uninstall" in x], lines)
         self.assertNotIn(f"stop {UNIT}", world.order)
         self.assertIsNotNone(gh.runner)
+
+    def test_G6_35_with_the_record_gone_and_its_copy_there_no_command_by_hand_reads_the_home_as_fresh(self):
+        # R205, the record gone and its copy there: with the record removed and the tool's
+        # own second copy lying in its folder, doctor and uninstall REPO said "nothing to check / nothing to
+        # uninstall" (exit 0), status sent the person to setup, setup to look, and uninstall --all took the watch
+        # off, all while the runner served. Now every guarded command stops before it changes or asks anything, as
+        # the watch does: the copy reads whole, the step is restore; then the same command works.
+        def runs(host, gh):
+            sgh = StatusGH()
+            return [
+                ("status", lambda o: M.status(REPO, host=host, gh=sgh, out=o), sgh),
+                ("status --rerun", lambda o: M.status(REPO, host=host, gh=sgh, out=o, rerun=9001), sgh),
+                ("doctor", lambda o: M.doctor(host=host, gh=sgh, out=o, interactive=True), sgh),
+                ("setup", lambda o: M.setup(REPO, host=host, gh=gh, out=o, interactive=True), gh),
+                ("look", lambda o: M.look(REPO, False, host=host, gh=gh, out=o), gh),
+                ("move", lambda o: M.move(REPO, host=host, gh=gh, out=o), gh),
+                ("drain", lambda o: M.drain(REPO, host=host, gh=gh, out=o, interactive=True), gh),
+                ("resume", lambda o: M.resume(REPO, host=host, gh=gh, out=o), gh),
+                ("uninstall REPO", lambda o: M.uninstall(REPO, host=host, gh=gh, out=o, interactive=True), gh),
+                ("uninstall --all", lambda o: M.uninstall(None, everything=True, host=host, gh=gh, out=o,
+                                                          interactive=True), gh),
+            ]
+        fresh = ("no runner of ours", "nothing to uninstall", "nothing to check", "no look of ")
+        for i in range(10):
+            for copy_kind in ("whole", "0 bytes"):
+                gh, world, host = remove_setup(moved=False)
+                name, run, asked = runs(host, gh)[i]
+                with self.subTest(command=name, copy=copy_kind):
+                    p, c = M.state_path(host), M.copy_path(host)
+                    os.remove(p)
+                    if copy_kind == "0 bytes":
+                        open(c, "wb").close()
+                    good = file_bytes(c)
+                    calls, ran = len(asked.calls), len(host.ran)
+                    out = Out()
+                    self.assertEqual(run(out), M.EXIT_STOP, out.printed())
+                    said = out.printed()
+                    stop = [x for x in said if x.startswith("stop ")]
+                    self.assertEqual(len(stop), 1, said)
+                    self.assertIn(f"this tool's record, {p}, is not there, but its second copy, {c}, is", stop[0])
+                    self.assertIn("removed while this tool's parts stay here", stop[0])
+                    self.assertFalse([x for x in said if any(f in x for f in fresh)], said)
+                    self.assertEqual((len(asked.calls), len(host.ran), world.order), (calls, ran, []),
+                                     "nothing changed or asked, here or of GitHub")
+                    self.assertEqual(world.active[f"{M.WATCH_UNIT}.timer"], "active")
+                    self.assertIsNotNone(gh.runner)
+                    self.assertFalse(os.path.lexists(p))
+                    self.assertEqual(file_bytes(c), good)
+                    if copy_kind == "0 bytes":
+                        self.assertIn(f"its second copy, {c}, could not be read either (0 bytes)", stop[0])
+                        continue
+                    self.assertTrue(stop[0].endswith("the command below; then run the same command again"), stop[0])
+                    self.assertTrue(said[said.index(stop[0]) + 1].split()[-1:] == ["restore"], said)
+                    out = Out()
+                    self.assertEqual(M.main(["restore"], host=host, out=out), M.EXIT_OK, out.printed())
+                    out = Out()
+                    code = run(out)
+                    # restore's own journal line is one more in the journal that uninstall --all keeps and counts
+                    said = [re.sub(r"\d+ lines in", "N lines in", x.replace(host.state_dir(), "STATE"))
+                            for x in out.printed()]
+                    self.assertFalse([x for x in said if "is not there, but its second copy" in x], said)
+                    # "Then the same command works": it does what it does on a twin home whose record was never
+                    # taken (this stand-in has no look saved, so setup and move ask for one there too).
+                    tgh, _tworld, thost = remove_setup(moved=False)
+                    _tname, trun, _tasked = runs(thost, tgh)[i]
+                    tout = Out()
+                    tcode = trun(tout)
+                    self.assertEqual((code, said), (tcode, [re.sub(r"\d+ lines in", "N lines in", x.replace(thost.state_dir(), "STATE"))
+                                                            for x in tout.printed()]), name)
+                    if name not in ("setup", "move"):
+                        self.assertFalse([x for x in said if any(f in x for f in fresh)], (name, said))
+
+    def test_G6_35_a_cut_at_each_removal_of_uninstall_all_s_last_stretch_leaves_what_the_next_one_finishes(self):
+        # R205: uninstall --all ends by deleting this tool's files in its state folder one by one. A cut (power, a
+        # kill) between two of those removals must never leave the second copy there with the record gone, and the
+        # same command run again must finish from what the cut left: the folder gone, nothing of ours on GitHub.
+        class Cut(BaseException):
+            pass
+
+        removed, k = [], 0
+        while True:
+            gh, world, host = remove_setup(moved=False)
+            sd = host.state_dir()
+            real_remove, real_rmdir, n = os.remove, os.rmdir, [0]
+
+            def cutting(fn, k=k, sd=sd, n=n):
+                def f(p, *a, **kw):
+                    if os.path.abspath(p) == sd or os.path.dirname(os.path.abspath(p)) == sd:
+                        if n[0] == k:
+                            raise Cut("(the folder)" if os.path.abspath(p) == sd else os.path.basename(p))
+                        n[0] += 1
+                    return fn(p, *a, **kw)
+                return f
+            os.remove, os.rmdir = cutting(real_remove), cutting(real_rmdir)
+            try:
+                code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            except Cut as e:
+                code, lines, at = "cut", [], str(e)
+            finally:
+                os.remove, os.rmdir = real_remove, real_rmdir
+            if code != "cut":
+                self.assertEqual(code, M.EXIT_OK, lines)
+                break
+            removed.append(at)
+            with self.subTest(cut_at=at):
+                self.assertFalse(os.path.lexists(M.copy_path(host)) and not os.path.lexists(M.state_path(host)),
+                                 (at, os.listdir(sd)))
+                code, lines = run_uninstall(gh, host, repo=None, everything=True)
+                self.assertEqual(code, M.EXIT_OK, lines)
+                self.assertFalse([x for x in lines if "is not there, but its second copy" in x], lines)
+                self.assertFalse(os.path.lexists(sd), lines)
+                self.assertIsNone(gh.runner)
+            k += 1
+        self.assertEqual(removed[0], M.RECORD_COPY, removed)  # the copy first, the lock last
+        self.assertLess(removed.index(M.RECORD_COPY), removed.index("minions.json"), removed)
+        self.assertEqual(removed[-2], "minions.lock", removed)
+        self.assertEqual(removed[-1], "(the folder)", removed)  # then the folder itself, the last removal
 
     def test_G6_35_with_no_copy_that_reads_the_stop_says_so_and_names_the_readme_place(self):
         # The owner's condition 3: both copies unreadable, or no copy: no road in the tool, said plainly, with the
@@ -10434,6 +10591,87 @@ class G6Env(unittest.TestCase):
         self.assertFalse([a for a in host.ran if "-delete" in a and FOLDER in a])
         self.assertTrue(any(x.startswith("stop ") and chown in x for x in lines), lines)
 
+    def test_G6_37_setup_again_over_a_cut_setup_names_a_step_that_ends_its_stop_for_each_kind(self):
+        # R209: setup again over a cut setup printed R206's chown line for
+        # every kind of .env that stays, so for a file over the bound, a size not read, a copy that could not be made
+        # or does not read back, and for the name R206's step moved it to, that step changed nothing and the same
+        # stop came again without end. Each kind now names a step that ends it, taken here: where no command fits,
+        # words, and for the person's own file the word is move, never remove.
+        listing = ("GET", f"repos/{REPO}/actions/runners?per_page=100")
+        none = (200, {"total_count": 0, "runners": []})
+        token = ("POST", f"repos/{REPO}/actions/runners/registration-token")
+        ras = ("sudo", "-n", "-u", "minions-runner", "--")
+        aside = f"{FOLDER}/.env.kept-20261126T120000Z"
+
+        def env_key(path):
+            return ENV_KEY[:-1] + (path,)
+
+        def readable(host, path, text=PERSONS_ENV, size=None, sum_=None):
+            host.runs[env_key(path)] = (0, "minions-env: readable\n")
+            host.runs[ras + ("stat", "-c", "%s", path)] = size or (0, f"{len(text)}\n")
+            host.runs[ras + ("cat", path)] = (0, text)
+            host.runs[ras + ("sha256sum", path)] = (0, f"{sum_ or M.env_sum(text)}  {path}\n")
+
+        def gone(host, path):  # the person moved it out of the folder: nothing stands at that name
+            host.runs[env_key(path)] = (0, "minions-env: not there\n")
+
+        def cut_setup():
+            host, sha = setup_host()
+            host.runs[ENV_KEY] = (0, "minions-env: not readable\n")
+            fresh_look(host)
+            run_setup(setup_gh(sha, {listing: none}), host)
+            host.runs[R_TEST + (FOLDER,)] = (0, "")
+            host.runs[ras + ("find", FOLDER, "-maxdepth", "0", "-printf", "%D %y\n")] = (0, "2049 d\n")
+            host.runs[ras + ("find", FOLDER, "-xdev", "-mindepth", "1", "!", "-user", "minions-runner", "-prune",
+                             "-printf", "F\t%D\t%u\t%y\t%P\\0", "-o", "-printf", "O\t%D\t%u\t%y\t%P\\0")] = (0, "")
+            return host, sha
+
+        def again(host, sha):
+            gh = setup_gh(sha)
+            gh.overrides[listing] = lambda body: runners_answer() if token in gh.calls else none
+            host.ran.clear()
+            return run_setup(gh, host)
+
+        def no_privacy(host):
+            def refuse(name, data):
+                raise PermissionError(13, "Permission denied")
+            host.keep_private = refuse
+
+        kinds = [  # (what stands, the step's words, what taking it as printed does)
+            ("over the bound", lambda h: readable(h, f"{FOLDER}/.env", size=(0, f"{M.ENV_MAX + 1}\n")),
+             "moves ", lambda h: gone(h, f"{FOLDER}/.env")),
+            ("a size not read", lambda h: readable(h, f"{FOLDER}/.env", size=(1, "")),
+             "moves ", lambda h: gone(h, f"{FOLDER}/.env")),
+            ("a copy that cannot be made", lambda h: (readable(h, f"{FOLDER}/.env"), no_privacy(h)),
+             "makes room in ", lambda h: h.__dict__.pop("keep_private")),
+            ("a copy that does not read back", lambda h: readable(h, f"{FOLDER}/.env", sum_="0" * 64),
+             "moves ", lambda h: gone(h, f"{FOLDER}/.env")),
+            ("the name R206's step moved it to", lambda h: (gone(h, f"{FOLDER}/.env"),
+                                                             h.runs.__setitem__(env_key(aside),
+                                                                                (0, "minions-env: not readable\n")),
+                                                             M.note_setting(h, REPO, "env_aside", aside)),
+             "makes it readable to the runner user, its lines unchanged, and setup then keeps it for you: "
+             f"`sudo chown -h minions-runner {aside} && sudo -u minions-runner chmod u+rw {aside}`",
+             lambda h: readable(h, aside)),
+        ]
+        for label, plant, step, take in kinds:
+            with self.subTest(kind=label):
+                host, sha = cut_setup()
+                plant(host)
+                code, lines = again(host, sha)
+                self.assertEqual(code, M.EXIT_STOP, lines)
+                stop = [x for x in lines if x.startswith("stop ") and ".env" in x]
+                self.assertEqual(len(stop), 1, lines)
+                self.assertIn("Your next step " + step, stop[0])
+                self.assertTrue(stop[0].endswith(" Then run the same setup again"), stop[0])
+                if step.startswith("moves "):
+                    self.assertIn("(it is your file: move it, do not delete it)", stop[0])
+                self.assertNotIn(f"chmod u+rw {FOLDER}/.env`", stop[0], "R206's line only where it can end the stop")
+                self.assertFalse([a for a in host.ran if "-delete" in a and FOLDER in a], "nothing deleted")
+                take(host)  # the step as printed, its effect on this computer
+                code, lines = again(host, sha)
+                self.assertFalse([x for x in lines if x.startswith("stop") and ".env" in x], (label, lines))
+
     def test_G6_37_setup_keeps_the_sum_of_what_it_wrote_and_the_name_r206_s_step_moves_it_to_is_read_too(self):
         host, sha = setup_host()
         fresh_look(host)
@@ -10633,7 +10871,16 @@ def home_host(home):
 
 
 def read_whole(path):
-    return M.read_record_file(path)
+    """The test's own reader of a record (data, None), not there (None, None), or not whole (None, why): never the
+    tool's, so the same test reads the record of a tree before R205 and R208 (its red lap on 35515f9)."""
+    try:
+        with open(path, "rb") as f:
+            data = json.loads(f.read().decode("utf-8"))
+    except FileNotFoundError:
+        return None, None
+    except (OSError, ValueError) as e:
+        return None, str(e)
+    return (data, None) if isinstance(data, dict) else (None, f"a {type(data).__name__}, not an object")
 
 
 class G6Lock(unittest.TestCase):
@@ -10648,7 +10895,7 @@ class G6Lock(unittest.TestCase):
                 watch, look = (lock_result(p) for p in ps)
                 sd = os.path.join(home, ".minions")
                 rec, why = read_whole(os.path.join(sd, "minions.json"))
-                cpy, cwhy = read_whole(os.path.join(sd, M.RECORD_COPY))
+                cpy, cwhy = read_whole(os.path.join(sd, getattr(M, "RECORD_COPY", "minions.copy.json")))
                 self.assertIsNone(why, "the record reads whole")
                 lost = {f"o/r{i}" for i in range(300)} - set(rec.get("looks") or {})
                 self.assertEqual(("o/r" in (rec.get("runners") or {}), len(lost), (rec.get("watch") or {}).get("pass")),
@@ -11253,6 +11500,42 @@ class G6Lock(unittest.TestCase):
                       "you), then run the same command again", out.getvalue())
         self.assertNotIn("mv -n", out.getvalue())
 
+    def test_G6_36_restore_with_the_record_gone_and_a_copy_there_that_cannot_be_read_stops_as_the_watch_does(self):
+        # R205: the record gone and a copy that IS there but
+        # could not be read (0 bytes, a list, cannot be opened) was said by restore as "nor a copy of it ... made
+        # nothing here yet", exit 0: a failed read said as an absence, by the one command the watch's stop sends a
+        # person to. restore now stops there with the words the watch says in the same state, and changes nothing.
+        for label, damage in (("0 bytes", b""), ("a list", b"[]"), ("cannot be opened", None)):
+            with self.subTest(copy=label):
+                gh, world, host = remove_setup(moved=False)
+                p, c = M.state_path(host), M.copy_path(host)
+                os.remove(p)
+                plant_record(c, file_bytes(c), damage)
+                before = {n: (os.stat(os.path.join(host.state_dir(), n)).st_mode, file_bytes(os.path.join(
+                    host.state_dir(), n)) if damage is not None or n != os.path.basename(c) else None)
+                          for n in os.listdir(host.state_dir())}
+                out = Out()
+                self.assertEqual(M.main(["restore"], host=host, out=out), M.EXIT_STOP, out.printed())
+                said = out.printed()
+                stop = next(x for x in said if x.startswith("stop "))
+                self.assertIn(f"{p} is not there", stop)
+                self.assertIn(f"its second copy, {c}, could not be read either (", stop)
+                self.assertFalse([x for x in said if "made nothing here yet" in x or "nothing to restore" in x], said)
+                self.assertFalse(os.path.lexists(p), "nothing is put in the record's place")
+                after = {n: (os.stat(os.path.join(host.state_dir(), n)).st_mode, file_bytes(os.path.join(
+                    host.state_dir(), n)) if damage is not None or n != os.path.basename(c) else None)
+                         for n in os.listdir(host.state_dir()) if n != M.LOCK_NAME}
+                self.assertEqual(after, {n: v for n, v in before.items() if n != M.LOCK_NAME})
+                out = Out()
+                self.assertEqual(M.watch(host=host, gh=StatusGH(), out=out), M.EXIT_STOP)
+                tail = stop.split("could not be read either", 1)[1]
+                self.assertIn(tail, next(x for x in out.printed() if x.startswith("stop ")), "the watch's words")
+        # with no copy at all and no record, restore stays as it was: a fresh home, nothing to restore
+        host = FakeHost()
+        out = Out()
+        self.assertEqual(M.main(["restore"], host=host, out=out), M.EXIT_OK)
+        self.assertIn("nor a copy of it, so this tool made nothing here yet", out.getvalue())
+
     def test_G6_36_a_process_with_the_lock_file_open_that_does_not_hold_it_is_never_named_its_holder(self):
         # The owner, after the btrfs run (11-26): /proc/locks is matched by inode number only (its device is not the
         # one stat gives on btrfs), so a process that has this lock file open WITHOUT holding it (another command
@@ -11341,7 +11624,7 @@ class G6Lock(unittest.TestCase):
         self.assertIn("TimeoutError: the download took longer than 1 minute, so it was stopped (a slow line)", got["end"])
 
     def test_G6_36_the_mv_step_is_taken_as_printed_from_a_home_with_a_space_and_never_moves_into_a_folder(self):
-        # The owner's p: the lock's mv line goes through the helper every printed command does (rule 31 (B), R200),
+        # The owner's p: the lock's mv line goes through the helper every printed command does (R200),
         # is taken as printed from a home whose path holds a space; a kept name that stands already (a folder): -T
         # never moves INTO it, -n never over it; a path no printed line may carry gets words, no command.
         home = tempfile.mkdtemp(dir=TMP, prefix="lock home with a space-")
@@ -11420,7 +11703,7 @@ inspect_source = inspect.getsource
 
 
 class G2Env(unittest.TestCase):
-    """R206, codon G2.29 (family rule 6, the owner's ruling of 2026-11-25 9:30 PM ET)."""
+    """R206, codon G2.29 (the owner's ruling of 2026-11-25)."""
 
     def test_G2_29_a_runner_env_that_could_not_be_read_is_never_written_over(self):
         # Seen 2026-11-26 in a stand-in trial on 35515f9: a .env the runner user could not open was taken for an

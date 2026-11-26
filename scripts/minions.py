@@ -1063,7 +1063,9 @@ PRINTED_COMMANDS = {
         "path in a home whose path holds a space): status printed the stop and its line was typed by hand as "
         "printed: exit 0, the folder kept whole under the dated name, and status then went past the lock. With the "
         "printed name made to exist first, mv said it was not replacing it and ended 1, nothing moved; the next "
-        "stop printed a name still free, and that line as printed ended 0, the made file untouched",
+        "stop printed a name still free, and that line as printed ended 0, the made file untouched. The same, on a "
+        "stock Ubuntu 22.04.5 virtual machine (coreutils 8.32): mv ended 0 in silence and moved nothing, the next "
+        "stop's line as printed ended 0",
     "sudo kill {}":
         "2026-11-23, a stock Ubuntu 24.04.5 virtual machine, steered (the runner's unit blanked in the state and its "
         "service file moved aside by hand): uninstall's line with the one PID, run as printed; no process of it left",
@@ -2276,7 +2278,7 @@ RECORD_ENTRIES = ("runners", "setting_up", "moves", "looks")
 
 
 class RecordUnread(Exception):
-    """R205 (family rule 6): the record is there and could not be read. Nothing decides on it, nothing writes over
+    """R205 (three answers: read, not there, could not be read): the record is there and could not be read. Nothing decides on it, nothing writes over
     it: the command that meets it stops (record_guard), naming the file and where its read stopped."""
 
     def __init__(self, path: str, why: str):
@@ -2289,7 +2291,7 @@ def copy_path(host: Host) -> str:
 
 
 def read_record_file(path: str) -> tuple[dict | None, str | None]:
-    """R205 (rule 6): one reader, three answers: (record, None) read; (None, None) not there; (None, why) could not be
+    """R205: one reader, three answers: (record, None) read; (None, None) not there; (None, why) could not be
     read. `why` says where the read stopped (0 bytes, cut short or not the format at a line and column, not UTF-8 at
     a byte, a part of another kind, cannot be opened), never a value from the file."""
     try:
@@ -2325,7 +2327,7 @@ def read_record_file(path: str) -> tuple[dict | None, str | None]:
 
 def load_state(host: Host) -> dict:
     """The record, read whole. Not there: {} (nothing made here yet). There and could not be read: RecordUnread,
-    never {} (R205, family rule 6: a damaged record must never read as 'this tool made nothing here')."""
+    never {} (R205: a damaged record must never read as 'this tool made nothing here')."""
     path = state_path(host)
     d, why = read_record_file(path)
     if why:
@@ -2360,7 +2362,7 @@ def save_state(host: Host, data: dict) -> None:
     stored marks safe: every text goes through _marks_moved here, which takes out any mark character a value brought
     with it, so a fixed mark in the file was written by this tool. A second writer would let a value make a command;
     test_rule_31_save_state_is_the_one_writer_of_the_record holds that there is none.
-    R205 (family rule 6): a record that is there and could not be read is never written over (RecordUnread). The same
+    R205 (an error is never an absence): a record that is there and could not be read is never written over (RecordUnread). The same
     text then goes whole to the second copy, minions.copy.json, after the record: the road back (`restore`) when the
     record is damaged. A copy that could not be read is set aside under a dated name first, never written over.
     R208: written only while this process holds the lock (record_guard); status, when another holds it, saves
@@ -2957,7 +2959,7 @@ def aside_step(path: str) -> str:
     """R208 (the owner's p): the step that sets a path of this tool's folder aside under a dated name, never deleted:
     a name free when printed; -T: never moved INTO a folder that stands at that name; -n: never over one that
     appeared since (coreutils 9.2 on: it then says so and ends nonzero; before 9.2 it skips silently, and this
-    tool's stop comes again with a new name). Rule 31 (B), R200: a path no printed line may carry gets words only."""
+    tool's stop comes again with a new name). R200: a path no printed line may carry gets words only."""
     kept = f"{path}.kept-{stamp_now()}"
     n = 1
     while os.path.lexists(kept):
@@ -3066,7 +3068,7 @@ def last_wait(text: str, ask):
 
 
 def record_guard(fn=None, *, read: bool = True):
-    """R205 (family rule 6): every command that decides on the record reads it first, with three answers. Could
+    """R205 (three answers): every command that decides on the record reads it first, with three answers. Could
     not be read: it stops before it changes anything, naming the file and why, with the one next step; a read that
     fails later in the same run stops there, at the read. Commands called inside a command are its own steps.
     R208: before that first read, the lock (lock_take), held to the command's end and freed here."""
@@ -3092,6 +3094,8 @@ def record_guard(fn=None, *, read: bool = True):
                     if code is not None:
                         return code
                     path = state_path(host)
+                    if read and not os.path.lexists(path) and os.path.lexists(copy_path(host)):
+                        return copy_only_stop(host, real, path)  # R205: the record gone and its copy there is never a fresh home
                     _, why = read_record_file(path) if read else (None, None)
                     if why:
                         return record_stop(host, real, path, why, fn.__name__, begun=False)
@@ -3127,6 +3131,26 @@ def record_guard(fn=None, *, read: bool = True):
     return guarded
 
 
+def copy_only_stop(host: Host, out, path: str) -> int:
+    """R205: the record is not there and the tool's own second copy is, so
+    it was removed while this tool's parts stay here: no command by hand reads the home as one where the tool made
+    nothing. It stops before it changes or asks anything, as the watch does: the copy reads whole, the step is
+    restore; the copy is there and could not be read, no road. Nothing is read beyond the two files."""
+    copy = copy_path(host)
+    rep = Report(out)
+    head = (f"this tool's record, {path}, is not there, but its second copy, {copy}, is: the record was removed "
+            "while this tool's parts stay here, so this command does not read this computer as one where this tool "
+            "made nothing; it changed nothing here and asked GitHub nothing. ")
+    data, cwhy = read_record_file(copy)
+    if data is None:
+        rep.stop(head + "And " + no_road_words(copy, cwhy))
+    else:
+        rep.stop(head + f"The copy reads whole; it was written at {copy_time(copy)} (its file's own time), and anything "
+                 "this tool made here after that time is not in it. Your next step puts that copy in the record's "
+                 f"place: {cmd('restore')}; then run the same command again")
+    return rep.code()
+
+
 def watch_no_record(host: Host, out) -> int:
     """The owner's (s): the watch runs only after a setup made this tool's record, so a record that is not there
     (it or its whole folder removed by hand or by another program) is never a fresh home to the watch. It makes
@@ -3157,6 +3181,9 @@ def restore(host: Host | None = None, out=None) -> int:
     _, why = read_record_file(path)
     gone = why is None and not os.path.lexists(path)
     data, cwhy = read_record_file(copy)
+    if gone and data is None and cwhy is not None:  # R205: the record gone and a copy there that could not be read
+        rep.stop(f"{path} is not there: this tool's record of what it made here; " + no_road_words(copy, cwhy))
+        return rep.code()
     if why is None and not (gone and data is not None):
         rep.ok((f"{path} reads whole" if not gone else f"{path} is not there, nor a copy of it, so this tool made "
                 "nothing here yet") + ": nothing to restore, and nothing was changed")
@@ -3360,7 +3387,9 @@ def delete_ours(folder: str, names: str) -> list[str]:
     except OSError:
         return [folder]
     left = []
-    for n in sorted(entries):
+    # R205: the tool's second copy goes first and the lock last, so a cut between two removals never leaves the copy
+    # there with the record gone (that home is never read as fresh); by this order, not by how the names sort.
+    for n in sorted(entries, key=lambda n: (n != RECORD_COPY, n == "minions.lock", n)):
         p = os.path.join(folder, n)
         if re.fullmatch(names, n) and os.path.isfile(p) and not os.path.islink(p):
             try:
@@ -4795,7 +4824,7 @@ ENV_SH = (f'if test -L "$1"; then echo "{ENV_MARK} a link"; elif ! test -e "$1";
 
 
 def runner_env_read(host: Host, folder: str, rep: Report, repo: str = "") -> str | None | bool:
-    """R206 (family rule 6): the runner's .env, which the runner's env.sh writes and a person may add lines to, and
+    """R206 (an error is never an absence): the runner's .env, which the runner's env.sh writes and a person may add lines to, and
     which setup writes back whole with the job hooks' lines. Three answers: its text; None, not there (written new);
     False, could not be read: then it is never written over, setup stops before the hooks' lines, naming the file
     and why, with one step. No line of it is printed or logged."""
@@ -4857,7 +4886,14 @@ def env_names(text: str) -> str:
                if other else ""))
 
 
-def keep_env(host: Host, repo: str, folder: str, mine: dict, rep: Report) -> list[str]:
+def env_move_step(path: str, folder: str) -> str:
+    """R209: the person's own file, where no command of this tool fits: the word is move, never
+    remove. With it gone from the folder, the next setup finds nothing there to keep and the folder goes."""
+    return (f"moves {path} out of {folder}, by hand, to a place of yours (it is your file: move it, do not delete "
+            "it), and the folder then goes without it")
+
+
+def keep_env(host: Host, repo: str, folder: str, mine: dict, rep: Report) -> list[tuple[str, str]]:
     """R209 (the owner's ruling, Thu 11-26): no road of this tool deletes a runner's .env that is not shown to be as
     the tool left it. Called only after the runner's stop is read back (no process of it left: stop_runner, in
     remove_one), before anything in its folder is deleted. Read as the runner user, never as root; its kind first:
@@ -4865,8 +4901,9 @@ def keep_env(host: Host, repo: str, folder: str, mine: dict, rep: Report) -> lis
     rules); its size bound before the read. Three answers: its sum is the one setup kept when it wrote it (goes with
     the folder); another sum, no sum on record (a setup cut before it wrote one) or no read: the person's, kept in
     their record (600 from its first byte, a name of its own per event, its sum compared with the original's before
-    anything in that folder is deleted). The same for the name R206's step moved it to. Returns why the folder
-    stays (empty: it may go). No line of it is printed, logged or journaled: its line count and variable names."""
+    anything in that folder is deleted). The same for the name R206's step moved it to. Returns, for each file that
+    stays, why and the step that ends that stop at setup (R209: each kind its own step; empty: the
+    folder may go). No line of it is printed, logged or journaled: its line count and variable names."""
     stays = []
     for path, sum_ in ((f"{folder}/.env", mine.get("env_sum")), (mine.get("env_aside") or "", None)):
         if not path.startswith(folder + "/"):
@@ -4878,26 +4915,35 @@ def keep_env(host: Host, repo: str, folder: str, mine: dict, rep: Report) -> lis
         if kind in ("not there", "a link", "not a file"):
             continue  # nothing to read; a link or a folder is never opened, and clear_folder rules on it
         if kind != "readable":
-            stays.append(f"{path} could not be read as {RUNNER_USER} ("
-                         + (f"the user {RUNNER_USER} cannot read it" if kind == "not readable" else
-                            f"sh answered code {rc}") + "), so it is not known to be as this tool left it")
+            why = (f"{path} could not be read as {RUNNER_USER} (" + (f"the user {RUNNER_USER} cannot read it" if
+                   kind == "not readable" else f"sh answered code {rc}") + "), so it is not known to be as this tool "
+                   "left it")
+            stays.append((why, (f"makes it readable to the runner user, its lines unchanged, and setup then keeps it "
+                                "for you: "
+                                + cmd(f"sudo chown -h {RUNNER_USER} {path} && sudo -u {RUNNER_USER} chmod u+rw {path}"))
+                          if kind == "not readable" else env_move_step(path, folder)))
             continue
         rc, size = as_runner(host, ["stat", "-c", "%s", path])
         size = str(size).strip(BLANKS)
         if rc != 0 or not size.isdigit() or int(size) > ENV_MAX:
-            stays.append(f"{path} is " + (f"larger than {ENV_MAX} bytes" if size.isdigit() else
-                                          "of a size that could not be read") + ", so it is not read")
+            stays.append((f"{path} is " + (f"larger than {ENV_MAX} bytes" if size.isdigit() else
+                                           "of a size that could not be read") + ", so it is not read",
+                          env_move_step(path, folder)))
             continue
         rc, text = as_runner(host, ["cat", path])
         if rc != 0:
-            stays.append(f"{path} could not be read as {RUNNER_USER} (cat answered code {rc})")
+            stays.append((f"{path} could not be read as {RUNNER_USER} (cat answered code {rc})",
+                          env_move_step(path, folder)))
             continue
         got = env_sum(text)
         if sum_ and got == sum_:
             continue  # as this tool left it: it goes with the folder
         kept, why = keep_copy(host, repo, path, text, got)
         if why:
-            stays.append(why)
+            room = "could not be made" in why
+            stays.append((why, f"makes room in {host.record_dir()} (free space on its disk, or make it a folder you "
+                               "can write to), and setup then keeps the file for you" if room else
+                          env_move_step(path, folder)))
             continue
         said_ = ("its lines are not the ones this tool wrote there" if sum_ else
                  "this tool kept no sum of it (written before setup's own lines, or by R206's step)")
@@ -6003,6 +6049,11 @@ def rerun_once(gh: GitHub, host: Host, repo: str, job_id: int, named: dict, data
         return ("stop", f"job {job_id} is not one this computer cut or its limit stopped: nothing was run again")
     if job_id in (data.get("reruns") or []):
         return ("stop", f"job {job_id} was run again once already: it is not run a second time")
+    if _LOCK["readonly"]:  # R208: nothing is asked of GitHub that the record cannot keep
+        return ("stop", f"this tool's record is held by {_LOCK['held_by']}, so status could not keep that job "
+                        f"{job_id} was run again (a job is run again once only): job {job_id} was not run again, and "
+                        "GitHub was asked nothing. Your next step, once that command has ended (the watch's pass ends "
+                        f"within 4 minutes): {cmd(f'status {repo} --rerun {job_id}')}")
     journal(host, "rerun", f"{repo} job {job_id}, on your word")
     s, d = gh.api("POST", f"repos/{repo}/actions/jobs/{job_id}/rerun")
     if s not in (200, 201, 204):
@@ -7756,15 +7807,14 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report, for_setup: bo
     for path in paths:
         if path == ours and exists_as_root(host, path):
             stays = keep_env(host, repo, folder, mine, rep)  # R209: before anything in the folder is deleted
-            if stays and for_setup:
-                env_at = f"{folder}/.env"  # R206's own printed line (G8.16), one form
-                rep.stop(f"{'; '.join(stays)}. It is a settings file of the runner's, so this setup deletes nothing in "
-                         f"{folder}. Your next step makes it readable to the runner user, its lines unchanged: "
-                         + cmd(f"sudo chown -h {RUNNER_USER} {env_at} && sudo -u {RUNNER_USER} chmod u+rw {env_at}")
-                         + "; then run the same setup again, and it keeps the file for you")
+            if stays and for_setup:  # R209: each kind its own step, the one that ends this stop
+                rep.stop(f"{'; '.join(w for w, _ in stays)}. It is a settings file of the runner's, so this setup "
+                         f"deletes nothing in {folder}. "
+                         + " ".join(("Your next step " if i == 0 else "And for the next one, your step ") + st + "."
+                                    for i, (_, st) in enumerate(stays)) + " Then run the same setup again")
                 return False
             if stays:
-                foreign_stayed(rep, path, "runner", [f"{s_} (so the folder stays with it)" for s_ in stays])
+                foreign_stayed(rep, path, "runner", [f"{w} (so the folder stays with it)" for w, _ in stays])
                 continue
         if exists_as_root(host, path):
             journal(host, "delete", path)
