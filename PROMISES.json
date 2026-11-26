@@ -2210,7 +2210,7 @@
   {
    "id": "R168",
    "seen": "2026-11-24, on a test machine (Ubuntu 24.04, sudo 1.9.15p5) and in a stand-in run: on a computer whose own name does not resolve, sudo writes 'sudo: unable to resolve host NAME: ...' on standard error, runs the command and passes its exit on. The tool joined standard output and standard error for every command it ran, so that warning reached every parse: in the stand-in, setup stopped at 'the runner's home is not closed to others (mode sudo: unable to resolve host ... 750)'.",
-   "promise": "A read that is parsed takes the stream its program writes its answer on (standard output), never the two joined; standard error is kept for the words shown at a refusal and for the few answers a program gives there, each named in the code (id, stat, crontab -l, sudo's refusal, gh auth status). Whether a path exists is read from the test's own printed mark, never from sudo's exit or words.",
+   "promise": "A read that is parsed takes the stream its program writes its answer on (standard output), never the two joined; standard error is kept for the words shown at a refusal and for the few answers a program gives there, each named in the code (id, stat, crontab -l, sudo's refusal, gh auth status, gh auth token's refusal). Whether a path exists is read from the test's own printed mark, never from sudo's exit or words.",
    "codon": "G6.28",
    "first_ship_in": "0.1.0",
    "ship_in": "0.1.0",
@@ -2497,6 +2497,20 @@
    "owner": "maintainer",
    "proven": "",
    "issue": 390,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R204",
+   "seen": "2026-11-26, by the maintainer, on a stock Ubuntu 22.04 virtual machine with the distribution's gh 2.4.0: asked `gh auth token --hostname github.com`, that gh answers `unknown flag: --hostname` on standard error, with exit 1 and nothing on standard output; asked without the flag, `unknown command \"token\" for \"gh auth\"` on standard output, with exit 1. The tool looked only for the second phrase, so it never read gh's own file there: look stopped on every such computer, with nothing made, and its stop said `gh exit 1, no words` although gh had given its words on standard error. The phrase list said the second phrase was seen for the call with the flag; it was not.",
+   "promise": "On a gh that has no `auth token` command, look and setup read the login from gh's own file, as R160 promises for a gh older than 2.17, with three answers: a login for github.com found, none there, or could not be read; the token is never printed. The answer taken as such a gh is only the one seen: `unknown flag: --hostname` as the first line on standard error with exit 1, from the real gh 2.4.0; any other answer of that call is could not be read, a stop. A stop on an answer of that call carries gh's own first line on standard error, quoted as read, and of its standard output only its length: nothing of standard output is printed or logged, whatever the exit. The phrase list says, for each form of the call, what was seen: the stream, the exit, the version, the date and the kind of machine.",
+   "codon": "G1.23",
+   "first_ship_in": "0.1.0",
+   "ship_in": "0.1.0",
+   "test": "test_G1_23_a_gh_with_no_auth_token_is_read_from_its_file_and_a_stop_carries_only_its_error_words",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 392,
    "moved_why": "",
    "moved_by_person": ""
   }

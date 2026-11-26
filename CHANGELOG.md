@@ -65,6 +65,11 @@ the cap (row R94).
   that stops, or that ends at a step of the person's, keeps no record of itself, and where gh keeps its login is
   written down only once the login reads have passed. Those stops say "this tool made nothing": gh writes files of
   its own in a home where it never ran, and the tool does not claim them (row R160).
+- A GitHub CLI with no `auth token` command (gh 2.4.0, Ubuntu 22.04's own) has its login read from gh's own file;
+  before, `look` stopped there on every such computer. Only the answer seen from that gh is taken for it, and a
+  stop on gh's answer about the login says gh's own words on standard error and nothing of what it wrote on
+  standard output, where a token comes when the call works; before, such a stop quoted that output's last
+  lines, holding back only a line shaped like a GitHub token (row R204).
 - Nothing the tool writes names a folder inside Claude Code's plugin cache. Run from the plugin, `setup` keeps the
   path of Claude Code's own list of plugins and the plugin's name, never its version folder, and the tool says the
   skill was removed from Claude Code only when that list was read and names it nowhere: an update of the plugin says

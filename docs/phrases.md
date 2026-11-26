@@ -58,11 +58,15 @@ pack, `LANG=de_DE.UTF-8` and `LANGUAGE=de_DE:de`, on 2026-11-24.
   - stream: standard error
   - seen: gh 2.45.0 (`no oauth token found for github.com`, exit 1).
   - translated: gh has no translations; not seen in another language.
-- program: gh (older than 2.17)
+- program: gh (older than 2.17, which has no `auth token`)
   - asked: `gh auth token --hostname github.com`
-  - phrase: `unknown command "token"`
-  - stream: standard error
-  - seen: gh 2.4.0.
+  - phrase: `unknown flag: --hostname` (the first line on standard error, with exit 1; then gh's own file is read)
+  - stream: standard error, exit 1, nothing on standard output.
+  - seen: gh 2.4.0 (the distribution's gh on a stock Ubuntu 22.04 virtual machine), 2026-11-26.
+  - the other form, not asked by this tool: `gh auth token` with no flag gets `unknown command "token" for "gh auth"`
+    on standard output, exit 1, nothing on standard error (the same gh, the same day). Before 2026-11-26 this page
+    said that phrase was seen on standard error for the call with the flag; it was not, and the code no longer
+    matches it.
   - translated: not seen in another language.
 - program: gh
   - asked: `gh auth status --hostname github.com`

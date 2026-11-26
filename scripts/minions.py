@@ -1075,7 +1075,12 @@ def login_kept(host: Host) -> tuple[str, str]:
     bus: NO_BUS), has a login for github.com. Three answers, from `gh auth token`: ("yes", "") a token came back;
     ("no", why) gh says it has none; ("unread", why) anything else. The token is never kept, printed or copied: only
     whether one line came back is read. gh older than 2.17 has no `auth token` and keeps a login only in its file or
-    the shell (a keyring came in 2.26), so there its file is read for whether a token line is there."""
+    the shell (a keyring came in 2.26), so there its file is read for whether a token line is there.
+    R204 (seen 2026-11-26, a stock Ubuntu 22.04 with the distribution's gh 2.4.0): such a gh is known only by the
+    answer seen from it to this very call, `unknown flag: --hostname` as the first line on standard error with exit
+    1; any other answer is could not be read, never the older road. This call's standard output is a token when it
+    works, so nothing of it is ever printed or logged, whatever the exit: a stop says only its length, and gh's own
+    first line on standard error, quoted as read."""
     rc, out = host.run(["gh", "auth", "token", "--hostname", "github.com"])
     got = [x.strip(BLANKS) for x in lines_of(out) if x.strip(BLANKS)]
     if rc == 0 and len(got) == 1 and re.fullmatch(r"[^ \t]+", got[0]):
@@ -1083,14 +1088,17 @@ def login_kept(host: Host) -> tuple[str, str]:
     if re.search(r"no oauth token found", said(out), re.I):  # R168: gh's refusal words are on its standard error
         return "no", (f"{NO_LOGIN}: gh has none for github.com that it can read when nobody is logged in (a login "
                       "kept only in a keyring, or only in a shell's GH_TOKEN, cannot be read then)")
-    if re.search(r'unknown command "token"', said(out)):
+    err = [x.strip(BLANKS) for x in lines_of(getattr(out, "err", "")) if x.strip(BLANKS)]
+    head = err[0] if err else ""  # R204: gh 2.4.0's answer, as seen: its first line on standard error, exit 1
+    if rc == 1 and re.fullmatch(r"unknown flag: --hostname", head):
         return hosts_file_login(host)
-    words = [x for x in got if not TOKEN_SHAPE.search(x)]
+    first = [x for x in err if not TOKEN_SHAPE.search(x)][:1]
+    heard = (f"on standard error {as_read(first[0])}" if first else "no words on standard error") + \
+        f"; its standard output, {len(str(out))} character(s), is not shown"
     if rc == 127:  # Host.run: gh not found with this PATH, or it could not be run at all
         return "unread", ("the GitHub CLI (gh) could not be found or run with this PATH, so it could not be asked "
-                          "for its login: " + (" / ".join(words[-1:]) or "no words"))
-    return "unread", ("gh could not be asked whether it has a login for github.com: "
-                      + (" / ".join(words[-2:]) or f"gh exit {rc}, no words"))
+                          f"for its login: {heard}")
+    return "unread", f"gh could not be asked whether it has a login for github.com: gh exit {rc}, {heard}"
 
 
 def hosts_file_login(host: Host) -> tuple[str, str]:

@@ -8203,7 +8203,7 @@ class RuleTwo(unittest.TestCase):
             self.assertEqual(kept(answer)[0], "unread", answer)
         self.assertIn("could not be found", kept((127, "[Errno 2] No such file or directory: 'gh'"))[1])
         self.assertNotIn("ghp_made_up_value", kept((1, "ghp_made_up_value\nsomething else\n"))[1])
-        old = (1, 'unknown command "token" for "gh auth"\n\nUsage:  gh auth <command> [flags]\n')
+        old = (1, M.Out("", "unknown flag: --hostname\n\nUsage:  gh auth <command> [flags]\n"))  # R204: as gh 2.4.0 says it
         h = linux_host(runs={("gh", "auth", "token"): old})
         path = os.path.join(h.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
         h.files[path] = "github.com:\n    oauth_token: made-up-login-value\n    user: example-person\n"
@@ -8219,6 +8219,50 @@ class RuleTwo(unittest.TestCase):
         self.assertTrue(stop.startswith("stop gh could not be asked whether it has a login for github.com"), stop)
         self.assertIn("This tool made nothing", stop)
         self.assertNotIn("insecure-storage", stop)
+
+    def test_G1_23_a_gh_with_no_auth_token_is_read_from_its_file_and_a_stop_carries_only_its_error_words(self):
+        # R204, seen 2026-11-26 on a stock Ubuntu 22.04 virtual machine with the distribution's gh 2.4.0, each form of
+        # the call with its exit and both streams (only gh's error words are planted, nothing else of that machine).
+        usage = ("\nUsage:  gh auth <command> [flags]\n\nAvailable commands:\n  login\n  logout\n  refresh\n"
+                 "  setup-git\n  status\n")
+        flag = (1, M.Out("", "unknown flag: --hostname\n" + usage + "\n"))  # `gh auth token --hostname github.com`
+        bare = (1, M.Out('unknown command "token" for "gh auth"\n' + usage, ""))  # `gh auth token`: not asked
+        def host_with(answer, hosts):
+            h = linux_host(runs={("gh", "auth", "token"): answer})
+            path = os.path.join(h.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+            if hosts is not None:
+                h.files[path] = hosts
+            return h
+        login = "github.com:\n    oauth_token: made-up-login-value\n    user: example-person\n"
+        none = "github.com:\n    user: example-person\n    git_protocol: https\n"
+        # the answer seen: gh's own file is read, in three answers, as R160 promises for a gh older than 2.17
+        self.assertEqual(M.login_kept(host_with(flag, login)), ("yes", ""))
+        self.assertEqual(M.login_kept(host_with(flag, none))[0], "no")
+        self.assertEqual(M.login_kept(host_with(flag, None))[0], "unread")
+        # any answer not seen for this call is could not be read, never the older road, even with a login in the file
+        for name, answer in (("the bare form's words, never asked", bare),
+                             ("those words on standard error", (1, M.Out("", bare[1]))),
+                             ("the seen words with another exit", (2, flag[1])),
+                             ("the seen words on standard output", (1, M.Out(str(flag[1].err), "")))):
+            with self.subTest(name):
+                self.assertEqual(M.login_kept(host_with(answer, login))[0], "unread")
+        # a stop carries gh's first line on standard error, quoted as read; of standard output only its length
+        kept, why = M.login_kept(host_with((1, M.Out("", "error connecting to /run/user/1000/bus\n")), login))
+        self.assertEqual(kept, "unread")
+        self.assertIn("on standard error 'error connecting to /run/user/1000/bus'", why)
+        self.assertIn("its standard output, 0 character(s), is not shown", why)
+        self.assertIn("no words on standard error", M.login_kept(host_with((1, M.Out("", "")), login))[1])
+        # a value shaped like a token on standard output, exit 1: neither the stop nor any file written holds it
+        made_up = "gho_madeUpTokenR204value000"
+        host = host_with((1, M.Out(made_up + "\nsecond line\n", "some refusal\n")), login)
+        code, lines = look(StandIn([]), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        stop = next(x for x in lines if x.startswith("stop "))
+        self.assertIn("its standard output, 40 character(s), is not shown", stop)
+        self.assertIn("'some refusal'", stop)
+        self.assertEqual([x for x in lines if made_up in x or "second line" in x], [])
+        self.assertEqual([p for p, v in host.files.items() if isinstance(v, (str, bytes)) and
+                          (made_up in (v if isinstance(v, str) else v.decode("utf-8", "replace")))], [])
 
     def test_G1_20_a_login_github_refuses_makes_no_record_on_a_fresh_home(self):
         # R160, owner 11-24: the need to log in comes after the login was read as the watch reads it, and before
@@ -9312,11 +9356,13 @@ class Rule31(unittest.TestCase):
                         x.encode("utf-8")
         self.assertEqual(ran, 66)
         # The worlds reach the roads that print such a value (11 runs, of look, doctor, move, status and uninstall,
-        # when this was written; setup too since a line ends at a line feed: gh's login answer is read as one line,
-        # so setup reaches its later roads); fewer means a world stopped before them and reads nothing.
+        # when this was written); fewer means a world stopped before them and reads nothing. Setup was in this set
+        # until R204 (2026-11-26) only through its stop on `gh auth token`, which printed that call's standard output
+        # (in these worlds the made-up login value with the bent value after it): that output is a token when the
+        # call works, so it is never printed now, only its length, and setup's other roads print no such value.
         self.assertGreaterEqual(len(shown), 11, sorted(shown))
         self.assertEqual({n for n, _ in shown},
-                         {"look", "setup", "doctor", "move", "status", "uninstall", "uninstall --all"})
+                         {"look", "doctor", "move", "status", "uninstall", "uninstall --all"})
 
     # Rule 31 (vi), "a line ends at a line feed" (2026-11-24). Two markers of one length, each
     # shown changed the same way (plain() makes every slot ?): LE0 holds U+0001 in its 8 slots, where no reader
