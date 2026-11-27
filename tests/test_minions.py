@@ -546,20 +546,20 @@ class G1(unittest.TestCase):
                                                  "survey": {"system": "Linux", "cores": 2}}
         M.save_state(host, data)
         path, copy = M.state_path(host), M.copy_path(host)
-        before = open(path, encoding="utf-8").read()
+        before = _read(path, encoding="utf-8")
         self.assertEqual(before, json.dumps(json.loads(before), indent=1, sort_keys=True))  # the writer's own form
         self.assertFalse(json.loads(before)["looks"][REPO]["stopped"])
         rows = with_repo(self.recent, lambda d: d.update(visibility="public", private=False))
         code, lines = look(StandIn(rows), host)
         self.assertEqual(code, M.EXIT_STOP, lines)
-        after = open(path, encoding="utf-8").read()
+        after = _read(path, encoding="utf-8")
         entry = json.loads(after)["looks"][REPO]
         self.assertTrue(entry["stopped"], entry)  # so setup asks for a new look
         self.assertEqual(entry["survey"], {})
         want = json.loads(before)
         want["looks"][REPO] = entry
         self.assertEqual(after, json.dumps(want, indent=1, sort_keys=True))  # byte for byte, but for that entry
-        self.assertEqual(open(copy, encoding="utf-8").read(), after)
+        self.assertEqual(_read(copy, encoding="utf-8"), after)
 
     def test_G1_2_look_names_account_kind_and_runner_scope(self):
         _, lines = look(StandIn(self.recent), linux_host())
