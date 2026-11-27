@@ -273,7 +273,7 @@ class Strand(unittest.TestCase):
                 with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
                     f.write(text)
                 before = len(LEFT_OPEN)
-                self.assertEqual(tests_that_ran(d), {"test_probe_leaves_it_open"})
+                self.assertEqual(names_that_ran(d), {"test_probe_leaves_it_open"})
                 got = LEFT_OPEN[before:]
                 del LEFT_OPEN[before:]
             self.assertEqual(len(got), want, got)

@@ -45,6 +45,16 @@ def _read(*args, **kw):
     """R177: a file's text, the file closed again (open(...).read() leaves it to the collector: a ResourceWarning)."""
     with open(*args, **kw) as f:
         return f.read()
+
+
+def close_pipes(p):
+    """R177: a child's pipes, closed once it has ended (Popen leaves them to the collector: a ResourceWarning)."""
+    for f in (p.stdin, p.stdout, p.stderr):
+        if f is not None:
+            try:
+                f.close()
+            except OSError:  # words still buffered for a child that has ended
+                pass
 BRANCH = re.compile(r"minions-start-test-[0-9a-f]{8}")
 
 
@@ -3896,6 +3906,7 @@ class G5(unittest.TestCase):
                 "fcntl.flock(fd, fcntl.LOCK_EX); print('ready', flush=True); sys.stdin.readline()")
         holder = subprocess.Popen([sys.executable, "-I", "-c", code, M.lock_path(host)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, text=True)
+        self.addCleanup(close_pipes, holder)
         self.addCleanup(holder.wait)
         self.addCleanup(holder.kill)
         self.assertEqual(holder.stdout.readline().strip(), "ready")
@@ -11144,6 +11155,7 @@ class G6Lock(unittest.TestCase):
         try:
             p.kill()
             p.wait(10)
+            close_pipes(p)
             lock = os.path.join(home, ".minions", M.LOCK_NAME)
             fd = os.open(lock, os.O_RDWR)
             try:
@@ -11348,6 +11360,7 @@ class G6Lock(unittest.TestCase):
             wait_file(holds2)
             p.kill()
             p.wait(30)
+            close_pipes(p)
             t0 = time.monotonic()
             got["took2"] = M.lend_back(host)
             got["back_s"] = time.monotonic() - t0
@@ -11700,6 +11713,7 @@ class G6Lock(unittest.TestCase):
             code = ("import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDWR); "
                     + ("fcntl.flock(fd, fcntl.LOCK_EX); " if take else "") + "print('ready', flush=True); time.sleep(60)")
             k = subprocess.Popen([sys.executable, "-I", "-c", code, path], stdout=subprocess.PIPE, text=True)
+            self.addCleanup(close_pipes, k)
             self.addCleanup(k.wait)
             self.addCleanup(k.kill)
             self.assertEqual(k.stdout.readline().strip(), "ready")
