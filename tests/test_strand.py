@@ -17,6 +17,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -101,11 +102,12 @@ def names_that_ran(tests_dir: str = TESTS) -> set:
         ran |= set(got["passed"])
         for test, why in got["skipped"]:  # an honest skip is "not run here", never a pass
             NOT_RUN_HERE.append(f"{name}: {test} ({why})")
+        LEFT_OPEN.extend(f"{name}: {x}" for x in got.get("left_open", []))  # R177
     return ran
 
 
 OUTCOME_RUNNER = """
-import contextlib, json, os, sys, unittest
+import contextlib, gc, json, os, sys, unittest, warnings
 tests_dir, name, out = sys.argv[1:4]
 sys.path.insert(0, tests_dir)
 suite = unittest.TestLoader().discover(tests_dir, pattern=name, top_level_dir=tests_dir)
@@ -117,15 +119,20 @@ class Passed(unittest.TestResult):
         super().addSuccess(test)
         self.passed.append(test._testMethodName)
 res = Passed()
-with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn):
+with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn), \
+        warnings.catch_warnings(record=True) as seen:  # R177: every file a test leaves open is named
+    warnings.simplefilter("always", ResourceWarning)
     suite.run(res)
+    gc.collect()
+left_open = [str(w.message) for w in seen if issubclass(w.category, ResourceWarning)]
 with open(out, "w") as f:
     json.dump({"passed": res.passed, "skipped": [[t._testMethodName, w] for t, w in res.skipped],
-               "run": res.testsRun}, f)
+               "run": res.testsRun, "left_open": left_open}, f)
 """
 
 
 NOT_RUN_HERE: list = []
+LEFT_OPEN: list = []  # R177: the ResourceWarnings each other test file's own run raised
 
 
 def defined_twice(path: str) -> list:
@@ -251,6 +258,29 @@ class Strand(unittest.TestCase):
         self.assertTrue(any("test_probe_skipped (a planted skip)" in x for x in NOT_RUN_HERE[before:]), NOT_RUN_HERE)
         del NOT_RUN_HERE[before:]
 
+    def test_G9_15_the_tests_close_every_file_they_open(self):
+        """R177: a full run printed 24 ResourceWarning lines (files the tests opened and left to the collector). Each
+        other test file's own run records them (warnings always shown, a collection at its end), and the gate fails
+        on any. A planted probe that leaves a file open is named; the same probe closing it is not."""
+        ran_here()
+        self.assertEqual(LEFT_OPEN, [], "files a test left open (R177)")
+        leaky = ("import os, unittest\n\n"
+                 "class T(unittest.TestCase):\n"
+                 "    def test_probe_leaves_it_open(self):\n"
+                 "        self.assertTrue(open(os.devnull).read() == '')\n")
+        closed = leaky.replace("open(os.devnull).read() == ''", "True")
+        for text, want in ((leaky, 1), (closed, 0)):
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
+                    f.write(text)
+                before = len(LEFT_OPEN)
+                self.assertEqual(names_that_ran(d), {"test_probe_leaves_it_open"})
+                got = LEFT_OPEN[before:]
+                del LEFT_OPEN[before:]
+            self.assertEqual(len(got), want, got)
+            if want:
+                self.assertIn("test_probe.py: unclosed file", got[0])
+
     def test_G9_14_a_run_that_ends_early_or_prints_a_pass_is_never_green(self):
         """R169 (the gate recipe's eighth and ninth cases, 2026-11-24). Ninth: a test (or the tool under test,
         a parent leaving after a fork) calls os._exit(0): exit 0, no summary, and a gate in the same process never
@@ -289,6 +319,67 @@ class Strand(unittest.TestCase):
         for name in sorted(os.listdir(TESTS)):
             if name.startswith("test_") and name.endswith(".py"):
                 self.assertEqual(defined_twice(os.path.join(TESTS, name)), [], f"{name} defines a test name twice")
+
+    def test_G9_19_the_suite_runs_with_the_tag_at_its_head_before_the_push(self):
+        # Row R219 (the family's rule of 2026-11-26). The script runs on a scratch repository with a local tag, as it
+        # is and with a failing test planted; the release steps name it before the tag is pushed.
+        script = os.path.join(ROOT, "scripts", "tag_head_suite.py")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
+                                                                                         "GIT_CONFIG_NOSYSTEM")}
+        env.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        files = {
+            "test_a.py": "import unittest\nclass A(unittest.TestCase):\n    def test_a(self):\n        pass\n"
+                         "if __name__ == '__main__':\n    unittest.main()\n",
+            # a stand-in gate: its own last line, as the real one writes it, after its run
+            "test_strand.py": "import subprocess, sys, unittest\nclass G(unittest.TestCase):\n"
+                              "    def test_tag_at_head(self):\n"
+                              "        out = subprocess.run(['git', 'describe', '--exact-match', 'HEAD'],"
+                              " capture_output=True, text=True).stdout.strip()\n"
+                              "        self.assertEqual(out, 'v9.9.9')\n"
+                              "if __name__ == '__main__':\n    r = unittest.main(exit=False).result\n"
+                              "    print('gate: ' + ('passed' if r.wasSuccessful() else 'FAILED') + ': 1 test(s)')\n"
+                              "    sys.exit(0 if r.wasSuccessful() else 1)\n"}
+        with tempfile.TemporaryDirectory() as d:
+            run = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)
+            os.mkdir(os.path.join(d, "tests"))
+            for name, body in files.items():
+                with open(os.path.join(d, "tests", name), "w", encoding="utf-8") as f:
+                    f.write(body)
+            run("git", "init", "-q"); run("git", "add", "."); run("git", "commit", "-qm", "r")
+            run("git", "tag", "v0.0.1")  # a tag the source holds: the fresh clone takes none of them
+            good = run("git", "rev-parse", "HEAD").stdout.strip()
+            r = run(sys.executable, script, "v9.9.9", "--source", d)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("annotated tag v9.9.9 made there only", r.stdout)
+            self.assertIn("ok tests/test_a.py: Ran 1 test in 0.", r.stdout)
+            self.assertIn("ok the gate: gate: passed: 1 test(s)", r.stdout)
+            self.assertTrue(r.stdout.rstrip().splitlines()[-1].startswith("ok: the whole suite passed with v9.9.9"))
+            self.assertLess(r.stdout.index("test_a.py"), r.stdout.index("ok the gate"), "every file, then the gate")
+            self.assertEqual(run("git", "tag", "--list").stdout, "v0.0.1\n", "the tag is made in the clone only")
+            # a failing test planted: it stops the run before the gate, and nothing is tagged here
+            with open(os.path.join(d, "tests", "test_b.py"), "w", encoding="utf-8") as f:
+                f.write(files["test_a.py"].replace("pass", "self.fail('planted')").replace("class A", "class B"))
+            run("git", "add", "."); run("git", "commit", "-qm", "planted")
+            r = run(sys.executable, script, "v9.9.9", "--source", d)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            stop = [x for x in r.stdout.splitlines() if x.startswith("STOP: ")]
+            self.assertEqual(len(stop), 1, r.stdout)
+            self.assertIn("tests/test_b.py failed", stop[0])
+            self.assertNotIn("ok the gate", r.stdout)
+            self.assertNotIn("ok: the whole suite passed", r.stdout)
+            self.assertEqual(run("git", "tag", "--list").stdout, "v0.0.1\n", "a stop tags nothing here either")
+            kept = re.search(r"outside the clone (\S+), which is kept", stop[0]).group(1)
+            self.assertTrue(os.path.isdir(kept), kept)
+            shutil.rmtree(kept)
+            # the commit named is the one tagged: the good commit still passes from behind the planted one
+            r = run(sys.executable, script, "v9.9.9", good, "--source", d)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn(f"head {good}", r.stdout)
+        # the release steps name it, before the tag is pushed
+        steps = fread(os.path.join(ROOT, "docs", "release-steps.md"))
+        self.assertIn("python3 scripts/tag_head_suite.py vX.Y.Z", steps)
+        self.assertLess(steps.index("scripts/tag_head_suite.py"), steps.index("git push origin vX.Y.Z"))
 
     def test_no_codon_is_used_twice_in_the_plan(self):
         seen = collections.Counter(re.findall(r"^\| ((?:G|INV)[0-9.]+) \|", plan_text(), re.M))

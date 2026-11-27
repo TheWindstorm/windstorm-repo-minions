@@ -3043,18 +3043,22 @@ class Quiet:
         return getattr(self.real, name)
 
 
-def outside_hold(key: tuple, ask):
+def outside_hold(key: tuple, ask, none_read=None):
     """R208: every wait for a person runs with this tool's lock let go, so a prompt left open never
     holds the watch. The answer is kept for this command; the command then runs again from its first line, under a
     lock taken afresh, so it decides on the record as it reads after the answer, never on a copy from before it. An
-    answer is used again only at the same wait with the same words shown; words that changed are asked again."""
+    answer is used again only at the same wait with the same words shown; words that changed are asked again.
+    R216: `none_read(answer)` says the wait ended with no answer read (input closed, no key): then no line says an
+    answer came, and the caller's stop is the next line."""
     a = _ASKED
     if key in a["answers"]:
+        got = a["answers"][key]
         if key == a["last"] and a["quiet"] is not None and a["quiet"].on:
             a["quiet"].settle(keep=False)
-            say_lines("ok after your answer this command took this tool's lock again and read its record afresh: "
-                      "what you were shown reads the same, so it goes on", a["quiet"].real)
-        return a["answers"][key]
+            if none_read is None or not none_read(got):
+                say_lines("ok after your answer this command took this tool's lock again and read its record "
+                          "afresh: what you were shown reads the same, so it goes on", a["quiet"].real)
+        return got
     if a["quiet"] is not None and a["quiet"].on:
         a["quiet"].settle(keep=True, head="warn after your answer this command read this tool's record afresh, and "
                           "what you are to read has changed meanwhile (another of its commands ran): read it again below")
@@ -3318,17 +3322,32 @@ def slice_limits(survey_: dict, chosen: tuple[int, int] | None = None) -> dict:
             "MemoryMax": str(int(mem * pct / 100)), "cores": cores, "total_cores": total, "pct": pct, "mem": mem}
 
 
+def limits_numbers(lim: dict) -> str:
+    """G7.8: the limits' real numbers, as every line that names them says them."""
+    return (f"jobs here get at most {lim['cores']} of this computer's {plural(lim['total_cores'], 'processor')} and "
+            f"{lim['pct']} % of its memory ({gb(int(lim['MemoryMax']))})")
+
+
+def one_processor_words(lim: dict) -> str:
+    # the owner's ruling, 2026-11-23: warned plainly, never refused, never hidden by a rounding
+    return ("; this computer has one processor: while a job runs it uses all of it, at low priority, and everything "
+            "else here will be slow") if lim["total_cores"] == 1 else ""
+
+
 def limits_in_words(lim: dict, repo: str | None = None) -> str:
     """G7.8: the limits as the person hears them, with the real numbers and the one way to change them."""
-    total = lim["total_cores"]
-    words = (f"jobs here get at most {lim['cores']} of this computer's {plural(total, 'processor')} and "
-             f"{lim['pct']} % of its memory ({gb(int(lim['MemoryMax']))}); the one way to change that is "
-             f"{C0}setup {repo_word(repo)} --limits PROCESSORS,PERCENT{C1}, {LIMITS_WORDS}"
-             + ("" if repo else f", and your repository's name (owner/name) in place of {PLACEHOLDER}"))
-    if total == 1:  # the owner's ruling, 2026-11-23: warned plainly, never refused, never hidden by a rounding
-        words += ("; this computer has one processor: while a job runs it uses all of it, at low priority, and "
-                  "everything else here will be slow")
-    return words
+    return (limits_numbers(lim) + f"; the one way to change that is {C0}setup {repo_word(repo)} --limits "
+            f"PROCESSORS,PERCENT{C1}, {LIMITS_WORDS}"
+            + ("" if repo else f", and your repository's name (owner/name) in place of {PLACEHOLDER}")
+            + one_processor_words(lim))
+
+
+def setup_limits_words(lim: dict, repo: str) -> str:
+    """R217 (G8.25, the owner's ruling of 2026-11-27): setup's limits line, its ok line and its copy in the person's
+    lines alike, says the real numbers and where the way to change them is shown, and carries no command: in setup's
+    output a command for now is only ever the step's. look's own line keeps the command (limits_in_words)."""
+    return (limits_numbers(lim) + f"; the way to change that is shown in what look prints for {repo} and in this "
+            "tool's README" + one_processor_words(lim))
 
 
 def plural(n: int, word: str) -> str:
@@ -3503,8 +3522,13 @@ def check_fresh_look(host: Host, repo: str, rep: Report) -> dict | None:
     except (KeyError, ValueError):
         rep.stop(f"the last look of {repo} cannot be read: run {C0}look {repo}{C1} first; then setup again")
         return None
-    age = (host.now() - when).total_seconds()
-    if age > LOOK_MAX_AGE_S or age < -60:
+    now = host.now()
+    age = (now - when).total_seconds()
+    if age < 0:  # R213: stamped later than this clock (a clock moved back after it): never a negative age, never fresh
+        rep.stop(f"the last look of {repo} is stamped {entry['time']}, later than this computer's clock ({stamp(now)}), "
+                 f"so it is not taken for a fresh look: run {C0}look {repo}{C1} again; then setup again")
+        return None
+    if age > LOOK_MAX_AGE_S:
         rep.stop(f"the last look of {repo} is {int(age // 60)} minutes old: run {C0}look {repo}{C1} first; then setup again (setup needs one "
                  "under an hour old)")
         return None
@@ -4530,7 +4554,7 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if floor:
         rep.stop(floor)
         return rep.code()
-    rep.ok(limits_in_words(lim, repo))
+    rep.ok(setup_limits_words(lim, repo))  # R217: no command; the step's is the only one
     now_free = host.disk_free(host.home())  # read now, not the look's number
     if not check_disk_floor(now_free[0] if now_free else survey_.get("free"), rep, "no runner is set up"):
         return rep.code()
@@ -4553,6 +4577,15 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if not ask_admin_once(host, rep, interactive):
         return rep.code()
     known = load_state(host)
+    if ((known.get("runners") or {}).get(repo) or {}) and runner_gone(host):
+        # R178: the runner user was removed outside this tool, its home with it (a home still there stopped setup
+        # above, R173). Nothing of the old runner can be kept or registered again in place: what this tool recorded
+        # of it is taken away first, read back (nothing is tried as that user), then setup starts fresh.
+        rep.ok(f"the user {RUNNER_USER} was removed outside this tool, its home with it: what this tool recorded of "
+               f"{repo}'s runner here is taken away first, read back, then setup starts fresh")
+        if not remove_one(gh, host, repo, known, rep, DRAIN_WAIT_S, 10, f"setup {repo}"):
+            return rep.code()
+        known = load_state(host)
     if ((known.get("runners") or {}).get(repo) or {}).get("gone_on_github"):
         reregister(gh, host, repo, known, rep)  # G5.12
         return rep.code()
@@ -4814,6 +4847,24 @@ def keep_jobs_record(host: Host, records: str, rep: Report) -> str | bool:
     return "kept"
 
 
+def journal_kept_already(host: Host, text: str) -> int:
+    """R212: how much of this journal already ends the person's record, in whole lines from its start: a run cut
+    after the journal was added and before journal.log was deleted added it then, and this run's own steps come
+    after it. 0 when the record holds no journal or it cannot be read: then the whole is added, nothing lost."""
+    if "journal.log" not in host.record_names():
+        return 0
+    try:
+        kept = host.read_private(os.path.join(host.record_dir(), "journal.log")).decode("utf-8", errors="replace")
+    except OSError:
+        return 0
+    k = len(text)
+    while k > 0:
+        if kept.endswith(text[:k]):
+            return k
+        k = text.rfind("\n", 0, k - 1) + 1
+    return 0
+
+
 def keep_journal_record(host: Host, rep: Report) -> bool:
     """G6.10: the journal of every step goes to the person's record before the tool's state folder is deleted."""
     path = os.path.join(host.state_dir(), "journal.log")
@@ -4827,7 +4878,7 @@ def keep_journal_record(host: Host, rep: Report) -> bool:
                  "where it is; the same command run again moves it to your record")
         return False
     try:
-        host.keep_in_record("journal.log", text)
+        host.keep_in_record("journal.log", text[journal_kept_already(host, text):])  # R212: once, after a cut too
         host.keep_in_record("README.txt", RECORD_README, append=False)
     except OSError as e:
         rep.warn(f"the journal could not be added to your record ({host.record_dir()}: {e.strerror or e}), so this "
@@ -5252,7 +5303,8 @@ def runner_version(host: Host, folder: str, rep: Report) -> str | None:
     if v and re.fullmatch(r"\d+\.\d+\.\d+", v):
         rep.ok(f"runner version {v}; GitHub's own self-update stays on")
         return v
-    rep.warn("could not read the runner's version; GitHub's own self-update stays on")
+    rep.warn(f"could not read the runner's version ({tail(out) or f'it answered code {rc}'}); GitHub's own self-update "
+             "stays on")  # R178: with what it answered
     return None
 
 
@@ -5556,8 +5608,9 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
             data.pop("restart_hold", None)
         save_state(host, data)
         if ours:
-            rep.ok("online and idle: safe to restart now. The hold on " + ", ".join(ours) + " lifts by itself once "
-                   "this computer has restarted and GitHub reads the runner online again (the watch does it)")
+            lift = hold_lift_words(host, ours)  # R153: from the watch's timer read now
+            (rep.ok if lift.startswith("lifts by itself") else rep.warn)(
+                "online and idle: safe to restart now. The hold on " + ", ".join(ours) + " " + lift)
         else:
             rep.ok("online and idle: safe to restart now. Every runner here was already held before this, and stays "
                    "held after the restart until you resume it")
@@ -5740,25 +5793,30 @@ def survey_words(data: dict, repo: str) -> str:
     return f"{os_} {s.get('machine') or ''}".strip(BLANKS) + " (from this computer's own survey)"
 
 
-def computer_side(host: Host, mine: dict) -> tuple[str, list[int], dt.datetime]:
+def computer_side(host: Host, mine: dict) -> tuple[str, list[int] | None, dt.datetime, str]:
+    """G5.1: the service's word, the job processes (None when the read could not answer, R170, with why), when."""
     rc, active = host.run(systemctl("is-active", mine["unit"]))
     try:
-        worker = runner_pids(host, mine["folder"], "Runner.Worker")
-    except PidsUnread:  # status's road: said as no job process, as before R167 (its own row, due 0.1.1)
-        worker = []
-    return answer_or_words(active), worker, host.now()
+        worker, why = runner_pids(host, mine["folder"], "Runner.Worker"), ""
+    except PidsUnread as e:  # R170 (AN ERROR IS NEVER AN ABSENCE): never "no job process" from a read that could not answer
+        worker, why = None, str(e)
+    return answer_or_words(active), worker, host.now(), why
 
 
-def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int], at: dt.datetime,
-                     read: bool = True) -> tuple[str, str]:
+def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int] | None, at: dt.datetime,
+                     read: bool = True, worker_why: str = "") -> tuple[str, str]:
     """G5.1, G5.2: one line, both sides with the time each was read; "idle" only when both agree. R160 (rule 6): a
-    list that was not read is never "does not list it"."""
+    list that was not read is never "does not list it". R170: job processes that could not be read (worker None)
+    are said so, with what pgrep answered, and the word is that this computer's side could not be read."""
     if not read:
         gh_side = f"GitHub not read (at {hms(gh_at)})"
     elif r is None:
         gh_side = f"GitHub does not list it (read {hms(gh_at)})"
     else:
         gh_side = f"GitHub says {r.get('status', 'not read')}, {'busy' if r.get('busy') else 'not busy'} (read {hms(gh_at)})"
+    if worker is None:
+        here = f"this computer: service {active}, its job processes not read ({worker_why}) (at {hms(at)})"
+        return "this computer's side could not be read", f"{gh_side}; {here}"
     here = f"this computer: service {active}, {'a job process runs (' + str(worker[0]) + ')' if worker else 'no job process'} (read {hms(at)})"
     if r is not None and r.get("status") == "online" and not r.get("busy") and not worker and active == "active":
         word = "idle"
@@ -5882,6 +5940,66 @@ def skill_folder_line(host: Host, data: dict) -> tuple[str, str] | None:
     return "warn", f"the skill's folder ({root}) is gone: {goes_on}"
 
 
+def watch_timer_now(host: Host) -> tuple[str, str, str, str]:
+    """R152, R153 (A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE; AN ERROR IS NEVER AN ABSENCE, its three answers): the
+    watch's timer as systemd reads it at this moment. Returns (runs, boot, words): runs is "yes" (is-active active),
+    "no" (inactive or failed) or "unread"; boot is "yes" (is-enabled enabled), "no" (disabled, masked, masked-runtime,
+    or enabled-runtime, which does not outlast a restart) or "unread"; words say both as read; the last, is-enabled's
+    part alone. Any other word, or no word, is not read: never taken for on or off."""
+    timer = f"{WATCH_UNIT}.timer"
+    rc, out = host.run(systemctl("is-active", timer))
+    w = (words_of(out) or [""])[0]
+    runs = "yes" if w == "active" else "no" if w in ("inactive", "failed") else "unread"
+    run_w = "" if runs != "unread" else f"whether it runs could not be read ({first_words(rc, out)})"
+    rc, out = host.run(systemctl("is-enabled", timer))
+    e = (words_of(out) or [""])[0]
+    boot = ("yes" if e == "enabled" else
+            "no" if e in ("disabled", "masked", "masked-runtime", "enabled-runtime") else "unread")
+    boot_w = ("" if boot != "unread" else
+              f"whether it starts when this computer restarts could not be read ({first_words(rc, out)})")
+    if runs != "unread" and boot != "unread":
+        words = f"systemd reads it {w} and {e}"
+    elif runs != "unread":
+        words = f"systemd reads it {w}; {boot_w}"
+    elif boot != "unread":
+        words = f"{run_w}; systemd reads it {e}"
+    else:
+        words = f"{run_w}; {boot_w}"
+    return runs, boot, words, boot_w or f"read {e}"
+
+
+def watch_timer_line(host: Host, now: dt.datetime) -> tuple[str, str]:
+    """R152: status says the watch runs only from its timer read now (active and enabled); otherwise what was read,
+    with the one step. The heartbeat's time is said beside it by the caller."""
+    runs, boot, words, _ = watch_timer_now(host)
+    head = f"the watch's timer, read at {hms(now)}: {words}"
+    if runs == "yes" and boot == "yes":
+        return "ok", head
+    if runs == "no":
+        return "warn", (f"{head}: the watch is not running now. {C0}sudo systemctl start {WATCH_UNIT}.timer{C1}, "
+                        "or setup again")
+    if runs == "yes" and boot == "no":
+        return "warn", (f"{head}: it runs now, and does not start again when this computer restarts. Setup again "
+                        "turns it back on")
+    return "warn", f"{head}: so whether the watch runs is not said; status again later"
+
+
+def hold_lift_words(host: Host, repos: list[str]) -> str:
+    """R153: "lifts by itself once this computer has restarted" only with the watch's timer read enabled now (the
+    watch lifts the hold); otherwise what was read, and what lifts the hold instead (resume, by name)."""
+    _, boot, _, boot_w = watch_timer_now(host)
+    if boot == "yes":
+        return ("lifts by itself once this computer has restarted and GitHub reads the runner online again (the watch "
+                "does it; its timer is read enabled now)")
+    steps = " and ".join(f"{C0}resume {rp}{C1}" for rp in repos) or f"{C0}resume REPO{C1}"
+    if boot == "no":
+        return (f"does not lift by itself: the watch's timer is {boot_w} now, so it does not "
+                f"start when this computer restarts. After the restart, {steps} lifts it (setup again turns the "
+                "watch back on)")
+    return (f"is lifted by the watch after the restart only if its timer starts then, and {boot_w}. "
+            f"If the hold stays after the restart, {steps} lifts it")
+
+
 def watch_heartbeat(data: dict, now: dt.datetime, slept_now: float | None = None) -> tuple[bool, str]:
     """G5.3: a heartbeat older than three intervals of waking time is "the watch is not running". R83: the watch's
     timer counts only waking time, so time this computer slept since the last pass is not counted against it."""
@@ -5940,7 +6058,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                                   "public repository's runner for a job"))
         s_r, r = read_runner(gh, rp, mine["name"])
         gh_at = host.now()
-        active, worker, at = computer_side(host, mine)
+        active, worker, at, worker_why = computer_side(host, mine)
         if s_r != 200:
             first.append(("warn", f"GitHub could not be read for {rp}'s runners now "
                                   f"({getattr(gh, 'why', '') or 'HTTP 0' if not s_r else 'HTTP ' + str(s_r)}): what this says "
@@ -5948,7 +6066,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         elif r is None:
             if mine.get("gone_on_github") or active in ("active", "activating"):
                 first.append(("warn", gone_words(rp, mine)))
-        word, sides = both_sides_words(r, gh_at, active, worker, at, s_r == 200)
+        word, sides = both_sides_words(r, gh_at, active, worker, at, s_r == 200, worker_why)
         held = r is not None and sorted(x.get("name") for x in r.get("labels", [])) == [HELD_LABEL]
         hold_words = ""
         if held:
@@ -5967,7 +6085,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         asleep = (max(0.0, slept_now - slept_then)
                   if isinstance(slept_now, (int, float)) and isinstance(slept_then, (int, float)) else 0.0)
         awake = (now - since).total_seconds() - asleep if since else 0.0
-        if (since and r is not None and r.get("status") != "online" and active == "active" and not worker
+        if (since and r is not None and r.get("status") != "online" and active == "active" and worker == []
                 and awake > 2 * every):
             span = minutes((now - since).total_seconds()) + (f", {minutes(awake)} of it awake" if asleep else "")
             first.append(("warn", f"{mine['name']} for {rp}: GitHub has shown it offline at every watch pass "
@@ -6011,7 +6129,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         first.extend(summary)
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now, host.slept_s())
-    rest.append(("ok" if ok_ else "warn", words))
+    kind, timer = watch_timer_line(host, now)  # R152: the timer read now; the heartbeat's time beside it
+    rest.append(("ok" if ok_ and kind == "ok" else "warn", f"{timer}; heartbeat: {words}"))
     held = held_passes(host)  # R208: how many passes were skipped since the last whole one
     if held:
         rest.append(("warn", f"the watch's last whole pass was at {last_whole_pass(host)}; {held} pass(es) skipped "
@@ -6053,8 +6172,9 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
             save_state(host, fresh)
     rh = data.get("restart_hold")
     if rh:
-        rest.append(("ok", f"held for a restart since {rh['time']} ({', '.join(rh.get('repos') or [])}): the hold lifts by itself once this computer has "
-                           "restarted and GitHub reads the runner online"))
+        lift = hold_lift_words(host, list(rh.get("repos") or []))  # R153: from the timer read now
+        rest.append(("ok" if lift.startswith("lifts by itself") else "warn",
+                     f"held for a restart since {rh['time']} ({', '.join(rh.get('repos') or [])}): the hold {lift}"))
     for kind, text in first + rest:
         {"ok": rep.ok, "warn": rep.warn, "stop": rep.stop, "need": rep.need}[kind](text)
     if any("stopped by this computer's memory limit" in text for _, text in first + rest):
@@ -7378,7 +7498,10 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     for path, text in files:
         triggers = read_triggers(text)
         edits = []
-        for job in read_workflow(text):
+        jobs = read_workflow(text)
+        if not jobs:  # R203: what look says of it, never passed in silence; it was read, so not among the unread
+            rep.warn(f"{path}: no job read")
+        for job in jobs:
             kind, words, labels = plan_job(path, triggers, job, system, machine, mine["labels"], inc)
             row = (path, job["id"], words)
             {"move": moved, "left": left, "publish": publish, "here": here}[kind].append(row)
@@ -8230,8 +8353,9 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         if not remove_one(gh, host, rp, data, rep, DRAIN_WAIT_S, 10, f"doctor {rp}"):
             return rep.code()
         rep.ok(f"{C0}setup {rp}{C1} sets it up again, fresh, when you want it")
+    not_read: list[str] = []
     for rp in [r for r in repos if r not in cut]:
-        broken += doctor_one(gh, host, rp, data["runners"][rp], rep)
+        broken += doctor_one(gh, host, rp, data["runners"][rp], rep, not_read)
     rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
     if active.strip(BLANKS) == "active":
         rep.ok("the watch's timer is active")
@@ -8246,12 +8370,15 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rep.stop(f"{len(broken)} promise(s) not kept here: {', '.join(broken)}. Nothing was changed: run the command "
                  "each line above names, then doctor again")
     else:
-        rep.ok("every promise of the install read back as kept" + ("" if admin else ", of those that could be read"))
+        rep.ok("every promise of the install read back as kept" + ("" if admin and not not_read else
+                                                                   ", of those that could be read")
+               + (f" (not read: {', '.join(not_read)})" if not_read else ""))
     return rep.code()
 
 
-def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> list[str]:
-    """One runner's promises, each read now. Returns the names of those not kept."""
+def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report, not_read: list[str] | None = None) -> list[str]:
+    """One runner's promises, each read now. Returns the names of those not kept; adds to `not_read` the names of
+    those that could not be read (R171), which the last line never counts as kept."""
     broken: list[str] = []
     folder, unit, name = mine.get("folder") or "", mine.get("unit") or "", mine.get("name") or ""
     again = f"{C0}setup {repo}{C1} again after {C0}uninstall {repo}{C1}"
@@ -8261,10 +8388,22 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
         broken.append(f"{repo} {what}")
 
     # G2.2: the runner's user has no admin rights and its home is closed.
-    rc, groups = host.run(["id", "-nG", RUNNER_USER])
-    extra = sorted(set(words_of(groups)) - {RUNNER_USER}) if rc == 0 else None
-    if extra is None:
+    # R178 (AN ERROR IS NEVER AN ABSENCE): whether the user is there is getent's exit code (runner_user_state), never id's exit: an id that
+    # could not answer is not "not there". With the user gone, nothing is tried as it, and each read skipped says so.
+    ukind, uwhy = runner_user_state(host)
+    gone_why = f"the user {RUNNER_USER} is not there (removed outside this tool), so nothing is tried as it"
+    extra: list[str] | None = None
+    if ukind == "absent":
         bad("runner user", f"the user {RUNNER_USER} is not there: {again}")
+    elif ukind == "unread":
+        rep.warn(f"{repo}: whether the user {RUNNER_USER} is here: not read ({uwhy})")
+    else:
+        rc, groups = host.run(["id", "-nG", RUNNER_USER])
+        extra = sorted(set(words_of(groups)) - {RUNNER_USER}) if rc == 0 and words_of(groups) else None
+        if extra is None:
+            rep.warn(f"{repo}: the groups of {RUNNER_USER}: not read ({tail(groups) or f'id answered code {rc}'})")
+    if extra is None:
+        pass
     elif extra:
         bad("runner user", f"{RUNNER_USER} is in other groups ({', '.join(extra)}): take it out of them "
                            "(" + ", ".join(f"{C0}sudo gpasswd -d {RUNNER_USER} {shlex.quote(g)}{C1}" for g in extra) + ")")
@@ -8286,9 +8425,11 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
             bad("folder", f"the runner's folder {folder} is gone: {again}")
     # G2.8: the credential files are the runner's own, 600.
     files = [f"{folder}/.credentials", f"{folder}/.runner", f"{folder}/.credentials_rsaparams"]
-    rc, out = as_runner(host, ["stat", "-c", "%a %U %n"] + files)  # R128: read as the runner user
+    rc, out = (0, "") if ukind == "absent" else as_runner(host, ["stat", "-c", "%a %U %n"] + files)  # R128, R178
     rows = [words_of(x, 2) for x in lines_of(out) if x.strip(BLANKS)]
-    if "a password is required" in said(out):  # R168: sudo's refusal is on its standard error
+    if ukind == "absent":
+        rep.warn(f"{repo}: the credential files: not read: {gone_why}")
+    elif "a password is required" in said(out):  # R168: sudo's refusal is on its standard error
         rep.warn(f"{repo}: the credential files: not read")
     elif rc != 0 or len(rows) != 3 or any(r[0] != "600" or r[1] != RUNNER_USER for r in rows):
         bad("credential files", f"the runner's credential files are not 600 and its own ({tail(out, 3)}): "
@@ -8354,12 +8495,18 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     else:
         rep.ok(f"{repo}: {gb(free[0])} free for the work folders, over the {gb(DISK_FLOOR)} floor")
     # G4.5: the version, GitHub's self-update on.
-    runner_version(host, folder, rep)
+    if ukind == "absent":  # R178
+        rep.warn(f"could not read the runner's version: {gone_why}; GitHub's own self-update stays on")
+    else:
+        runner_version(host, folder, rep)
     # G4.7: never two copies.
     try:
         listeners = runner_pids(host, folder, "Runner.Listener")
-    except PidsUnread:  # doctor's road: as before R167 (its own row, due 0.1.1)
+    except PidsUnread as e:  # R171 (AN ERROR IS NEVER AN ABSENCE): the one-copy check not read, with what pgrep answered; never passed
         listeners = []
+        rep.warn(f"{repo}: never two copies of the runner: not read ({e})")
+        if not_read is not None:
+            not_read.append(f"{repo} one copy")
     if len(listeners) > 1:
         bad("one copy", f"{len(listeners)} copies of the runner run ({', '.join(map(str, listeners))}): "
                         f"{C0}drain {repo} --stop{C1}, then {C0}resume {repo}{C1}")
@@ -9284,6 +9431,7 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
             rep.ok(f"{head}none")
     if everything:  # G6.13 (R117, rule 8): the folder the skill was downloaded into is named, so nobody guesses at it
         skill_folder_census(host, skill_folder, rep)
+    gh_login_census(host, rep)
     # G6.10, INV6: last, the person's record, kept: theirs.
     n = host.record_count()
     if n is None:
@@ -9295,6 +9443,22 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         rep.ok(f"census: your record of what this tool did: {host.record_dir()}, {plural(n[1], 'line')} in "
                f"{plural(n[0], 'file')}, kept: it is yours. Delete it whenever you like, or run {C0}uninstall --all "
                f"--delete-record{C1} in your own terminal")
+
+
+def gh_login_census(host: Host, rep: Report) -> None:
+    """R166 (G6.33): gh's own file holding a login for github.com as plain text (seen after the step R160 prints)
+    outlives this tool, so the census says so in one line: it is gh's, this tool did not write it and does not remove
+    it, and it stays. A file that could not be read is said so (an error is never an absence); no login there, no
+    line. gh's own way to take it out is not named here until that step is seen in a proof (the row's own words)."""
+    kind, _ = hosts_file_login(host)
+    path = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
+    if kind == "yes":
+        rep.ok(f"census: gh's login for github.com, kept as plain text in {path}: it is gh's; this tool did not write "
+               "it and does not remove it, and it stays (your account and this computer's admins can read it)")
+    elif kind == "unread":
+        _, why = host.read_checked(path)
+        rep.warn(f"census: gh's file {path}: not read ({as_read(why) if why else 'nothing read'}), so whether it holds "
+                 "a login for github.com as plain text is not known; it is gh's, and this tool does not remove it")
 
 
 def skill_folder_census(host: Host, src: dict | None, rep: Report) -> None:
@@ -9524,7 +9688,8 @@ def before_move_words(s: dict, rep: Report) -> None:
     rep.tell(JOB_TOOLS)
 
 
-def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
+def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report,
+                       limits_words: str | None = None) -> None:
     """G7.10 (P1a run B): what the person must hear before setup, printed by the tool for the agent to pass on word
     for word. A list in the skill file was skipped by a small model; a line the tool prints is not. Only what matters
     before setup (G7.14): the rest is said where it matters."""
@@ -9533,7 +9698,7 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
     rep.tell(f"This is for a private repository only: the tool refuses a public one, and if {repo} is made public "
              "later its runner stops taking jobs, because on a public one a stranger's pull request could run code on "
              "this computer.")
-    rep.tell(floor or limits_in_words(lim, repo))
+    rep.tell(floor or limits_words or limits_in_words(lim, repo))  # R217: setup passes its own, with no command
     # G7.14 (R111): waiting checks, restarts and sleep, and a job's tools are said by `move`, before the merge that
     # moves jobs here; the memory cap's trade-off by `status`, where it names a job the cap stopped.
     if s.get("battery"):
@@ -9565,7 +9730,7 @@ def setup_lines(repo: str, s: dict, lim: dict) -> list[str]:
     """G7.15 (R112): what the person must hear before setup changes anything, read on their own screen: look's block,
     the memory cap's trade-off, move's block, what admin rights make, what leaving takes and keeps, the cost pointer."""
     first, then = _Lines(), _Lines()
-    before_setup_words(repo, s, lim, None, first)
+    before_setup_words(repo, s, lim, None, first, setup_limits_words(lim, repo))  # R217
     before_move_words(s, then)
     one = first.pop()  # "This version serves one repository per computer."
     return [*first[:3], MEMORY_BEFORE_SETUP, *first[3:], *then, one, ADMIN_MAKES, LEAVING_KEEPS, COST_POINTER]
@@ -9623,7 +9788,7 @@ def persons_own_eyes(host: Host, rep: Report, lines: list[str], interactive: boo
     rep.need("read the lines above, then press Enter here to go on; Ctrl-C stops it, and nothing has been changed yet",
              blocks=False, answered_here=True)
     rep.here = False
-    if not outside_hold(("enter", command, tuple(lines)), host.read_enter):
+    if not outside_hold(("enter", command, tuple(lines)), host.read_enter, none_read=lambda got: not got):
         rep.stop("no Enter was read: nothing was changed. Run the same command again in your own terminal")
         return False
     rep.ok("you read the lines and pressed Enter")

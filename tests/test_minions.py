@@ -39,6 +39,22 @@ FIX = os.path.join(ROOT, "tests", "fixtures")
 TMP = tempfile.mkdtemp(prefix="minions-test-")
 atexit.register(shutil.rmtree, TMP, True)
 REPO = "example-org/example-repo"
+
+
+def _read(*args, **kw):
+    """R177: a file's text, the file closed again (open(...).read() leaves it to the collector: a ResourceWarning)."""
+    with open(*args, **kw) as f:
+        return f.read()
+
+
+def close_pipes(p):
+    """R177: a child's pipes, closed once it has ended (Popen leaves them to the collector: a ResourceWarning)."""
+    for f in (p.stdin, p.stdout, p.stderr):
+        if f is not None:
+            try:
+                f.close()
+            except OSError:  # words still buffered for a child that has ended
+                pass
 BRANCH = re.compile(r"minions-start-test-[0-9a-f]{8}")
 
 
@@ -518,6 +534,32 @@ class G1(unittest.TestCase):
         self.assertEqual(code, M.EXIT_STOP)
         self.assertTrue(lines[-1].startswith("stop ") and "is public" in lines[-1], lines)
         self.assertEqual(gh.calls, [("GET", "repos/" + REPO)], "nothing more is read or written after the stop")
+
+    def test_G1_22_a_stopped_look_changes_only_its_own_entry(self):
+        # Row R165, read in the code 2026-11-24 with R160's cure: on a computer that already holds the tool's record,
+        # a look that stops writes that repository's look entry, marked stopped with an empty survey, over the
+        # earlier one, as designed. Held here: every other byte of the record, and of its copy, is the same.
+        import json
+        host, _ = doctor_world()
+        data = M.load_state(host)
+        data["looks"]["other-org/other-repo"] = {"time": "2026-01-01T00:00:00Z", "stopped": False,
+                                                 "survey": {"system": "Linux", "cores": 2}}
+        M.save_state(host, data)
+        path, copy = M.state_path(host), M.copy_path(host)
+        before = _read(path, encoding="utf-8")
+        self.assertEqual(before, json.dumps(json.loads(before), indent=1, sort_keys=True))  # the writer's own form
+        self.assertFalse(json.loads(before)["looks"][REPO]["stopped"])
+        rows = with_repo(self.recent, lambda d: d.update(visibility="public", private=False))
+        code, lines = look(StandIn(rows), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        after = _read(path, encoding="utf-8")
+        entry = json.loads(after)["looks"][REPO]
+        self.assertTrue(entry["stopped"], entry)  # so setup asks for a new look
+        self.assertEqual(entry["survey"], {})
+        want = json.loads(before)
+        want["looks"][REPO] = entry
+        self.assertEqual(after, json.dumps(want, indent=1, sort_keys=True))  # byte for byte, but for that entry
+        self.assertEqual(_read(copy, encoding="utf-8"), after)
 
     def test_G1_2_look_names_account_kind_and_runner_scope(self):
         _, lines = look(StandIn(self.recent), linux_host())
@@ -1294,9 +1336,33 @@ class G2(unittest.TestCase):
         self.assertIn(f"run `uninstall example-org/other-repo` first, then `setup {REPO}` again", lines[-1])
         self.assertNotIn("next version", lines[-1])  # G7.12: a line the person must hear promises no later version
         self.assertEqual(admin_steps(host), [], "nothing is touched for a second repository")
-        skill = open(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md")).read()
+        skill = _read(os.path.join(ROOT, "skills", "repo-minions", "SKILL.md"))
         self.assertIn("This version serves one repository per computer.", skill)
         self.assertNotIn("next version", skill)
+
+    def test_G6_41_a_look_stamped_later_than_the_clock_is_said_so(self):
+        # Row R213, seen 2026-11-26 in a stand-in trial: "the last look of ... is -4848 minutes old". A look stamped
+        # later than this computer's clock (a clock moved back after it) is said as such, with both times, never as a
+        # negative age, and is not taken for a fresh look: the step is a new look; nothing is touched.
+        for minutes in (-4848, -2, -1):
+            host, sha = setup_host()
+            fresh_look(host, minutes=minutes)
+            stamped = M.load_state(host)["looks"][REPO]["time"]
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual((code, len(lines)), (M.EXIT_STOP, 1), lines)
+            line = lines[0]
+            self.assertNotRegex(line, r"-[0-9]+ minutes", line)
+            self.assertNotIn("minutes old", line)
+            self.assertIn(f"the last look of {REPO} is stamped {stamped}, later than this computer's clock (", line)
+            now = re.search(r"later than this computer's clock \(([0-9TZ:-]+)\)", line).group(1)
+            self.assertLess(now, stamped, line)
+            self.assertIn(f"`look {REPO}`", line)
+            self.assertEqual(admin_steps(host), [], "nothing is touched")
+        # a look within the hour, stamped before the clock, still passes this check (G2.1 holds the rest)
+        host, sha = setup_host()
+        fresh_look(host, minutes=5)
+        rep = M.Report(out=Out())
+        self.assertIsNotNone(M.check_fresh_look(host, REPO, rep), rep.lines)
 
     def test_G2_1_setup_needs_a_fresh_clean_look(self):
         host, sha = setup_host()
@@ -1665,9 +1731,9 @@ class G2(unittest.TestCase):
         # R135 (rule 28): docs/root-steps.md lists every place the tool runs a command as root, each with its answers
         # (runs a job's file? a job's path? what it creates, with mode and owner). A root step not on the list, or a
         # row the tool no longer has, fails here.
-        src = open(os.path.join(ROOT, "scripts", "minions.py")).read()
+        src = _read(os.path.join(ROOT, "scripts", "minions.py"))
         code = root_sites(src)
-        doc = open(os.path.join(ROOT, "docs", "root-steps.md")).read()
+        doc = _read(os.path.join(ROOT, "docs", "root-steps.md"))
         rows = set()
         for line in doc.splitlines():
             cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
@@ -1684,7 +1750,7 @@ class G2(unittest.TestCase):
         # R134 (rule 28, NOTHING A SKILL MAKES IS WRITABLE BY ANOTHER ACCOUNT): a launcher may start the tool with
         # umask 000. main raises it to at least 022 before anything else; every root step that makes something names
         # its mode and owner; the files the tool makes itself are not writable by group or others.
-        main_ = next(n for n in ast.parse(open(os.path.join(ROOT, "scripts", "minions.py")).read()).body
+        main_ = next(n for n in ast.parse(_read(os.path.join(ROOT, "scripts", "minions.py"))).body
                      if isinstance(n, ast.FunctionDef) and n.name == "main")
         first_call = next(c for s in main_.body for c in ast.walk(s) if isinstance(c, ast.Call)
                           and isinstance(c.func, ast.Name) and c.func.id not in ("parser", "Host"))
@@ -2232,6 +2298,29 @@ class G3(unittest.TestCase):
         cannot = body.split("## Left as they are (they cannot run on this computer)")[1].split("##")[0]
         self.assertNotIn("not ours", cannot)
 
+    def test_G3_12_move_says_what_look_says_of_a_file_with_no_job(self):
+        # Row R203 (the maintainer's sighting on a copy of the tool, 2026-11-25): a workflow file whose plain jobs:
+        # key has no job under it. look said no job was read; move named it nowhere on the terminal. Now move says
+        # what look says; the file was read, so it is not on the page among the files not read, and nothing of it
+        # is written; the other file moves as before.
+        path = ".github/workflows/empty.yml"
+        for what, text in (("nothing after the key", "name: e\non: [push]\njobs:\n"),
+                           ("only a comment under it", "name: e\non: [push]\njobs:\n  # none yet\n")):
+            with self.subTest(empty=what):
+                self.assertEqual(M.read_workflow(text), [])
+                files = {".github/workflows/ci.yml": CI_YML, path: text}
+                gh = MoveGH(files)
+                code, lines = run_move(gh, move_host())
+                self.assertEqual(code, M.EXIT_NEED, lines)
+                self.assertEqual([x for x in lines if path in x], [f"warn {path}: no job read"], lines)
+                written = [e["path"] for m, p, b in gh.writes if p.endswith("/git/trees") for e in b["tree"]]
+                self.assertEqual(written, [".github/workflows/ci.yml"], lines)
+                self.assertNotIn(path, pr_body_of(gh))  # read, so never among the files not read
+                # look's own words for the same file, said the same way
+                rep = M.Report(Out())
+                M.check_workflows(MoveGH(files), REPO, {}, rep)
+                self.assertIn(f"warn {path}: no job read", folded(rep.lines))
+
     def test_G3_2_jobs_that_cannot_move_are_left_and_named(self):
         host, gh = move_host(), MoveGH(self.FILES)
         code, lines = run_move(gh, host)
@@ -2387,6 +2476,86 @@ class G3(unittest.TestCase):
                 self.assertTrue(line.endswith(M.SHOWN_CHANGED), (heading, line))
             self.assertNotIn("$(", body)
             self.assertNotIn(name, body)
+
+    def test_G8_25_setup_says_the_command_below_only_where_it_hands_over_a_step(self):
+        # Seen 2026-11-26 on a stock VM (row R217): setup, run from the agent's shell, printed the limits line with
+        # "the command below" and a placeholder command before the need-you line and the step's own; the walk took the
+        # first for the step. The owner's ruling (2026-11-27, (a)): setup's limits line says the real numbers and
+        # where the way to change them is shown, and carries no command, on both roads; where setup hands over a step,
+        # its need-you line is the only one of the run that says "the command below", and that command is the last
+        # line printed; on the person's own terminal the need-you line carries no command, and the lines read before
+        # Enter may name a command for later (a laptop's battery, leaving), each on its own line, none of them a step.
+        survey = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024}
+        where = f"; the way to change that is shown in what look prints for {REPO} and in this tool's README"
+        limits = ("ok jobs here get at most 4 of this computer's 8 processors and 60 % of its memory "
+                  f"({M.gb(int(M.slice_limits(survey)['MemoryMax']))})" + where)
+
+        def world(kind="none", home=0o750, serves=False, runs=None):
+            host, sha = setup_host(runs=runs or {})
+            host.home_mode = home
+            fresh_look(host)
+            data = M.load_state(host)
+            data["looks"][REPO]["survey"].update(battery=kind == "battery", lid=kind == "lid", serves=serves,
+                                                 serves_what="port(s) open to the network: 8088" if serves else "")
+            M.save_state(host, data)
+            return host, sha
+
+        def printed(host, sha, interactive):
+            out = Out()
+            code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, interactive=interactive)
+            return code, out.printed()
+
+        def limits_said(said, road):
+            got = [x for x in said if "jobs here get at most" in x]
+            for x in got:
+                self.assertNotRegex(x, REF, road)
+                self.assertNotIn("--limits", x, road)
+                self.assertTrue(x.endswith(where) and "4 of this computer's 8 processors and 60 % of its memory (" in x,
+                                (road, x))
+            return got
+
+        # (1) the roads where setup hands the person a step: the agent's shell (on a desktop, a laptop's battery or
+        # lid alike), and the login, beside-live and home-folder needs (each from the person's terminal too)
+        steps = [(f"the agent's shell ({k})", world(k), False, f"python3 -I {M.tool_path()} setup {REPO}", True)
+                 for k in ("none", "battery", "lid")]
+        open_home = world(home=0o755)
+        steps += [("an open home folder", open_home, True, f"chmod 750 {open_home[0].home()}", True),
+                  ("something live", world(serves=True), True, f"setup {REPO} --beside-live-too", False),
+                  ("no login", world(runs={("gh", "api", "-i", "user"): (4, NO_LOGIN)}), True, "gh auth login", False)]
+        for road, (host, sha), interactive, step, after_limits in steps:
+            code, said = printed(host, sha, interactive)
+            self.assertEqual(code, M.EXIT_NEED, (road, said))
+            ref = [i for i, x in enumerate(said) if REF.search(x)]
+            self.assertEqual(len(ref), 1, (road, said))
+            self.assertTrue(said[ref[0]].startswith("need you: "), (road, said))
+            self.assertEqual(REF.findall(said[ref[0]]), ["the command below"], (road, said))
+            self.assertEqual(said[ref[0] + 1:], [step], (road, said))  # its command, and no line after it
+            self.assertEqual(limits_said(said, road), [limits] if after_limits else [], (road, said))
+            self.assertEqual(admin_steps(host), [], road)
+        # (2) the person's own terminal: the need-you line carries no command; the lines read before Enter name the
+        # limits with no command, and a laptop's battery or lid and the leaving, each with its command on its own line
+        for kind in ("none", "battery", "lid"):
+            road = f"the person's terminal ({kind})"
+            code, said = printed(*world(kind), True)
+            self.assertEqual(code, M.EXIT_OK, (road, said))
+            needs = [x for x in said if x.startswith("need you: ")]
+            self.assertTrue(needs[0].startswith("need you: read the lines above, then press Enter here"), needs)
+            for x in needs:
+                self.assertNotRegex(x, REF, road)
+            self.assertIn(limits, limits_said(said, road), road)  # setup's own ok line, and (below) its copy
+            tells = [(i, x) for i, x in enumerate(said) if TELL.match(x)]
+            self.assertEqual([TELL.sub("", x) for _, x in tells if "jobs here get at most" in x], [limits[len("ok "):]],
+                             road)  # the same words as setup's own ok line
+            named = {said[i + 1] for i, x in tells if REF.search(x)}
+            self.assertEqual(named, {"uninstall --all"} | ({f"resume {REPO} --on-battery-too"} if kind != "none" else
+                                                           set()), (road, said))
+            enter = said.index(needs[0])
+            self.assertTrue(all(i < enter for i, x in tells if REF.search(x)), road)
+        # (3) the places the limits line names show the way to change them: look's own line and the README
+        code, said = look(StandIn(load("look-recent-runs.jsonl")), linux_host())
+        self.assertTrue(any(f"`setup {REPO} --limits PROCESSORS,PERCENT`" in x for x in said), said)
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f:
+            self.assertRegex(f.read(), r"`setup [A-Z]+/[A-Z]+ --limits PROCESSORS,")
 
     def test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write(self):
         # Row R197 (read in the code by the maintainer, 2026-11-25): a word of --include-job that matched no job was
@@ -2695,10 +2864,10 @@ class G4(unittest.TestCase):
                     pid = int(f.read())
                 os.kill(pid, 0)  # the locks are held while the job runs
                 for _ in range(50):
-                    if os.path.exists(log) and len(open(log).read().splitlines()) == 2:
+                    if os.path.exists(log) and len(_read(log).splitlines()) == 2:
                         break
                     M.time.sleep(0.1)
-                self.assertEqual(open(log).read().splitlines(),
+                self.assertEqual(_read(log).splitlines(),
                                  [" ".join(M.INHIBIT_IDLE[1:]), " ".join(M.INHIBIT_SLEEP_DELAY[1:])])
                 with open(f"/proc/{pid}/environ", "rb") as f:
                     self.assertNotIn(b"RUNNER_TRACKING_ID=", f.read())  # its own, ended by our hook
@@ -2709,7 +2878,7 @@ class G4(unittest.TestCase):
                 for _ in range(50):
                     try:
                         os.kill(pid, 0)
-                        if open(f"/proc/{pid}/stat").read().split()[2] == "Z":
+                        if _read(f"/proc/{pid}/stat").split()[2] == "Z":
                             break
                     except (ProcessLookupError, FileNotFoundError):
                         break
@@ -2728,7 +2897,7 @@ class G4(unittest.TestCase):
             for _ in range(50):
                 try:
                     os.kill(p, 0)
-                    if open(f"/proc/{p}/stat").read().split()[2] == "Z":
+                    if _read(f"/proc/{p}/stat").split()[2] == "Z":
                         return True
                 except (ProcessLookupError, FileNotFoundError):
                     return True
@@ -3149,7 +3318,7 @@ def printed_system_commands():
     """G8.16: every backticked system command in a string the tool can print (docstrings left out), its f-string
     fields read as {}."""
     import ast
-    tree = ast.parse(open(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8").read())
+    tree = ast.parse(_read(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8"))
     docs = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef)) and node.body and \
@@ -3261,17 +3430,17 @@ class G5(unittest.TestCase):
         # R133: a job can blank the start hook in the runner's own .env (seen on a stock VM, 2026-11-24), so no line,
         # shown or written, says the hook refuses a job without saying "unless a job that already ran here switched
         # that hook off"; the README says the watch is the gate and names the window.
-        src = open(os.path.join(ROOT, "scripts", "minions.py")).read().splitlines()
+        src = _read(os.path.join(ROOT, "scripts", "minions.py")).splitlines()
         for i, line in enumerate(src):
             if re.search(r"hook here refuses", line) and not line.lstrip().startswith("#"):
                 self.assertIn("HOOK_CAVEAT", " ".join(src[i:i + 3]), f"scripts/minions.py:{i + 1}")
         docs = [os.path.join(ROOT, "docs", "root-steps.md")]
-        readme = " ".join(open(os.path.join(ROOT, "README.md")).read().split())
+        readme = " ".join(_read(os.path.join(ROOT, "README.md")).split())
         if "nothing can be installed yet" not in readme:  # the release branch's README (main's has no install lines)
             docs.append(os.path.join(ROOT, "README.md"))
             self.assertIn("nothing a job can write is ever run, sourced or followed by root", readme)
         for p in docs:
-            text = " ".join(open(p).read().split())
+            text = " ".join(_read(p).split())
             for words in ("switched the hook off", "up to five minutes, longer while GitHub cannot be reached",
                           "nothing on this computer refuses a job, and a job already running finishes"):
                 self.assertIn(words, text, p)
@@ -3316,6 +3485,24 @@ class G5(unittest.TestCase):
         self.assertIn(f"ok queue for {REPO}: 1 job(s) waiting for our runner, the oldest for 4 min", lines)
         gh = StatusGH()
         self.assertIn(f"ok queue for {REPO}: no job waiting for our runner", run_cmd(M.status, REPO, host=host, gh=gh)[1])
+
+    def test_G5_1_status_never_says_idle_from_a_job_process_read_that_could_not_answer(self):
+        # Row R170 (AN ERROR IS NEVER AN ABSENCE), read in the code 2026-11-24: status took a pgrep that could not answer (an exit other
+        # than 0 or 1) as no job process. Now this computer's side is said as not read, with what pgrep answered.
+        for bad in ((2, "pgrep: cannot read /proc\n"), (127, "Command timed out after 20 seconds"), (3, "")):
+            host, _ = g5_host(runs={("pgrep", "-u", "minions-runner", "-f"): bad})
+            code, lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())
+            line = next(x for x in lines if " minions-box-1 for " in x)
+            self.assertTrue(line.startswith("warn "), line)
+            self.assertIn(f"for {REPO}: this computer's side could not be read.", line)
+            self.assertIn(f"its job processes not read (pgrep answered code {bad[0]}", line)
+            self.assertIn("GitHub says online, not busy", line)
+            self.assertNotIn("idle", line)
+            self.assertNotIn("no job process", line)
+        # the read that answers is said as before
+        host, _ = g5_host()
+        line = next(x for x in run_cmd(M.status, REPO, host=host, gh=StatusGH())[1] if " minions-box-1 for " in x)
+        self.assertIn(f"for {REPO}: idle.", line)
 
     def test_G5_2_idle_only_when_both_sides_agree(self):
         cases = [(False, False, "idle"), (True, False, "the two sides disagree"),
@@ -3389,24 +3576,93 @@ class G5(unittest.TestCase):
             last = f.read().splitlines()[-1]
         self.assertEqual(last, f"2026-11-22T23:00:00Z watch {REPO}: online, not busy")
         # Within three intervals: ok. Older: "the watch is not running", as a warn.
+        T = "the watch's timer, read at {}: systemd reads it active and enabled; heartbeat: "  # R152: the timer read now first
         clock.sleep(14 * 60)
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
-        self.assertIn("ok the watch ran 14 min ago, at 23:00:00Z (every 5 min)", lines)
+        self.assertIn("ok " + T.format("23:14:00Z") + "the watch ran 14 min ago, at 23:00:00Z (every 5 min)", lines)
         clock.sleep(2 * 60)
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
-        self.assertIn("warn the watch is not running: its last heartbeat was 16 min ago, at 23:00:00Z (it runs every "
-                      "5 min)", lines)
+        self.assertIn("warn " + T.format("23:16:00Z") + "the watch is not running: its last heartbeat was 16 min ago, "
+                      "at 23:00:00Z (it runs every 5 min)", lines)
         # R83: the same 16 minutes, 12 of them asleep (seen on a stock machine): the timer counts only waking time,
         # so the watch is not called stopped, and no stop line comes first.
         host.slept = 12 * 60
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
-        self.assertIn("ok the watch ran 16 min ago, at 23:00:00Z; this computer slept 12 min since, and the watch's "
-                      "timer counts only waking time: its next pass comes within 5 min of waking time", lines)
+        self.assertIn("ok " + T.format("23:16:00Z") + "the watch ran 16 min ago, at 23:00:00Z; this computer slept 12 "
+                      "min since, and the watch's timer counts only waking time: its next pass comes within 5 min of "
+                      "waking time", lines)
         self.assertFalse([x for x in lines if "the watch is not running" in x], lines)
         # Asleep only 30 s of the 16 minutes: 15.5 minutes awake with no pass is still a stopped watch.
         host.slept = 30
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
         self.assertTrue(lines[0].startswith("stop the watch is not running"), lines)
+
+    def test_G5_22_status_reads_the_watch_timer_not_only_its_heartbeat(self):
+        # Row R152 (A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE), read in the code 2026-11-24: the
+        # watch line came from the heartbeat alone, so a timer stopped or disabled was said ok for up to three
+        # intervals. Now the timer is read at that moment, in three answers, and the heartbeat is said beside it.
+        ACT, EN = ("systemctl", "is-active", "minions-watch.timer"), ("systemctl", "is-enabled", "minions-watch.timer")
+        beat = "heartbeat: the watch ran 2 min ago, at 22:58:00Z (every 5 min)"
+        for act, en, kind, words in (
+                ((0, "active\n"), (0, "enabled\n"), "ok", "systemd reads it active and enabled; " + beat),
+                ((3, "inactive\n"), (0, "enabled\n"), "warn", "systemd reads it inactive and enabled: the watch is not "
+                 "running now. `sudo systemctl start minions-watch.timer`, or setup again; " + beat),
+                ((3, "failed\n"), (1, "disabled\n"), "warn", "systemd reads it failed and disabled: the watch is not running"),
+                ((0, "active\n"), (1, "disabled\n"), "warn", "systemd reads it active and disabled: it runs now, and does not "
+                 "start again when this computer restarts. Setup again turns it back on; " + beat),
+                # never "ok" from a read that could not answer (its last line is named: under test_G6_28, a warning)
+                ((1, "Failed to connect to bus: No such file or directory\n"), (0, "enabled\n"), "warn",
+                 "whether it runs could not be read (systemctl answered code 1: "),
+                ((0, "active\n"), (0, ""), "warn", "systemd reads it active; whether it starts when this computer restarts "
+                 "could not be read (systemctl answered code 0: ")):
+            host, clock = g5_host(runs={ACT: act, EN: en})
+            lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+            line = next((x for x in lines if "the watch's timer, read at" in x), None)
+            self.assertIsNotNone(line, lines)
+            self.assertTrue(line.startswith(f"{kind} the watch's timer, read at 23:00:00Z: "), line)
+            self.assertIn(words, folded([line])[0], (act, en))
+            if act[0] == 1:
+                self.assertIn("; systemd reads it enabled: so whether the watch runs is not said; status again later; ",
+                              line)
+            if en == (0, ""):
+                self.assertIn("): so whether the watch runs is not said; status again later; ", line)
+            self.assertIn(beat, line)  # the heartbeat's time beside it, fresh in every case
+            self.assertIn(tuple(M.systemctl("is-active", "minions-watch.timer")), host.ran)
+            self.assertIn(tuple(M.systemctl("is-enabled", "minions-watch.timer")), host.ran)
+
+    def test_G5_23_lifts_by_itself_is_said_only_with_the_timer_enabled(self):
+        # Row R153 (A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE), read in the code 2026-11-24: `drain --restart` and status's held-for-a-restart line said
+        # "the hold lifts by itself once this computer has restarted" without reading whether the watch's timer starts
+        # after the restart. Now is-enabled is read at that moment; otherwise what was read and what lifts it instead.
+        EN = ("systemctl", "is-enabled", "minions-watch.timer")
+        for en, kind, words in (
+                ((0, "enabled\n"), "ok", "lifts by itself once this computer has restarted and GitHub reads the runner "
+                 "online again (the watch does it; its timer is read enabled now)"),
+                ((1, "disabled\n"), "warn", "does not lift by itself: the watch's timer is read disabled now, so it does "
+                 f"not start when this computer restarts. After the restart, `resume {REPO}` lifts it (setup again turns "
+                 "the watch back on)"),
+                ((0, "enabled-runtime\n"), "warn", "does not lift by itself: the watch's timer is read enabled-runtime now"),
+                ((1, "Failed to connect to bus: No such file or directory\n"), "warn",
+                 "is lifted by the watch after the restart only if its timer starts then, and whether it starts when this "
+                 "computer restarts could not be read (systemctl answered code 1: ")):
+            host, clock = g5_host(runs={EN: en})
+            host.files["/proc/sys/kernel/random/boot_id"] = "boot-one\n"
+            gh = StatusGH()
+            code, lines = run_cmd(M.drain, None, host=host, gh=gh, restart=True)
+            self.assertEqual(code, M.EXIT_OK, lines)
+            self.assertTrue(lines[-1].startswith(f"{kind} online and idle: safe to restart now. The hold on {REPO} "), lines[-1])
+            self.assertIn(words, folded([lines[-1]])[0], en)
+            self.assertEqual(M.load_state(host)["restart_hold"]["repos"], [REPO])  # the hold is set either way
+            line = next(x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]
+                        if x.split(" ", 1)[1].startswith("held for a restart since"))
+            self.assertTrue(line.startswith(kind + " "), line)
+            self.assertIn("the hold " + words, folded([line])[0], en)
+            if en[0] == 1 and "disabled" not in en[1]:
+                self.assertTrue(folded([line])[0].endswith(f"). If the hold stays after the restart, `resume {REPO}` "
+                                                           "lifts it"), line)
+            if kind == "warn":
+                self.assertNotIn("lifts by itself", line)
+                self.assertNotIn("lifts by itself", lines[-1])
 
     def test_G5_4_a_repository_no_longer_private_gets_no_job_here_and_our_runner_leaves_it(self):
         # Plan 2.0: the watch has no admin rights (G9.7). A job still runs: it finishes (GitHub refuses to remove a
@@ -3748,6 +4004,7 @@ class G5(unittest.TestCase):
         fresh_look(host2)
         data = M.load_state(host2)
         data["runners"] = {REPO: dict(M.load_state(host)["runners"][REPO], folder=FOLDER, unit=UNIT)}
+        data["runner_user_made"] = True  # R178: a runner set up here, so the user setup made is here (getent: there)
         M.save_state(host2, data)
         code, lines = run_setup(setup_gh(sha), host2)
         self.assertEqual(code, M.EXIT_OK, lines)
@@ -3889,6 +4146,7 @@ class G5(unittest.TestCase):
                 "fcntl.flock(fd, fcntl.LOCK_EX); print('ready', flush=True); sys.stdin.readline()")
         holder = subprocess.Popen([sys.executable, "-I", "-c", code, M.lock_path(host)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, text=True)
+        self.addCleanup(close_pipes, holder)
         self.addCleanup(holder.wait)
         self.addCleanup(holder.kill)
         self.assertEqual(holder.stdout.readline().strip(), "ready")
@@ -4594,6 +4852,44 @@ def run_uninstall(gh, host, repo=REPO, **kw):
 
 
 class G6(unittest.TestCase):
+    def test_G6_33_the_census_names_ghs_plain_text_login(self):
+        # Row R166, seen 2026-11-24 on a stock Ubuntu 24.04 virtual machine (steered): after the step R160 prints, gh
+        # kept the login in hosts.yml as plain text, and uninstall --all said nothing of it, though it outlives the
+        # tool. Now the census says so in one line, never the value, and the file is left as it is.
+        login = "github.com:\n    oauth_token: made-up-login-value\n    git_protocol: https\n    user: example-person\n"
+        for everything in (True, False):
+            with self.subTest(everything=everything):
+                gh, world, host = remove_setup()
+                path = os.path.join(host.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+                host.files[path] = login
+                code, lines = (run_uninstall(gh, host, repo=None, everything=True) if everything
+                               else run_uninstall(gh, host))
+                said = [x for x in lines if "hosts.yml" in x]
+                self.assertEqual(said, [f"ok census: gh's login for github.com, kept as plain text in {path}: it is "
+                                        "gh's; this tool did not write it and does not remove it, and it stays (your "
+                                        "account and this computer's admins can read it)"], lines)
+                self.assertFalse([x for x in lines if "made-up-login-value" in x])
+                self.assertEqual(host.files.get(path), login)  # left as it is
+                self.assertFalse([a for a in host.ran if any(path in str(w) for w in a)], "never touched by a command")
+                self.assertFalse([x for x in lines if "gh auth logout" in x])  # gh's own way: not named before a proof
+        # No login in it, or no file: no line. A file that could not be read: said so, never taken for none.
+        for text in ("github.com:\n    git_protocol: https\n", None):
+            gh, world, host = remove_setup()
+            path = os.path.join(host.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+            if text is not None:
+                host.files[path] = text
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertFalse([x for x in lines if "census: gh's" in x], lines)
+        gh, world, host = remove_setup()
+        path = os.path.join(host.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+        host.files[path] = login
+        host.unreadable = {path}
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        said = [x for x in lines if "census: gh's" in x]
+        self.assertEqual(len(said), 1, lines)
+        self.assertTrue(said[0].startswith(f"warn census: gh's file {path}: not read ('[Errno 13] Permission denied"), said)
+        self.assertIn("so whether it holds a login for github.com as plain text is not known", said[0])
+
     def test_G6_17_the_last_uninstall_leaves_nothing_of_the_runner_user_alive_or_scheduled(self):
         # R130 (rule 28, the one-after-another hole): when the last runner goes, its user goes in this order: the
         # service stopped; no process of that user, read back; its crontab and at jobs off; linger off; its files in
@@ -5000,6 +5296,44 @@ class G6(unittest.TestCase):
             self.assertFalse([x for x in lines if x.startswith(("stop ", "need you: log in"))], (form, lines))
             self.assertIn(REPO, M.load_state(h)["runners"])
             self.assertEqual(M.watch(host=h, gh=StatusGH(), out=Out()), M.EXIT_OK, form)
+
+    def test_G6_40_a_cut_after_the_journal_is_kept_does_not_add_it_twice(self):
+        # Row R212, seen 2026-11-26 in a stand-in trial: a cut after the journal was added to the person's record
+        # and before journal.log was deleted made the next uninstall --all add it again (59 lines for 34).
+        class Cut(BaseException):
+            pass
+        real = M.delete_ours
+        seen = {}
+
+        def cut_once(folder, names):
+            if folder == host.state_dir() and "first" not in seen:
+                with open(os.path.join(folder, "journal.log"), encoding="utf-8") as f:
+                    seen["first"] = f.read()
+                raise Cut()
+            if folder == host.state_dir():
+                with open(os.path.join(folder, "journal.log"), encoding="utf-8") as f:
+                    seen["second"] = f.read()
+            return real(folder, names)
+
+        gh, world, host = remove_setup()
+        rec = f"{host.record_dir()}/journal.log"
+        host.files[rec] = "2026-01-01T00:00:00Z an earlier setup's journal, the person's\n"
+        earlier = host.files[rec]
+        with mock.patch.object(M, "delete_ours", cut_once):
+            with self.assertRaises(Cut):
+                run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(host.files[rec], earlier + seen["first"], "the journal was added before the cut")
+            code, out = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertTrue(seen["second"].startswith(seen["first"]), "the second run's own steps came after it")
+        self.assertGreater(len(seen["second"]), len(seen["first"]))
+        self.assertEqual(host.files[rec], earlier + seen["second"], "once: nothing doubled, nothing lost")
+        self.assertFalse(os.path.isdir(host.state_dir()))
+        # A journal that does not continue what the record ends with is added whole
+        host2 = linux_host()
+        host2.files[f"{host2.record_dir()}/journal.log"] = "x 1\ny 2\n"
+        self.assertEqual(M.journal_kept_already(host2, "y 2\nz 3\n"), len("y 2\n"))
+        self.assertEqual(M.journal_kept_already(host2, "q 9\n"), 0)
+        self.assertEqual(M.journal_kept_already(linux_host(), "q 9\n"), 0, "no journal in the record yet")
 
     def test_G6_10_uninstall_keeps_the_persons_record_in_one_folder_they_own(self):
         # Rule 8 and INV6 (plan 3.0, row R99): the record of what the tool did is the person's. It is moved into one
@@ -6031,6 +6365,66 @@ class G6(unittest.TestCase):
         del host.dirs[home]  # the step taken as printed
         self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
 
+    def test_G6_30_doctor_with_the_runner_user_gone_tries_nothing_as_it_and_names_why(self):
+        # R178 (AN ERROR IS NEVER AN ABSENCE): doctor read the user with `id -nG` and took any exit but 0 as "not there"; with the user
+        # gone, its read of the credential files as that user got sudo's refusal and said they "are not 600 and its
+        # own", and the version was "could not read" with no why. Now the user is getent's exit code; with it gone
+        # nothing is tried as it, and each read skipped says why; getent that could not answer is "not read".
+        host, sha = doctor_world()
+        host.runs[("getent", "passwd", "minions-runner")] = (2, "")
+        before = len(host.ran)
+        code, lines = run_doctor(host, sha)
+        self.assertFalse([a for a in host.ran[before:] if a[:4] == ("sudo", "-n", "-u", "minions-runner")],
+                         "nothing is tried as a user that is gone")
+        self.assertFalse([a for a in host.ran[before:] if a[:2] == ("id", "-nG")], "id's exit is never the answer")
+        gone = "the user minions-runner is not there (removed outside this tool), so nothing is tried as it"
+        self.assertIn(f"warn {REPO}: the credential files: not read: {gone}", lines)
+        self.assertIn(f"warn could not read the runner's version: {gone}; GitHub's own self-update stays on", lines)
+        self.assertTrue(any(f"the user {M.RUNNER_USER} is not there: `setup {REPO}` again" in x for x in lines), lines)
+        self.assertFalse([x for x in lines if "are not 600" in x], lines)
+        host, sha = doctor_world()
+        host.runs[("getent", "passwd", "minions-runner")] = (3, "getent: enumeration not supported\n")
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(any(x.startswith(f"warn {REPO}: whether the user {M.RUNNER_USER} is here: not read (")
+                            and "getent: enumeration not supported" in x for x in lines), lines)
+        self.assertFalse([x for x in lines if f"the user {M.RUNNER_USER} is not there" in x], lines)
+
+    def test_G6_30_setup_with_the_runner_user_and_its_home_gone_starts_fresh(self):
+        # R178: setup again for a runner of this tool, with the runner user removed outside the tool and its home
+        # with it, went on as if the runner were there: re-registered in place as the user that is gone (sudo's
+        # refusal), or took the runner as installed. Now what the tool recorded of it is taken away first (nothing
+        # tried as that user), then setup starts fresh: the user made again, one registration, exit 0.
+        for gone_on_github in (True, False):
+            host, sha = setup_host()
+            fresh_look(host)
+            data = M.load_state(host)
+            data["runners"] = {REPO: {"name": "minions-box-1", "folder": FOLDER, "unit": UNIT,
+                                      "labels": ["minions", "minions-medium"], "gone_on_github": gone_on_github}}
+            M.save_state(host, data)
+            gh_state = {"labels": ["minions", "minions-medium"], "deleted": False}
+            def runners(_body, host=host, gone_on_github=gone_on_github, gh_state=gh_state):
+                if any(M.CONFIG_SCRIPT in a for a in host.ran):  # registered fresh by this setup
+                    return runners_answer()
+                if gone_on_github or gh_state["deleted"]:
+                    return 200, {"total_count": 0, "runners": []}
+                return runners_answer(labels=gh_state["labels"])
+            def put_labels(body, gh_state=gh_state):
+                gh_state["labels"] = list(body["labels"])
+                return 200, {"labels": [{"name": x, "type": "custom"} for x in body["labels"]]}
+            def delete(_body, gh_state=gh_state):
+                gh_state["deleted"] = True
+                return 204, None
+            gh = setup_gh(sha, {("GET", f"repos/{REPO}/actions/runners?per_page=100"): runners,
+                                ("PUT", f"repos/{REPO}/actions/runners/7/labels"): put_labels,
+                                ("DELETE", f"repos/{REPO}/actions/runners/7"): delete})
+            code, lines = run_setup(gh, host)
+            self.assertEqual(code, M.EXIT_OK, (gone_on_github, lines[-3:]))
+            self.assertTrue(any("taken away first, read back, then setup starts fresh" in x for x in lines), lines)
+            self.assertNotIn(("sudo", "-n", "-u", "minions-runner", "--", "rm", "-f", f"{FOLDER}/.runner",
+                              f"{FOLDER}/.credentials", f"{FOLDER}/.credentials_rsaparams"), host.ran)
+            self.assertTrue([a for a in host.ran if a[:3] == ("sudo", "-n", "useradd")], "the user made again")
+            self.assertEqual(len([a for a in host.ran if M.CONFIG_SCRIPT in a]), 1)
+
     # Rule 7 (THE SAME STOP MUST NOT COME BACK; A WAIT THAT MAY NOT END): the words that name, in a stop's FIRST
     # printing, what must change or what a second run can find different, and what to do when the same lines come back
     NAMED_CHANGE = re.compile(r"\bfirst\b|if these same lines come back|type the password|in your own terminal|"
@@ -6907,7 +7301,7 @@ class G8(unittest.TestCase):
         # operator. Now every command stops first, nothing run, and the file still reads in 3.8's grammar.
         import ast
         from unittest import mock
-        src = open(M.__file__).read()
+        src = _read(M.__file__)
         ast.parse(src, feature_version=(3, 8))
         host = FakeHost()
         out = Out()
@@ -6919,6 +7313,23 @@ class G8(unittest.TestCase):
         self.assertIn("Ubuntu 22.04 or newer, Debian 12 or newer", out.getvalue())
         self.assertEqual(host.ran, [])
         self.assertNotIn(" | {", src.replace(" ", " "))  # no dict union operator (3.9+) in the tool
+
+    def test_G4_7_doctor_never_passes_one_copy_from_a_read_that_could_not_answer(self):
+        # Row R171 (AN ERROR IS NEVER AN ABSENCE), read in the code 2026-11-24: doctor took a pgrep that could not answer as no copy of
+        # the runner running, so its one-copy check passed unread. Now it is named not read, with what pgrep
+        # answered, and the last line never counts it as kept.
+        host, sha = doctor_world()
+        host.runs[("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.Listener")] = (2, "pgrep: cannot read /proc\n")
+        code, lines = run_doctor(host, sha)
+        self.assertIn(f"warn {REPO}: never two copies of the runner: not read (pgrep answered code 2: pgrep: cannot "
+                      "read /proc)", lines)
+        self.assertEqual(lines[-1], "ok every promise of the install read back as kept, of those that could be read "
+                                    f"(not read: {REPO} one copy)")
+        # Two copies read: still a promise not kept
+        host, sha = doctor_world()
+        host.runs[("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.Listener")] = (0, "11\n12\n")
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(lines[-1].startswith("stop 1 promise(s) not kept here:"), lines[-1])
 
     def test_G8_4_doctor_checks_install_and_finishes_half_done_steps(self):
         # Every promise of G2 and G4 read back as kept, one line each, and nothing changed.
@@ -8112,6 +8523,12 @@ class G8Words(unittest.TestCase):
         r, w = os.pipe()
         os.close(r)
         out = os.fdopen(w, "w")
+        def close_quietly():  # R177: closed at the end; its buffer may still hold words for the closed pipe
+            try:
+                out.close()
+            except OSError:
+                pass
+        self.addCleanup(close_quietly)
         rep = M.Report(out=out)
         rep.ok("one")
         rep.tell("two")
@@ -11071,6 +11488,7 @@ class G6Lock(unittest.TestCase):
         try:
             p.kill()
             p.wait(10)
+            close_pipes(p)
             lock = os.path.join(home, ".minions", M.LOCK_NAME)
             fd = os.open(lock, os.O_RDWR)
             try:
@@ -11275,6 +11693,7 @@ class G6Lock(unittest.TestCase):
             wait_file(holds2)
             p.kill()
             p.wait(30)
+            close_pipes(p)
             t0 = time.monotonic()
             got["took2"] = M.lend_back(host)
             got["back_s"] = time.monotonic() - t0
@@ -11423,6 +11842,46 @@ class G6Lock(unittest.TestCase):
         self.assertIn("stop this tool's uninstall was about to write its record without holding its lock, which it "
                       "never does, so it wrote nothing more and stopped here", out.getvalue())
 
+    def test_G6_44_a_wait_with_no_answer_read_never_says_an_answer_came(self):
+        # Row R216, seen on a stock Ubuntu 22.04 guest: setup's Enter with its input closed under a terminal. The wait
+        # lets the lock go and the command runs again from its first line, as G6.36 says; when nothing was read, no
+        # line says an answer came: the stop says none was read and that nothing was changed.
+        home = made_home()
+
+        @M.record_guard
+        def setup(host=None, out=None):
+            rep = M.Report(out)
+            rep.ok("a line before the wait")
+            if not M.persons_own_eyes(host, rep, ["the lines you read"], True, "`setup o/r`"):
+                return rep.code()
+            d = M.load_state(host)
+            d.setdefault("looks", {})["o/after"] = {"t": 1}
+            M.save_state(host, d)
+            rep.ok("done")
+            return rep.code()
+
+        h = home_host(home)
+        h.tty, h.enter, h.read_enters = True, False, 0  # a terminal whose input is closed: Enter reads nothing
+        out = Out()
+        code = setup(host=h, out=out)
+        text = out.getvalue()
+        self.assertNotEqual(code, M.EXIT_OK, text)
+        self.assertEqual(h.read_enters, 1, "asked once")
+        self.assertNotIn("after your answer", text)
+        self.assertNotIn("you read the lines and pressed Enter", text)
+        self.assertEqual(text.count("no Enter was read: nothing was changed. Run the same command again in your own "
+                                    "terminal"), 1, text)
+        self.assertEqual(text.count("ok a line before the wait"), 1, "what was printed before the wait, once")
+        rec, _ = read_whole(os.path.join(home, ".minions", "minions.json"))
+        self.assertNotIn("o/after", (rec or {}).get("looks", {}), "nothing was changed")
+        # An answer that came still says so, as G6.36 holds
+        home = made_home()
+        h = home_host(home)
+        h.tty, h.enter, h.read_enters = True, True, 0
+        out = Out()
+        self.assertEqual(setup(host=h, out=out), M.EXIT_OK, out.getvalue())
+        self.assertEqual(out.getvalue().count("after your answer this command took this tool's lock again"), 1)
+
     def test_G6_36_every_wait_for_a_person_and_every_long_wait_runs_with_the_lock_let_go(self):
         # Every wait for a person in the tool is one of these three, each inside
         # outside_hold or last_wait: the Enter (persons_own_eyes: setup, uninstall), sudo's password (ask_admin_once:
@@ -11432,7 +11891,8 @@ class G6Lock(unittest.TestCase):
         self.assertEqual(src.count("host.read_enter()"), 0)
         self.assertEqual(src.count("host.sudo_validate()"), 0)
         self.assertEqual(len(re.findall(r"host\.ask\(", src)), 0)
-        self.assertIn('outside_hold(("enter", command, tuple(lines)), host.read_enter)', inspect_source(M.persons_own_eyes))
+        self.assertIn('outside_hold(("enter", command, tuple(lines)), host.read_enter, none_read=',  # R216
+                      inspect_source(M.persons_own_eyes))
         self.assertIn('outside_hold(("sudo", cmd), host.sudo_validate)', inspect_source(M.ask_admin_once))
         self.assertIn("last_wait(", inspect_source(M.delete_record_if_typed))
         self.assertIn("input(prompt)", inspect_source(M.Host.ask))
@@ -11627,6 +12087,7 @@ class G6Lock(unittest.TestCase):
             code = ("import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDWR); "
                     + ("fcntl.flock(fd, fcntl.LOCK_EX); " if take else "") + "print('ready', flush=True); time.sleep(60)")
             k = subprocess.Popen([sys.executable, "-I", "-c", code, path], stdout=subprocess.PIPE, text=True)
+            self.addCleanup(close_pipes, k)
             self.addCleanup(k.wait)
             self.addCleanup(k.kill)
             self.assertEqual(k.stdout.readline().strip(), "ready")
