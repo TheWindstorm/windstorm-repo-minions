@@ -2477,6 +2477,86 @@ class G3(unittest.TestCase):
             self.assertNotIn("$(", body)
             self.assertNotIn(name, body)
 
+    def test_G8_25_setup_says_the_command_below_only_where_it_hands_over_a_step(self):
+        # Seen 2026-11-26 on a stock VM (row R217): setup, run from the agent's shell, printed the limits line with
+        # "the command below" and a placeholder command before the need-you line and the step's own; the walk took the
+        # first for the step. The owner's ruling (2026-11-27, (a)): setup's limits line says the real numbers and
+        # where the way to change them is shown, and carries no command, on both roads; where setup hands over a step,
+        # its need-you line is the only one of the run that says "the command below", and that command is the last
+        # line printed; on the person's own terminal the need-you line carries no command, and the lines read before
+        # Enter may name a command for later (a laptop's battery, leaving), each on its own line, none of them a step.
+        survey = {"system": "Linux", "machine": "x86_64", "cores": 8, "mem": 16384000 * 1024}
+        where = f"; the way to change that is shown in what look prints for {REPO} and in this tool's README"
+        limits = ("ok jobs here get at most 4 of this computer's 8 processors and 60 % of its memory "
+                  f"({M.gb(int(M.slice_limits(survey)['MemoryMax']))})" + where)
+
+        def world(kind="none", home=0o750, serves=False, runs=None):
+            host, sha = setup_host(runs=runs or {})
+            host.home_mode = home
+            fresh_look(host)
+            data = M.load_state(host)
+            data["looks"][REPO]["survey"].update(battery=kind == "battery", lid=kind == "lid", serves=serves,
+                                                 serves_what="port(s) open to the network: 8088" if serves else "")
+            M.save_state(host, data)
+            return host, sha
+
+        def printed(host, sha, interactive):
+            out = Out()
+            code = M.setup(REPO, host=host, gh=setup_gh(sha), out=out, interactive=interactive)
+            return code, out.printed()
+
+        def limits_said(said, road):
+            got = [x for x in said if "jobs here get at most" in x]
+            for x in got:
+                self.assertNotRegex(x, REF, road)
+                self.assertNotIn("--limits", x, road)
+                self.assertTrue(x.endswith(where) and "4 of this computer's 8 processors and 60 % of its memory (" in x,
+                                (road, x))
+            return got
+
+        # (1) the roads where setup hands the person a step: the agent's shell (on a desktop, a laptop's battery or
+        # lid alike), and the login, beside-live and home-folder needs (each from the person's terminal too)
+        steps = [(f"the agent's shell ({k})", world(k), False, f"python3 -I {M.tool_path()} setup {REPO}", True)
+                 for k in ("none", "battery", "lid")]
+        open_home = world(home=0o755)
+        steps += [("an open home folder", open_home, True, f"chmod 750 {open_home[0].home()}", True),
+                  ("something live", world(serves=True), True, f"setup {REPO} --beside-live-too", False),
+                  ("no login", world(runs={("gh", "api", "-i", "user"): (4, NO_LOGIN)}), True, "gh auth login", False)]
+        for road, (host, sha), interactive, step, after_limits in steps:
+            code, said = printed(host, sha, interactive)
+            self.assertEqual(code, M.EXIT_NEED, (road, said))
+            ref = [i for i, x in enumerate(said) if REF.search(x)]
+            self.assertEqual(len(ref), 1, (road, said))
+            self.assertTrue(said[ref[0]].startswith("need you: "), (road, said))
+            self.assertEqual(REF.findall(said[ref[0]]), ["the command below"], (road, said))
+            self.assertEqual(said[ref[0] + 1:], [step], (road, said))  # its command, and no line after it
+            self.assertEqual(limits_said(said, road), [limits] if after_limits else [], (road, said))
+            self.assertEqual(admin_steps(host), [], road)
+        # (2) the person's own terminal: the need-you line carries no command; the lines read before Enter name the
+        # limits with no command, and a laptop's battery or lid and the leaving, each with its command on its own line
+        for kind in ("none", "battery", "lid"):
+            road = f"the person's terminal ({kind})"
+            code, said = printed(*world(kind), True)
+            self.assertEqual(code, M.EXIT_OK, (road, said))
+            needs = [x for x in said if x.startswith("need you: ")]
+            self.assertTrue(needs[0].startswith("need you: read the lines above, then press Enter here"), needs)
+            for x in needs:
+                self.assertNotRegex(x, REF, road)
+            self.assertIn(limits, limits_said(said, road), road)  # setup's own ok line, and (below) its copy
+            tells = [(i, x) for i, x in enumerate(said) if TELL.match(x)]
+            self.assertEqual([TELL.sub("", x) for _, x in tells if "jobs here get at most" in x], [limits[len("ok "):]],
+                             road)  # the same words as setup's own ok line
+            named = {said[i + 1] for i, x in tells if REF.search(x)}
+            self.assertEqual(named, {"uninstall --all"} | ({f"resume {REPO} --on-battery-too"} if kind != "none" else
+                                                           set()), (road, said))
+            enter = said.index(needs[0])
+            self.assertTrue(all(i < enter for i, x in tells if REF.search(x)), road)
+        # (3) the places the limits line names show the way to change them: look's own line and the README
+        code, said = look(StandIn(load("look-recent-runs.jsonl")), linux_host())
+        self.assertTrue(any(f"`setup {REPO} --limits PROCESSORS,PERCENT`" in x for x in said), said)
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f:
+            self.assertRegex(f.read(), r"`setup [A-Z]+/[A-Z]+ --limits PROCESSORS,")
+
     def test_G3_8_an_include_job_word_that_matches_no_job_stops_before_any_write(self):
         # Row R197 (read in the code by the maintainer, 2026-11-25): a word of --include-job that matched no job was
         # passed in silence, and move opened its pull request as if it had not been given. Now it stops before the

@@ -3322,17 +3322,32 @@ def slice_limits(survey_: dict, chosen: tuple[int, int] | None = None) -> dict:
             "MemoryMax": str(int(mem * pct / 100)), "cores": cores, "total_cores": total, "pct": pct, "mem": mem}
 
 
+def limits_numbers(lim: dict) -> str:
+    """G7.8: the limits' real numbers, as every line that names them says them."""
+    return (f"jobs here get at most {lim['cores']} of this computer's {plural(lim['total_cores'], 'processor')} and "
+            f"{lim['pct']} % of its memory ({gb(int(lim['MemoryMax']))})")
+
+
+def one_processor_words(lim: dict) -> str:
+    # the owner's ruling, 2026-11-23: warned plainly, never refused, never hidden by a rounding
+    return ("; this computer has one processor: while a job runs it uses all of it, at low priority, and everything "
+            "else here will be slow") if lim["total_cores"] == 1 else ""
+
+
 def limits_in_words(lim: dict, repo: str | None = None) -> str:
     """G7.8: the limits as the person hears them, with the real numbers and the one way to change them."""
-    total = lim["total_cores"]
-    words = (f"jobs here get at most {lim['cores']} of this computer's {plural(total, 'processor')} and "
-             f"{lim['pct']} % of its memory ({gb(int(lim['MemoryMax']))}); the one way to change that is "
-             f"{C0}setup {repo_word(repo)} --limits PROCESSORS,PERCENT{C1}, {LIMITS_WORDS}"
-             + ("" if repo else f", and your repository's name (owner/name) in place of {PLACEHOLDER}"))
-    if total == 1:  # the owner's ruling, 2026-11-23: warned plainly, never refused, never hidden by a rounding
-        words += ("; this computer has one processor: while a job runs it uses all of it, at low priority, and "
-                  "everything else here will be slow")
-    return words
+    return (limits_numbers(lim) + f"; the one way to change that is {C0}setup {repo_word(repo)} --limits "
+            f"PROCESSORS,PERCENT{C1}, {LIMITS_WORDS}"
+            + ("" if repo else f", and your repository's name (owner/name) in place of {PLACEHOLDER}")
+            + one_processor_words(lim))
+
+
+def setup_limits_words(lim: dict, repo: str) -> str:
+    """R217 (G8.25, the owner's ruling of 2026-11-27): setup's limits line, its ok line and its copy in the person's
+    lines alike, says the real numbers and where the way to change them is shown, and carries no command: in setup's
+    output a command for now is only ever the step's. look's own line keeps the command (limits_in_words)."""
+    return (limits_numbers(lim) + f"; the way to change that is shown in what look prints for {repo} and in this "
+            "tool's README" + one_processor_words(lim))
 
 
 def plural(n: int, word: str) -> str:
@@ -4539,7 +4554,7 @@ def setup(repo: str, host: Host | None = None, gh: GitHub | None = None, out=Non
     if floor:
         rep.stop(floor)
         return rep.code()
-    rep.ok(limits_in_words(lim, repo))
+    rep.ok(setup_limits_words(lim, repo))  # R217: no command; the step's is the only one
     now_free = host.disk_free(host.home())  # read now, not the look's number
     if not check_disk_floor(now_free[0] if now_free else survey_.get("free"), rep, "no runner is set up"):
         return rep.code()
@@ -9673,7 +9688,8 @@ def before_move_words(s: dict, rep: Report) -> None:
     rep.tell(JOB_TOOLS)
 
 
-def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report) -> None:
+def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Report,
+                       limits_words: str | None = None) -> None:
     """G7.10 (P1a run B): what the person must hear before setup, printed by the tool for the agent to pass on word
     for word. A list in the skill file was skipped by a small model; a line the tool prints is not. Only what matters
     before setup (G7.14): the rest is said where it matters."""
@@ -9682,7 +9698,7 @@ def before_setup_words(repo: str, s: dict, lim: dict, floor: str | None, rep: Re
     rep.tell(f"This is for a private repository only: the tool refuses a public one, and if {repo} is made public "
              "later its runner stops taking jobs, because on a public one a stranger's pull request could run code on "
              "this computer.")
-    rep.tell(floor or limits_in_words(lim, repo))
+    rep.tell(floor or limits_words or limits_in_words(lim, repo))  # R217: setup passes its own, with no command
     # G7.14 (R111): waiting checks, restarts and sleep, and a job's tools are said by `move`, before the merge that
     # moves jobs here; the memory cap's trade-off by `status`, where it names a job the cap stopped.
     if s.get("battery"):
@@ -9714,7 +9730,7 @@ def setup_lines(repo: str, s: dict, lim: dict) -> list[str]:
     """G7.15 (R112): what the person must hear before setup changes anything, read on their own screen: look's block,
     the memory cap's trade-off, move's block, what admin rights make, what leaving takes and keeps, the cost pointer."""
     first, then = _Lines(), _Lines()
-    before_setup_words(repo, s, lim, None, first)
+    before_setup_words(repo, s, lim, None, first, setup_limits_words(lim, repo))  # R217
     before_move_words(s, then)
     one = first.pop()  # "This version serves one repository per computer."
     return [*first[:3], MEMORY_BEFORE_SETUP, *first[3:], *then, one, ADMIN_MAKES, LEAVING_KEEPS, COST_POINTER]

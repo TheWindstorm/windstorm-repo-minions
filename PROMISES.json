@@ -3008,11 +3008,11 @@
   {
    "id": "R217",
    "seen": "2026-11-26, on a stock Ubuntu 24.04 virtual machine, in a walk of the README's road at the release head: setup, run from the agent's shell, printed two lines that each hand over a command after the words \"the command below\". First the limits line, \"the one way to change that is the command below, with the number of processors and the percent of memory in place of PROCESSORS and PERCENT\", followed by `setup OWNER/REPO --limits PROCESSORS,PERCENT`, with no python3 and no path; then the need-you line, followed by the whole command to run. The walk's own harness took the first command after \"the command below\" for the step: setup ran with the placeholders, refused them, exited 64 and changed nothing.",
-   "promise": "In what setup prints, only the line that hands the person their step says \"the command below\", and the first command after setup's need-you line is the one to run now. The way to change the limits is said in its own words, printed as a whole command made like the step's (python3 -I and the tool's path) with its placeholders named, and it comes after the step and its command, never before them. A test reads setup's printed lines in each form, from the agent's shell and from the person's terminal: every line that says \"the command below\" and the line after it.",
+   "promise": "Where setup hands the person a step (a need-you line with a command: from the agent's shell, and where it asks for a login, for a yes beside something live, or for a home folder closed to others), that line is the only one of the run that says \"the command below\", and its command is the last line setup prints. On the person's own terminal the need-you line carries no command; the lines read there before Enter may each name a command for later (a laptop's battery, leaving), each command on its own line, and none of them is a step. The limits line in setup's output says the real numbers and where the way to change them is shown, and carries no command, on both roads. A test reads setup's printed lines in each form, from the agent's shell and from the person's terminal: every line that says \"the command below\" and the line after it.",
    "codon": "G8.25",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
-   "test": "",
+   "test": "test_G8_25_setup_says_the_command_below_only_where_it_hands_over_a_step",
    "owner": "maintainer",
    "proven": "",
    "issue": 407,
