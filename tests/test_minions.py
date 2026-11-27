@@ -3487,7 +3487,7 @@ class G5(unittest.TestCase):
         self.assertIn(f"ok queue for {REPO}: no job waiting for our runner", run_cmd(M.status, REPO, host=host, gh=gh)[1])
 
     def test_G5_1_status_never_says_idle_from_a_job_process_read_that_could_not_answer(self):
-        # Row R170 (rule 6), read in the code 2026-11-24: status took a pgrep that could not answer (an exit other
+        # Row R170 (AN ERROR IS NEVER AN ABSENCE), read in the code 2026-11-24: status took a pgrep that could not answer (an exit other
         # than 0 or 1) as no job process. Now this computer's side is said as not read, with what pgrep answered.
         for bad in ((2, "pgrep: cannot read /proc\n"), (127, "Command timed out after 20 seconds"), (3, "")):
             host, _ = g5_host(runs={("pgrep", "-u", "minions-runner", "-f"): bad})
@@ -3598,7 +3598,7 @@ class G5(unittest.TestCase):
         self.assertTrue(lines[0].startswith("stop the watch is not running"), lines)
 
     def test_G5_22_status_reads_the_watch_timer_not_only_its_heartbeat(self):
-        # Row R152 (rule 24, A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE), read in the code 2026-11-24: the
+        # Row R152 (A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE), read in the code 2026-11-24: the
         # watch line came from the heartbeat alone, so a timer stopped or disabled was said ok for up to three
         # intervals. Now the timer is read at that moment, in three answers, and the heartbeat is said beside it.
         ACT, EN = ("systemctl", "is-active", "minions-watch.timer"), ("systemctl", "is-enabled", "minions-watch.timer")
@@ -3631,7 +3631,7 @@ class G5(unittest.TestCase):
             self.assertIn(tuple(M.systemctl("is-enabled", "minions-watch.timer")), host.ran)
 
     def test_G5_23_lifts_by_itself_is_said_only_with_the_timer_enabled(self):
-        # Row R153 (rule 24), read in the code 2026-11-24: `drain --restart` and status's held-for-a-restart line said
+        # Row R153 (A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE), read in the code 2026-11-24: `drain --restart` and status's held-for-a-restart line said
         # "the hold lifts by itself once this computer has restarted" without reading whether the watch's timer starts
         # after the restart. Now is-enabled is read at that moment; otherwise what was read and what lifts it instead.
         EN = ("systemctl", "is-enabled", "minions-watch.timer")
@@ -6366,7 +6366,7 @@ class G6(unittest.TestCase):
         self.assertEqual(run_setup(setup_gh(sha), host)[0], M.EXIT_OK)
 
     def test_G6_30_doctor_with_the_runner_user_gone_tries_nothing_as_it_and_names_why(self):
-        # R178 (rule 6): doctor read the user with `id -nG` and took any exit but 0 as "not there"; with the user
+        # R178 (AN ERROR IS NEVER AN ABSENCE): doctor read the user with `id -nG` and took any exit but 0 as "not there"; with the user
         # gone, its read of the credential files as that user got sudo's refusal and said they "are not 600 and its
         # own", and the version was "could not read" with no why. Now the user is getent's exit code; with it gone
         # nothing is tried as it, and each read skipped says why; getent that could not answer is "not read".
@@ -7315,7 +7315,7 @@ class G8(unittest.TestCase):
         self.assertNotIn(" | {", src.replace(" ", " "))  # no dict union operator (3.9+) in the tool
 
     def test_G4_7_doctor_never_passes_one_copy_from_a_read_that_could_not_answer(self):
-        # Row R171 (rule 6), read in the code 2026-11-24: doctor took a pgrep that could not answer as no copy of
+        # Row R171 (AN ERROR IS NEVER AN ABSENCE), read in the code 2026-11-24: doctor took a pgrep that could not answer as no copy of
         # the runner running, so its one-copy check passed unread. Now it is named not read, with what pgrep
         # answered, and the last line never counts it as kept.
         host, sha = doctor_world()

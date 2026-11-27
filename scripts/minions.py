@@ -5798,7 +5798,7 @@ def computer_side(host: Host, mine: dict) -> tuple[str, list[int] | None, dt.dat
     rc, active = host.run(systemctl("is-active", mine["unit"]))
     try:
         worker, why = runner_pids(host, mine["folder"], "Runner.Worker"), ""
-    except PidsUnread as e:  # R170 (rule 6): never "no job process" from a read that could not answer
+    except PidsUnread as e:  # R170 (AN ERROR IS NEVER AN ABSENCE): never "no job process" from a read that could not answer
         worker, why = None, str(e)
     return answer_or_words(active), worker, host.now(), why
 
@@ -5941,7 +5941,7 @@ def skill_folder_line(host: Host, data: dict) -> tuple[str, str] | None:
 
 
 def watch_timer_now(host: Host) -> tuple[str, str, str, str]:
-    """R152, R153 (rule 24: A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE; rule 6's three answers): the
+    """R152, R153 (A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE; AN ERROR IS NEVER AN ABSENCE, its three answers): the
     watch's timer as systemd reads it at this moment. Returns (runs, boot, words): runs is "yes" (is-active active),
     "no" (inactive or failed) or "unread"; boot is "yes" (is-enabled enabled), "no" (disabled, masked, masked-runtime,
     or enabled-runtime, which does not outlast a restart) or "unread"; words say both as read; the last, is-enabled's
@@ -8388,7 +8388,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report, not_r
         broken.append(f"{repo} {what}")
 
     # G2.2: the runner's user has no admin rights and its home is closed.
-    # R178 (rule 6): whether the user is there is getent's exit code (runner_user_state), never id's exit: an id that
+    # R178 (AN ERROR IS NEVER AN ABSENCE): whether the user is there is getent's exit code (runner_user_state), never id's exit: an id that
     # could not answer is not "not there". With the user gone, nothing is tried as it, and each read skipped says so.
     ukind, uwhy = runner_user_state(host)
     gone_why = f"the user {RUNNER_USER} is not there (removed outside this tool), so nothing is tried as it"
@@ -8502,7 +8502,7 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report, not_r
     # G4.7: never two copies.
     try:
         listeners = runner_pids(host, folder, "Runner.Listener")
-    except PidsUnread as e:  # R171 (rule 6): the one-copy check not read, with what pgrep answered; never passed
+    except PidsUnread as e:  # R171 (AN ERROR IS NEVER AN ABSENCE): the one-copy check not read, with what pgrep answered; never passed
         listeners = []
         rep.warn(f"{repo}: never two copies of the runner: not read ({e})")
         if not_read is not None:
