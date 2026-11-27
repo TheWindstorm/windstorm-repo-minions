@@ -4243,35 +4243,60 @@ def unpack_from_roots_copy(host: Host, rel: dict, tmp: str, folder: str, rep: Re
         sudo(host, ["rm", "-rf", "--one-file-system", d])
 
 
-def package_list(host: Host) -> set[str] | None:
-    """R139 (rule 8): the system's installed packages, read only, as you (no admin rights). None: not read."""
-    for argv in (["dpkg-query", "-W", "-f", "${db:Status-Status} ${Package}\n"],
-                 ["rpm", "-qa", "--qf", "installed %{NAME}\n"]):
+def package_list(host: Host) -> dict[str, str] | None:
+    """R139: the system's installed packages, read only, as you (no admin rights), each with its version
+    (R186: a package already there can be moved to a newer version; versions of one name on two architectures are
+    kept together). None: not read."""
+    for argv in (["dpkg-query", "-W", "-f", "${db:Status-Status} ${Package} ${Version}\n"],
+                 ["rpm", "-qa", "--qf", "installed %{NAME} %{VERSION}-%{RELEASE}\n"]):
         if host.which(argv[0]):
             rc, out = host.run(argv, timeout=120)
             if rc != 0:
                 return None
-            return {words_of(x)[1] for x in lines_of(out) if len(words_of(x)) == 2 and words_of(x)[0] == "installed"}
+            seen: dict[str, set[str]] = {}
+            for x in lines_of(out):
+                w = words_of(x)
+                if len(w) in (2, 3) and w[0] == "installed":
+                    seen.setdefault(w[1], set()).update(w[2:])
+            return {n: " and ".join(sorted(v)) for n, v in seen.items()}
     return None
 
 
-def record_packages(host: Host, before: set[str] | None, after: set[str] | None) -> list[str] | None:
+def record_packages(host: Host, before: dict[str, str] | None,
+                    after: dict[str, str] | None) -> tuple[list[str], list[tuple[str, str, str]]] | None:
     """R139: what was added to the system while the runner's dependency script ran (a list before and a list after
     tell what was added in that time, not who added it), kept in this tool's notes (and so, through the journal, in
     your record) for the census when the tool leaves; never removed by this tool. None: not read. A list not read at
-    one setup stays said even when a later setup reads one: an error is never an absence."""
+    one setup stays said even when a later setup reads one: an error is never an absence. R186: the lists are
+    compared by name and version, so a package already there that moved to another version is kept too, with its
+    version before and after (the first before and the latest after, over every setup)."""
     known = load_state(host)
     if before is None or after is None:
         known["dependency_packages_unread"] = True
         save_state(host, known)
         journal(host, "packages", "the system's package list could not be read before and after the dependency script")
         return None
-    added = sorted(after - before)
+    added = sorted(set(after) - set(before))
+    changed = [(n, before[n], after[n]) for n in sorted(set(after) & set(before))
+               if before[n] and after[n] and before[n] != after[n]]
     known["dependency_packages"] = sorted(set(known.get("dependency_packages") or []) | set(added))
+    if changed or "dependency_packages_changed" in known:
+        kept = dict(known.get("dependency_packages_changed") or {})
+        for n, b, a in changed:
+            kept[n] = [kept[n][0] if n in kept else b, a]
+        known["dependency_packages_changed"] = kept
     save_state(host, known)
     journal(host, "packages", "added to the system while the runner's dependency script ran: "
             + (", ".join(added) or "none"))
-    return added
+    if changed:
+        journal(host, "packages", "changed version while the runner's dependency script ran: " + versions_said(changed))
+    return added, changed
+
+
+def versions_said(changed) -> str:
+    """R186: each package whose version changed, with its version before and after."""
+    pairs = changed.items() if isinstance(changed, dict) else ((n, (b, a)) for n, b, a in changed)
+    return ", ".join(f"{n} from {b} to {a}" for n, (b, a) in sorted(pairs))
 
 
 def run_dependencies(host: Host, tgz: str, d: str, rep: Report) -> None:
@@ -4288,15 +4313,23 @@ def run_dependencies(host: Host, tgz: str, d: str, rep: Report) -> None:
         return
     before = package_list(host)
     rc, out = sudo(host, ["bash", script], timeout=900)
-    added = record_packages(host, before, package_list(host)) if before is not None else record_packages(host, None, None)
-    if added is None:
+    got = record_packages(host, before, package_list(host)) if before is not None else record_packages(host, None, None)
+    if got is None:
         what = ("it may add system packages, which stay on this computer when this tool leaves; which were added "
                 "while it ran could not be read here")
-    elif added:
-        what = (f"these system packages were added while it ran: {', '.join(added)}; they stay on this computer when "
-                "this tool leaves, because another program may come to use them")
     else:
-        what = "no system packages were added while it ran"
+        added, changed = got
+        if not changed:
+            what = (f"these system packages were added while it ran: {', '.join(added)}; they stay on this computer "
+                    "when this tool leaves, because another program may come to use them" if added else
+                    "no system packages were added while it ran")
+        else:  # R186: a package already there that moved to another version is said beside the added ones
+            what = ((f"these system packages were added while it ran: {', '.join(added)}" if added else
+                     "no system packages were added while it ran")
+                    + f"; these changed version while it ran: {versions_said(changed)}; "
+                    + ("they stay on this computer, at those versions, when this tool leaves" if added else
+                       "they stay at those versions when this tool leaves")
+                    + ", because another program may come to use them")
     if rc != 0:
         rep.warn(f"the runner's own dependency script did not finish: {tail(out)}; {what}")
     else:
@@ -4714,6 +4747,10 @@ def what_setup_left(gh: GitHub, host: Host, repo: str) -> list[str]:
         items.append("system packages the runner's own dependency script added ("
                      + ", ".join(data["dependency_packages"]) + "; these stay after uninstall too, as another program "
                      "may use them)")
+    if data.get("dependency_packages_changed"):  # R186
+        items.append("system packages whose version changed while the runner's own dependency script ran ("
+                     + versions_said(data["dependency_packages_changed"]) + "; these stay at those versions after "
+                     "uninstall too, as another program may use them)")
     return items
 
 
@@ -9495,9 +9532,13 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         elif names:
             rep.ok(f"{head}{', '.join(names)} (kept: {why})")
         elif unread or packages.get("dependency_packages") is None:  # not read, or a setup that did not record it
-            rep.ok(f"{head}not {'read' if unread else 'recorded'} at setup (kept, whatever they are: {why})")
+            rep.ok(f"{head}{'could not be read' if unread else 'not recorded'} at setup (kept, whatever they are: "
+                   f"{why})")
         else:
             rep.ok(f"{head}none")
+        if packages.get("dependency_packages_changed"):  # R186: beside the added ones, with both versions
+            rep.ok("census: system packages whose version changed while the runner's dependency script ran: "
+                   f"{versions_said(packages['dependency_packages_changed'])} (kept at those versions: {why})")
     if everything:  # G6.13 (R117, rule 8): the folder the skill was downloaded into is named, so nobody guesses at it
         skill_folder_census(host, skill_folder, rep)
     gh_login_census(host, rep)
@@ -9648,7 +9689,7 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
         # Rule 8: the census is the last thing printed; it names this tool's state folder and the person's record.
         census(gh, host, known, True, rep, state_left=os.path.isdir(host.state_dir()),
                skill_folder=kept_skill_from(data), packages={k: data.get(k) for k in (
-                   "dependency_packages", "dependency_packages_unread")})
+                   "dependency_packages", "dependency_packages_unread", "dependency_packages_changed")})
         left = None if rep.stopped else lost_setup(host, load_state(host))  # R210: read again at the very end
         if left and left["live"]:  # R210: never "off this computer" while what carries its names can still run
             rep.warn(left_words(left))
