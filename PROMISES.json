@@ -2077,7 +2077,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_22_the_way_back_in_is_walked",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0 (runner 2.338.2), seen once. After `uninstall --all` (its state folder gone, the person's record kept, no runner user): `look` ended 3, its one need the person's yes to a start test (its own words), and `setup` after it ended on its own check of both sides (GitHub lists the runner online and idle with only this tool's labels; its service is active), exit 0; one real job then ran on that runner and GitHub said it succeeded; the watch's next pass ran, and `status` ended 0. After `uninstall REPO` (the watch, the slice and the tool's folders kept, as its census said): `setup` again ended on the same check, exit 0; the watch's next pass ran, `status` ended 0, and `uninstall --all` then ended 0. The other forms are held by the test.",
    "issue": 342,
    "moved_why": "",
    "moved_by_person": ""
@@ -2161,7 +2161,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_23_what_will_refuse_is_asked_before_the_first_write_and_a_later_stop_names_what_it_left",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock ubuntu:24.04 container (podman 4.9.3) inside a stock Ubuntu 24.04.5 virtual machine, at the tag v0.1.0 as its README clones it, seen once, partial. The container held python3, sudo, git, gh and systemd's package, so systemctl was on the PATH while systemd was not its first process and /run/systemd/system was not there. `look` warned that systemd does not run this computer, saying what was read and the next step; `setup` then stopped with the same words and that nothing was changed, on this computer or on GitHub, exit 2, the one command alone on the last line. Read after: no runner user and none of this tool's folders in the container, and GitHub listed no runner before or after. Partial: a stop after the first write, `status` after a setup cut part-way and sudo's words were not walked in this run.",
    "issue": 314,
    "moved_why": "",
    "moved_by_person": ""
@@ -2329,7 +2329,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_27_every_unit_is_read_stopped_before_anything_is_removed",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0, seen once, steered and partial. Steered: with this tool set up and its runner idle, root stopped the system's message bus (dbus.socket and dbus.service), so systemctl answered \"Failed to connect to bus\". `uninstall --all` then stopped: what carries this tool's names could not be read (systemd's units and unit files, each with systemctl's code and words), so nothing was said to be there or not, nothing was changed and GitHub was asked nothing, exit 2; read after, the runner's service was still running and every unit still loaded. With the bus back, the same command ended 0: the units not found, the runner user gone, GitHub listing no runner. In a plain `uninstall --all` the same day, the runner was read stopped (service inactive, no process left) before anything was removed. Partial: a unit that does not read stopped after it is told to stop, and `status`'s and `doctor`'s reads with the bus down, were not walked.",
    "issue": 355,
    "moved_why": "",
    "moved_by_person": ""
@@ -2650,7 +2650,7 @@
    "ship_in": "0.1.0",
    "test": "test_G5_27_the_watch_unit_carries_its_values_whole_or_refuses",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine (systemd 255) and the private proof repository, at the tag v0.1.0, seen once for each character, steered (the planted parts) and partial. Steered: for each of a percent sign, a backslash, a double quote, a space and a dollar sign, one at a time, a folder whose name held it, made by root outside the person's home and holding a link to one of the watch's programs, put first on the person's PATH; each time from nothing of this tool's. `look` ended 3, its one need the person's yes to a start test (its own words), and `setup` after it ended 0, saying the watch's unit read back word for word as systemd holds it; the unit file carried the folder in systemd's own form (the percent sign written twice, the backslash and the quote each after a backslash), and what systemd parsed of it held the folder's name whole. After a real restart of the machine, the watch's first pass ran, systemd's value was the same, and `status` from that shell ended 0, saying the units read back word for word. With a line feed in the folder's name, `setup` stopped before its first write in one line naming the folder and the next step, exit 2, and nothing of this tool's was there after. `uninstall --all` ended 0 after each. Partial: the login name's half, a difference between the unit and what was meant, a setting of the person's own in a unit, a bus call past its time limit and a systemd older than 240 were not walked; the test holds them.",
    "issue": 378,
    "moved_why": "Moved into 0.1.0 by the maintainer's word, 2026-11-25: a first release never goes out with such a place.",
    "moved_by_person": "the maintainer"
