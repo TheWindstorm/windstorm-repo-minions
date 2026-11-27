@@ -3060,6 +3060,20 @@
    "issue": 410,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R221",
+   "seen": "2026-11-27, seen once, steered, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0: a file of root's, mode 600, holding three lines, was put in place as the runner's settings file (.env) after the runner's configure ended. setup stopped on it as row R206 promises, naming the file and why, with its step. The stop said the file is where setup \"keeps every other line as it is\", and the step \"its lines unchanged; then run the same setup again\". The step, taken as printed, made the file the runner user's, mode 600, its three lines. The same setup again took the half-made runner away, started fresh and kept the file in the person's record (mode 600, named by its line count and names), and the new runner's file held only this tool's lines. Nothing of the person's was lost, and the second run said what it did; but the first stop reads as if the lines stay in the runner's file, and they did not.",
+   "promise": "R206's stop for a runner settings file the runner user cannot read says what the same setup again does with that file: it takes the half-made runner away and starts fresh, with a new settings file that holds only this tool's lines, and keeps a copy of the file in the person's record, named there; a line of the person's own in it is theirs to add to the new runner's file. The stop no longer reads as if the next setup kept the lines in place, and its command still stands alone on its own line, last. Only that stop's sentence changes: the part-way stop's own sentence stays, and no command, no option and nothing printed for the kept copy is added beyond what the second run already says. The stop for the kinds whose step moves the file aside (a link, not a plain file, a read that fails) keeps its words: none of them was walked on a real machine. A test reads the stop's words in the stand-in world, and that the outcome after the step and the same setup again is what they say: the kept copy holds the person's lines, the new file only this tool's.",
+   "codon": "G2.30",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "test_G2_30_the_unreadable_env_stop_says_what_the_same_setup_again_does_with_the_file",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 413,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

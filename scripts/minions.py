@@ -5150,12 +5150,18 @@ def runner_env_read(host: Host, folder: str, rep: Report, repo: str = "") -> str
             if kind == "not readable" else cmd(f"sudo -u {RUNNER_USER} mv -n -T -- {path} {aside}"))
     if kind != "not readable":  # R209: the name it is moved to is read again at the folder's removal, as the .env is
         note_setting(host, repo, "env_aside", aside)
-    rep.stop(f"could not read {path} ({why}): the runner's own settings file, where setup adds the job hooks' two "
-             "lines and keeps every other line as it is, so it is not written over, and nothing of it was changed. "
-             + ("Your next step makes it the runner user's own and readable to it, its lines unchanged; then run "
-                "the same setup again" if kind == "not readable" else
-                "Your next step moves it aside under a dated name, its lines unchanged and yours to read; setup then "
-                "writes a new one with only its own lines, so run the same setup again")
+    # R221: the same setup again after this stop takes the half-made runner away and starts fresh (R71), and keeps a
+    # copy of the file in the person's record (R209); the stop says so, never that the lines stay in the runner's file
+    rep.stop(f"could not read {path} ({why}): the runner's own settings file, "
+             + ("so it is not written over, and nothing of it was changed. Your next step makes it the runner user's "
+                "own and readable to it, its lines unchanged; then run the same setup again: it takes this half-made "
+                "runner away and starts fresh, with a new settings file that holds only this tool's lines, and keeps "
+                f"a copy of this file in your record ({host.record_dir()}), named there; a line of your own in it is "
+                "yours to add to the new runner's file" if kind == "not readable" else
+                "where setup adds the job hooks' two lines and keeps every other line as it is, so it is not written "
+                "over, and nothing of it was changed. Your next step moves it aside under a dated name, its lines "
+                "unchanged and yours to read; setup then writes a new one with only its own lines, so run the same "
+                "setup again")
              + f": {step}")
     return False
 

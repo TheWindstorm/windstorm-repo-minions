@@ -12335,6 +12335,88 @@ class G2Env(unittest.TestCase):
 
 
 
+class G2EnvAgain(unittest.TestCase):
+    """R221, codon G2.30."""
+
+    def test_G2_30_the_unreadable_env_stop_says_what_the_same_setup_again_does_with_the_file(self):
+        # Seen once, steered, on a stock guest at the tag: a file of root's, mode 600, put in place after the
+        # runner's configure ended. setup stopped on it as R206 promises and printed its step; the step was taken as
+        # printed; the same setup again took the half-made runner away, started fresh and kept the file in the
+        # person's record. The stop had said the file is where setup "keeps every other line as it is", and the
+        # step "its lines unchanged; then run the same setup again": read as the lines staying in the runner's
+        # file, which they did not.
+        host, sha = setup_host()
+        fresh_look(host)
+        unpacks = lambda: sum(1 for a in host.ran if a[:6] == ("sudo", "-n", "-u", "minions-runner", "--", "tar"))
+        world = {"step": False}
+        fresh = "LANG=C.UTF-8\n"  # what the runner's own env.sh writes in a fresh folder
+        def now_text():
+            return PERSONS_ENV if world["step"] and unpacks() < 2 else fresh
+        host.runs[ENV_KEY] = lambda argv, inp=None: (0, "minions-env: " + (
+            "readable" if world["step"] or unpacks() >= 2 else "not readable") + "\n")
+        host.runs[CAT_ENV] = lambda argv, inp=None: (0, now_text())
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "stat", "-c", "%s", f"{FOLDER}/.env")] = (
+            lambda argv, inp=None: (0, f"{len(now_text().encode())}\n"))
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "sha256sum", f"{FOLDER}/.env")] = (
+            lambda argv, inp=None: (0, f"{hashlib.sha256(now_text().encode()).hexdigest()}  {FOLDER}/.env\n"))
+        deleted = lambda: any(a[-2:] == ("rmdir", FOLDER) for a in host.ran)  # the folder itself, once emptied
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "test", "-e", FOLDER)] = lambda argv, inp=None: (
+            (0, "") if unpacks() == 1 and not deleted() else (1, ""))  # the half-made runner's folder (R128: as its user)
+        def find(argv, inp=None):  # the removal's finds in that folder, as the runner user (findutils 4.9.0's forms)
+            if list(argv[-3:]) == ["-maxdepth", "0", "-printf"] or "%D %y\n" in argv:
+                return (0, "64769 d\n") if not deleted() else (1, f"find: '{FOLDER}': No such file or directory\n")
+            return 0, ""  # the chmod walk, the delete, and nothing left after it
+        host.runs[("sudo", "-n", "-u", "minions-runner", "--", "find", FOLDER)] = find
+        code, lines = run_setup(setup_gh(sha), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        stop = next(x for x in lines if x.startswith(f"stop could not read {FOLDER}/.env ("))
+        # The stop's words: what the same setup again does with the file, and no word that the lines stay in place.
+        self.assertNotIn("keeps every other line as it is", stop)
+        self.assertIn("so it is not written over, and nothing of it was changed", stop)
+        self.assertIn("then run the same setup again: it takes this half-made runner away and starts fresh", stop)
+        self.assertIn(f"keeps a copy of this file in your record ({host.record_dir()}), named there", stop)
+        self.assertIn("a line of your own in it is yours to add to the new runner's file", stop)
+        command = re.search(r": `([^`]*)`$", stop).group(1)  # the command stands alone, last
+        self.assertEqual(command, f"sudo chown -h minions-runner {FOLDER}/.env && "
+                                  f"sudo -u minions-runner chmod u+rw {FOLDER}/.env")
+        # The outcome is what the words say: the step, then the same setup again.
+        world["step"] = True
+        gh_state = {"labels": ["minions", "minions-medium"], "deleted": False}
+        configs = lambda: sum(1 for a in host.ran if M.CONFIG_SCRIPT in a)
+        def runners(_body):
+            if gh_state["deleted"]:
+                return runners_answer() if configs() >= 2 else (200, {"total_count": 0, "runners": []})
+            return runners_answer(labels=gh_state["labels"])  # the half-made runner, registered before the stop
+        def put_labels(body):
+            gh_state["labels"] = list(body["labels"])
+            return 200, {"labels": [{"name": x, "type": "custom"} for x in body["labels"]]}
+        def delete(_body):
+            gh_state["deleted"] = True
+            return 204, None
+        gh = setup_gh(sha, {("GET", f"repos/{REPO}/actions/runners?per_page=100"): runners,
+                            ("PUT", f"repos/{REPO}/actions/runners/7/labels"): put_labels,
+                            ("DELETE", f"repos/{REPO}/actions/runners/7"): delete})
+        code, lines = run_setup(gh, host)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertTrue([x for x in lines if x.startswith(f"ok a setup or removal of {REPO} here was cut part-way")],
+                        lines)
+        kept = kept_of(host)
+        self.assertEqual(list(kept.values()), [PERSONS_ENV], "the kept copy holds the person's lines")
+        (path,) = kept
+        self.assertEqual(host.modes[path], 0o600)
+        self.assertTrue([x for x in lines if f"it is kept as yours in {path}" in x], lines)
+        env = [x for a, x in host.fed if a[-1] == f"{FOLDER}/.env"][-1]  # the new runner's file, as written last
+        self.assertTrue(env.startswith(fresh), env)
+        self.assertNotIn("MADE_BY_THE_PERSON", env)
+        self.assertNotIn("JAVA_HOME", env)
+        self.assertEqual(env.count("ACTIONS_RUNNER_HOOK_JOB_"), 2, env)
+        self.assertNotIn("made-value-r206", "\n".join(lines))  # no line of the file is printed
+        for j in journals():
+            with open(j, encoding="utf-8") as f:
+                self.assertNotIn("made-value-r206", f.read())  # nor logged
+
+
+
 def world_a(user_answer=True):
     """R210, world (a): the suite's installed stand-in (remove_setup: our runner's service running and enabled, its
     slice, the watch, the runner user, its home, both folders, the registration on the GitHub stand-in) with this
