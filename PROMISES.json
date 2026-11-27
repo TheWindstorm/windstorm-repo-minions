@@ -2412,7 +2412,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_30_a_user_removed_outside_the_tool_leaves_its_home_named_and_the_leave_finishes",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0, seen once, steered and partial. Steered: after a setup of this tool and one job, the admin removed the runner user outside this tool (userdel ended 0; getent then ended 2), its home kept, holding only what that user was given or made (the runner's folder, a link it made, the files a new home is given), with a crontab line and an at job that user made left behind (row R181). Held: uninstall of the one repository, twice, and uninstall --all each ended 0, never a stop or a wait; the home was still there after them, holding the runner's folder and the link; it was named as what stayed in the last lines and the census, and uninstall --all ended \"this tool is off this computer; what stayed was not made by this tool or its runner user, or holds what was not, named above with why each stayed\". setup then stopped before any admin step (no unit, no useradd in the journal), exit 2, naming the folder, with `sudo rm -rf --one-file-system /home/minions-runner` alone on its own line; that command, typed as printed, ended 0 and the home was gone; setup run again stopped on what the user left (row R181), and after those steps ended 0. Did not hold, row R222: uninstall's lines and the census named the home with a why and a list read from an older leave's entry in the person's record, and so with no command, where this row names it with the command.",
    "issue": 361,
    "moved_why": "",
    "moved_by_person": ""
@@ -2510,7 +2510,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_30_a_home_left_by_this_tools_own_userdel_is_said_from_the_record",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0, seen once, steered and partial. Steered: after a setup of this tool and one job, the admin removed the runner user outside this tool (userdel ended 0; getent then ended 2), its home kept, holding only what that user was given or made (the runner's folder, a link it made, the files a new home is given), with a crontab line and an at job that user made left behind (row R181). Held: every line that named the kept home said first what was read: the user minions-runner is not on this computer, the folder is, and this tool deletes in a runner's home only as that user; and what stayed carried its why to the census. Did not hold, row R222: how it came about was said from an older leave's entry in the person's list, no longer true at that run: \"this tool made that user and removed it; the folder holds what the runner user did not make\", where the admin had removed that user and the home held only what it was given or made; and setup's step beside that why was the form for a home this tool's record does not know (\"If you know it is left from this tool's runner\"), so the why and its step disagreed.",
    "issue": 368,
    "moved_why": "",
    "moved_by_person": ""
@@ -3072,6 +3072,20 @@
    "owner": "maintainer",
    "proven": "",
    "issue": 413,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R222",
+   "seen": "2026-11-27, seen once, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0. An uninstall left things that were not this tool's in the runner user's home, in the runner's folder and in a folder of the runner user's in a public place, and wrote them, as row R136 promises, to its list in the person's record (left-behind.txt). Those things were then removed. Two fresh setups and a whole `uninstall --all`, which ended saying the tool was off this computer, ran after. Then the runner user was removed outside this tool (`userdel`, by the admin), its home kept. `uninstall` and `setup` then said \"this tool made that user and removed it; the folder holds what the runner user did not make (the whole list is in .../left-behind.txt)\". Neither half was true at that run: the tool had not removed that user, and the home held nothing the runner user did not make. Beside that why, setup's step was the form for a home this tool's record does not know. Every census after that, through eleven real restarts, also said the public place's folder \"stays\", though it was no longer there. The cause, read in the code: the list is only added to; the reader keeps each folder as the latest leave that named it; a leave with nothing to list writes nothing, so an entry never ends.",
+   "promise": "what uninstall and setup say stayed, and why, is true of this computer at that run. \"This tool made that user and removed it\" and \"the folder holds what the runner user did not make\" are said only where the leave that wrote the home's entry is the latest thing this tool did with that user, not where a setup of this tool has made that user since; there the why says this tool made that user and it is no longer here, and setup's step is the form that belongs to the why printed beside it, so the two never disagree. An entry of the list ends: a later leave that reaches its census writes its own dated section, also when nothing stayed, and the list is read by its latest section. Nothing is said in the present tense as staying from the list alone: a place the run does not read again is not said again as staying. The three answers stay: a list that could not be read still stops the leave before anything changes. The list file in the person's record is never cut, rewritten or deleted by this tool; it is only added to. By a name read from the list, nothing more is deleted than today (only the two fixed hook files and an empty folder). No new command, and no other sentence of the census changes. A test reads the words and the outcome in the world that was seen (a leave that left things, a fresh setup, a whole leave that ended off, the user removed by the admin, then uninstall and setup), a leave that left nothing after one that did, and the public place's entry; it fails on the tag's tool first. Before 0.1.1's tag, the same sequence is seen on a stock machine at the cured head. How: a leave carries into its own section only what root tests as there in that run, with the time it was first found; an earlier entry in the public places, or inside the home of a runner user that is gone (root does not read inside it; the home's own line names what it holds), is not said again. A leave that names the kept home as made by this tool and no longer here says so in its section, and the why and its step read that where uninstall --all has deleted the state; no delete reads it. This narrows row R136's sentence that every later run says what stayed as the first run said it.",
+   "codon": "G6.45",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "test_G6_45_what_uninstall_and_setup_say_stayed_is_true_of_this_computer_at_that_run",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 414,
    "moved_why": "",
    "moved_by_person": ""
   }

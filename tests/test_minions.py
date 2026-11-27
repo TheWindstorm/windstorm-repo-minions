@@ -5718,18 +5718,15 @@ class G6(unittest.TestCase):
                 self.assertTrue(named, lines)
                 for x in named:
                     self.assertIn("`sudo rm -rf --one-file-system /home/minions-runner`", x)
-                    # change 2: what was read, then how, from the record. This world's says the tool made the user;
-                    # uninstall --all deletes the tool's state folder, record and all, so its second run has none.
+                    # change 2: what was read, then how, from the record. This world's says the tool made the user.
+                    # R222 (a changed promise of R173's and R180's): uninstall --all deletes the tool's state folder,
+                    # and its first run's section of the person's list says so (made that user, no longer here), so
+                    # its second run says the same, with the step of that form.
                     read = ("the user minions-runner is not on this computer, the folder is, and this tool deletes in "
                             "a runner's home only as that user; ")
-                    if everything and n == 2:
-                        self.assertIn(read + "this tool's record does not say it made a user of that name", x)
-                        self.assertIn("If you know it is left from this tool's runner, your next step: delete that "
-                                      "folder first: `sudo rm", x)
-                        self.assertTrue(x.endswith("If it is something else of yours, move it away"), x)
-                    else:
-                        self.assertIn(read + "this tool made that user and it is no longer here", x)
-                        self.assertIn("Your next step: delete that folder first: `sudo rm", x)
+                    self.assertIn(read + "this tool made that user and it is no longer here", x)
+                    self.assertIn("Your next step: delete that folder first: `sudo rm", x)
+                    self.assertNotIn("If you know", x)
                     self.assertNotIn("outside this tool", x)
                 if everything:
                     self.assertTrue([x for x in lines if x.startswith(f"ok census: the folder {home}: stayed")], lines)
@@ -6252,12 +6249,152 @@ class G6(unittest.TestCase):
                                 self.assertEqual(sum(counts), len(handed), (what, handed, lines))
                             continue
                         for x in first:  # what stayed, said again as the first run said it
-                            self.assertIn(x, said, (what, lines))
+                            # R222 (a changed promise of R136's): only where root tests it as there in this run. The
+                            # public places, and a folder inside the gone user's home (root does not read inside it;
+                            # the home's own line names what it holds), are not said again from the list
+                            unread = x.startswith(("ok census: in /tmp", f"ok census: the folder {home}/"))
+                            if unread:
+                                self.assertNotIn(x, said, (what, lines))
+                                self.assertFalse([y for y in said if y.startswith("ok census: in /tmp")], (what, lines))
+                            else:
+                                self.assertIn(x, said, (what, lines))
+                        if name.endswith("own folder"):  # the home's own line names the file inside it
+                            self.assertTrue([y for y in said if y.startswith(f"ok census: the folder {home}: kept: it "
+                                                                              "holds runners/")], (what, lines))
                         for x in lines:  # no delete command and no "yours" for what the record says holds what is not ours
                             if x.startswith(("ok census: your record of what this tool did", "ok census: your record folder")):
                                 continue
                             self.assertNotIn("`", x, (what, x))
                             self.assertNotIn("yours", x, (what, x))
+
+    def test_G6_45_what_uninstall_and_setup_say_stayed_is_true_of_this_computer_at_that_run(self):
+        # Row R222 (seen 2026-11-27 on a stock Ubuntu 24.04.5 virtual machine at the tag v0.1.0): a leave that left the
+        # runner user's home and a job's folder in /tmp (each holding a file of root's), then root's hand took both
+        # away, a fresh setup made the user again, and every later run read the list of what stayed whole: uninstall
+        # said of the new user's home "this tool made that user and removed it; the folder holds what the runner user
+        # did not make", and setup said so beside a step that belongs to "made it and it is no longer here"; the census
+        # said the job's folder "stays", read from the list alone, while it was gone. Now the list is read by its
+        # latest section (a leave that reaches its census writes one, also when nothing stayed, carrying only what
+        # root tested as there in that run); a setup since ends the home's entry; nothing in the public places is
+        # said again from the list. The list file is only added to; nothing more is deleted.
+        R, home, J = "minions-runner", f"/home/{M.RUNNER_USER}", "/tmp/job-lf"
+        removed = "this tool made that user and removed it"
+        no_longer = "this tool made that user and it is no longer here"
+        step = ("Your next step: delete that folder first: `sudo rm -rf --one-file-system /home/minions-runner`; then "
+                "run the same command again")
+        lb = lambda h: f"{h.record_dir()}/left-behind.txt"
+        public = lambda lines: [x for x in lines if x.startswith("ok census: in /tmp") or J in x]
+
+        def plant(world, things):
+            for p_, (who, y) in things.items():
+                world.paths.add(p_)
+                world.owner[p_] = who
+                (world.dirs if y == "d" else world.plain).add(p_)
+
+        def leave_that_left_things():
+            gh, world, host = remove_setup(moved=False)
+            plant(world, {f"{home}/left.txt": ("root", "f"), J: (R, "d"), f"{J}/root.txt": ("root", "f")})
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_OK, lines)
+            self.assertTrue([x for x in lines if x.startswith(f"ok census: the folder {home}: kept: it holds left.txt")], lines)
+            self.assertTrue([x for x in lines if x.startswith("ok census: in /tmp")], lines)
+            return gh, world, host
+
+        def setup_says(record, made):
+            """setup with the home there and its user not (root's hand), the list as given, the state as said."""
+            host, sha = setup_host()
+            fresh_look(host)
+            if made:
+                st = M.load_state(host)
+                st["runner_user_made"] = True  # a setup of this tool made the user after the leave that wrote the list
+                M.save_state(host, st)
+            host.runs[("getent", "passwd", "minions-runner")] = (2, "")  # root's hand removed it: getent's own "not found"
+            host.dirs[home] = True
+            host.files[lb(host)] = record
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            return lines[-1]
+
+        def a_new_user_removed_by_root(record):
+            """A fresh setup made the user (the state says so), then root's hand removed it; its home stays."""
+            gh, world, host = remove_setup(moved=False)
+            host.files[lb(host)] = record
+            world.user = False
+            return gh, world, host
+
+        _, _, host1 = leave_that_left_things()
+        first = host1.files[lb(host1)]
+        self.assertEqual(sorted(M.stayed_on_record(host1)[0]), [home, M.PUBLIC_KEY])
+
+        # The seen sequence, the whole leave between left out: root's hand took the home and the job's folder; a fresh
+        # setup made the user; root's hand removed it, its home kept. uninstall --all, then setup.
+        # As seen: uninstall of the one repository twice, then uninstall --all (which deletes the state), then setup.
+        gh, world, host = a_new_user_removed_by_root(first)
+        for repo, everything in ((REPO, False), (REPO, False), (None, True)):
+            code, lines = run_uninstall(gh, host, repo=repo, everything=everything)
+            self.assertEqual(code, M.EXIT_OK, (repo, lines))
+            self.assertFalse([x for x in lines if removed in x or "holds what the runner user did not make" in x],
+                             (repo, lines))
+            self.assertTrue([x for x in lines if no_longer in x], (repo, lines))
+            self.assertEqual(public(lines), [], "the job's folder is not said again from the list")
+            self.assertTrue(host.files[lb(host)].startswith(first), "the list is only added to")
+        self.assertIn(home, world.paths)
+        self.assertEqual([f for f in M.stayed_on_record(host)[0] if f == home or f.startswith(home + "/")
+                          or f == M.PUBLIC_KEY], [], "the leaves since end the home's entry and the public one")
+        self.assertTrue(M.home_made_on_record(host), "the leave's own section says so, for a run with no state")
+        after = host.files[lb(host)]
+        x = setup_says(after, made=False)  # the state is gone with --all; the list's latest section says it
+        self.assertIn(no_longer, x)
+        self.assertNotIn(removed, x)
+        self.assertIn(step, x)
+        self.assertNotIn("If you know it is left", x)
+        x = setup_says(first, made=True)  # the same before any leave since: a setup since ends the home's entry
+        self.assertIn(no_longer, x)
+        self.assertNotIn(removed, x)
+        self.assertIn(step, x)
+
+        # The same with the whole leave between, which ended off: it leaves nothing, and writes its own section, so
+        # every entry before it ends (a leave that left nothing after one that did).
+        gh, world, host = remove_setup(moved=False)  # a fresh setup made the user again; nothing foreign anywhere
+        host.files[lb(host)] = first
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertFalse(world.user, lines)
+        self.assertNotIn(home, world.paths)
+        self.assertFalse([x for x in lines if x.startswith(f"ok census: the folder {home}")], lines)
+        self.assertEqual(public(lines), [], lines)
+        self.assertFalse([x for x in lines if "stays" in x or "what stayed" in x], lines)  # nothing stayed
+        ended = host.files[lb(host)]
+        self.assertTrue(ended.startswith(first) and len(ended) > len(first), "a section of its own, only added")
+        self.assertEqual(M.stayed_on_record(host), ({}, ""))
+        # what a leave acts by is read from every section, as before (nothing more is deleted than before)
+        self.assertEqual(sorted(M.stayed_on_record(host, whole=True)[0]), [home, M.PUBLIC_KEY])
+        gh, world, host = a_new_user_removed_by_root(ended)
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertFalse([x for x in lines if removed in x], lines)
+        self.assertTrue([x for x in lines if no_longer in x], lines)
+        self.assertEqual(public(lines), [], lines)
+        for made, why in ((True, no_longer), (False, "this tool's record does not say it made a user of that name")):
+            x = setup_says(ended, made=made)
+            self.assertIn(why, x, made)
+            self.assertNotIn(removed, x, made)
+
+        # The public entry: the leave again, with the job's folder still there; root reads nothing in a place every
+        # user writes, so it is not said again from the list (past or present); the home, which root tests as there,
+        # is said again as the first run found it, and carried into each later section with that first time.
+        gh, world, host = leave_that_left_things()
+        stamp = M.stayed_on_record(host)[0][home][0]
+        for n in (2, 3):
+            before = host.files[lb(host)]
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(code, M.EXIT_OK, (n, lines))
+            self.assertIn(J, world.paths)
+            self.assertEqual(public(lines), [], (n, lines))
+            self.assertTrue([x for x in lines if x.startswith(f"ok census: the folder {home}: kept: it holds left.txt")
+                             and f"as the uninstall of {stamp} found it" in x], (n, lines))
+            self.assertTrue(host.files[lb(host)].startswith(before), n)
+            self.assertEqual(M.stayed_on_record(host)[0], {home: (stamp, ["left.txt (a file of root)"])}, n)
+        self.assertIn(f"{home}/left.txt", world.paths)
 
     def test_G6_19_a_name_with_a_line_feed_is_one_name(self):
         # R136 (the owner's item 4, 2026-11-25, read in code): a name a job or another user chose, read from find by
