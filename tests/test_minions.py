@@ -4772,6 +4772,44 @@ def run_uninstall(gh, host, repo=REPO, **kw):
 
 
 class G6(unittest.TestCase):
+    def test_G6_33_the_census_names_ghs_plain_text_login(self):
+        # Row R166, seen 2026-11-24 on a stock Ubuntu 24.04 virtual machine (steered): after the step R160 prints, gh
+        # kept the login in hosts.yml as plain text, and uninstall --all said nothing of it, though it outlives the
+        # tool. Now the census says so in one line, never the value, and the file is left as it is.
+        login = "github.com:\n    oauth_token: made-up-login-value\n    git_protocol: https\n    user: example-person\n"
+        for everything in (True, False):
+            with self.subTest(everything=everything):
+                gh, world, host = remove_setup()
+                path = os.path.join(host.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+                host.files[path] = login
+                code, lines = (run_uninstall(gh, host, repo=None, everything=True) if everything
+                               else run_uninstall(gh, host))
+                said = [x for x in lines if "hosts.yml" in x]
+                self.assertEqual(said, [f"ok census: gh's login for github.com, kept as plain text in {path}: it is "
+                                        "gh's; this tool did not write it and does not remove it, and it stays (your "
+                                        "account and this computer's admins can read it)"], lines)
+                self.assertFalse([x for x in lines if "made-up-login-value" in x])
+                self.assertEqual(host.files.get(path), login)  # left as it is
+                self.assertFalse([a for a in host.ran if any(path in str(w) for w in a)], "never touched by a command")
+                self.assertFalse([x for x in lines if "gh auth logout" in x])  # gh's own way: not named before a proof
+        # No login in it, or no file: no line. A file that could not be read: said so, never taken for none.
+        for text in ("github.com:\n    git_protocol: https\n", None):
+            gh, world, host = remove_setup()
+            path = os.path.join(host.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+            if text is not None:
+                host.files[path] = text
+            code, lines = run_uninstall(gh, host, repo=None, everything=True)
+            self.assertFalse([x for x in lines if "census: gh's" in x], lines)
+        gh, world, host = remove_setup()
+        path = os.path.join(host.gh_env()["GH_CONFIG_DIR"], "hosts.yml")
+        host.files[path] = login
+        host.unreadable = {path}
+        code, lines = run_uninstall(gh, host, repo=None, everything=True)
+        said = [x for x in lines if "census: gh's" in x]
+        self.assertEqual(len(said), 1, lines)
+        self.assertTrue(said[0].startswith(f"warn census: gh's file {path}: not read ('[Errno 13] Permission denied"), said)
+        self.assertIn("so whether it holds a login for github.com as plain text is not known", said[0])
+
     def test_G6_17_the_last_uninstall_leaves_nothing_of_the_runner_user_alive_or_scheduled(self):
         # R130 (rule 28, the one-after-another hole): when the last runner goes, its user goes in this order: the
         # service stopped; no process of that user, read back; its crontab and at jobs off; linger off; its files in

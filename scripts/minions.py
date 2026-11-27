@@ -9416,6 +9416,7 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
             rep.ok(f"{head}none")
     if everything:  # G6.13 (R117, rule 8): the folder the skill was downloaded into is named, so nobody guesses at it
         skill_folder_census(host, skill_folder, rep)
+    gh_login_census(host, rep)
     # G6.10, INV6: last, the person's record, kept: theirs.
     n = host.record_count()
     if n is None:
@@ -9427,6 +9428,22 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         rep.ok(f"census: your record of what this tool did: {host.record_dir()}, {plural(n[1], 'line')} in "
                f"{plural(n[0], 'file')}, kept: it is yours. Delete it whenever you like, or run {C0}uninstall --all "
                f"--delete-record{C1} in your own terminal")
+
+
+def gh_login_census(host: Host, rep: Report) -> None:
+    """R166 (G6.33): gh's own file holding a login for github.com as plain text (seen after the step R160 prints)
+    outlives this tool, so the census says so in one line: it is gh's, this tool did not write it and does not remove
+    it, and it stays. A file that could not be read is said so (an error is never an absence); no login there, no
+    line. gh's own way to take it out is not named here until that step is seen in a proof (the row's own words)."""
+    kind, _ = hosts_file_login(host)
+    path = os.path.join(host.gh_env().get("GH_CONFIG_DIR") or gh_config_dir(host.environ(), host.home()), "hosts.yml")
+    if kind == "yes":
+        rep.ok(f"census: gh's login for github.com, kept as plain text in {path}: it is gh's; this tool did not write "
+               "it and does not remove it, and it stays (your account and this computer's admins can read it)")
+    elif kind == "unread":
+        _, why = host.read_checked(path)
+        rep.warn(f"census: gh's file {path}: not read ({as_read(why) if why else 'nothing read'}), so whether it holds "
+                 "a login for github.com as plain text is not known; it is gh's, and this tool does not remove it")
 
 
 def skill_folder_census(host: Host, src: dict | None, rep: Report) -> None:
