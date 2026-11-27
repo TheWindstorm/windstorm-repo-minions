@@ -94,9 +94,10 @@ make stays, named in the census.
 
 Steps run as you, not as root, that read the whole system: `package_list` runs `dpkg-query -W` (or `rpm -qa` where
 there is no `dpkg-query`) just before and just after the runner's dependency script, to read which system packages
-were added while that script ran (two lists tell what was added in that time, not who added it). It reads the
-package list only and changes nothing (R139). The packages it names stay when the tool leaves, named in the census,
-because another program may use them by then.
+were added while that script ran, and which already there changed version, with the version before and after (two
+lists tell what changed in that time, not who changed it; read by name and version, R186). It reads the package
+list only and changes nothing (R139). The packages it names stay when the tool leaves, at those versions, named in
+the census, because another program may use them by then.
 
 No service of this tool runs as root. The runner's unit runs as the runner user. Its drop-in's `ExecStopPost` has
 no `+`, so it runs as the runner user too. The watch runs as you.

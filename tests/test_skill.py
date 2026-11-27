@@ -235,8 +235,26 @@ class Skill(unittest.TestCase):
         t = text()
         for word in ("free", "no bill", "save money", "saves", "first", "identical", "a law"):
             self.assertNotRegex(t.lower(), r"\b" + re.escape(word) + r"\b", word)
-        for name in ("veron", "windy", "eth-", "tailscale", "user1", "/home/"):
-            self.assertNotIn(name, t.lower(), name)
+
+    def test_G8_19_the_public_tests_name_nothing_of_ours(self):
+        # Row R159: a public test that lists the names it must never find publishes those names. The public tests
+        # check generic shapes only (a person's home folder, an email address, a private network address); the
+        # maintainers' own names are held by a private check that reads every push, never by a file here.
+        shapes = (r"/home/(?!minions-runner\b)[A-Za-z0-9._-]+", r"/Users/[A-Za-z0-9._-]+",
+                  r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b",
+                  r"(?<![\d.])(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"
+                  r"|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2})(?![\d.])")
+        def hits(s):
+            return [m.group(0) for p in shapes for m in re.finditer(p, s)]
+        # its control: a planted text of each shape is found; the runner user's own home is the tool's, not a person's
+        addresses = [".".join(x) for x in (("10", "1", "2", "3"), ("192", "168", "1", "20"), ("172", "20", "0", "5"),
+                                           ("100", "101", "102", "103"))]  # built, so this file carries none
+        for planted in ["/home/ubuntu/x", "/Users/you/x", "someone@example.org"] + addresses:
+            self.assertTrue(hits(planted), planted)
+        for fine in ("/home/minions-runner/runners/", "actions/checkout@v4", "version 2.10.0.1", "1.20.1-6ubuntu2"):
+            self.assertEqual(hits(fine), [], fine)
+        for rel in ("README.md", os.path.join("skills", "repo-minions", "SKILL.md")):
+            self.assertEqual(hits(fread(os.path.join(ROOT, rel))), [], rel)
 
     def test_G8_23_no_step_the_skill_or_the_readme_shows_holds_an_angle_bracket(self):
         # Row R193, its second place: an agent pastes the skill's steps, and a person the README's, and a shell takes

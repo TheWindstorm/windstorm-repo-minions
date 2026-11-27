@@ -1727,6 +1727,96 @@ class G2(unittest.TestCase):
             self.assertFalse([a for a in host.ran if {"apt", "apt-get", "dpkg", "rpm", "dnf", "yum", "zypper"} & set(a)])
             self.assertTrue(lines[-1].startswith("ok census: your record of what this tool did"), lines[-1])
 
+    def test_G2_25_a_version_the_dependency_step_changed_is_recorded(self):
+        # R186 (seen on a stock Ubuntu 24.04 machine and an earlier fresh install of the same image): the
+        # runner's dependency script installed a package that was already there, which moved it to the archive's
+        # newer version, and the record and the census named only the packages it added, because the lists read
+        # before and after it were compared by name only. Now by name and version: the one added and the one that
+        # changed are named, the changed one with its version before and after; the one that stayed, not at all.
+        old, new = "1:1.3.dfsg-3.1ubuntu2.2", "1:1.3.dfsg-3.1ubuntu2.3"
+        said = f"zlib1g from {old} to {new}"
+        why = "installed for the whole system, and another program may use them now"
+        def lists(changed=True, added=True, after_fails=False):
+            calls = []
+            def answer(argv, inp=None):
+                calls.append(argv)
+                after = len(calls) > 1
+                if after and after_fails:
+                    return 1, "dpkg-query: error"
+                out = "installed bash 5.2.21-2ubuntu4\nconfig-files oldpkg 1.0-1\n"
+                out += f"installed zlib1g {new if after and changed else old}\n"
+                if after and added:
+                    out += "installed libkrb5-3 1.20.1-6ubuntu2\n"
+                return 0, out
+            return answer
+        def setup_with(**kw):
+            host, sha = setup_host(runs={("dpkg-query",): lists(**kw)})
+            fresh_look(host)
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual(code, M.EXIT_OK, lines)
+            with open(os.path.join(host.state_dir(), "journal.log")) as f:
+                return host, sha, lines, f.read()
+        host, sha, lines, journal = setup_with()
+        # the version is read with each name: the two reads are of name and version
+        self.assertTrue(all("${Version}" in a[-1] for a in host.ran if a[:1] == ("dpkg-query",)))
+        self.assertIn("ok the runner's own dependency script ran (from root's checked copy of the download); these "
+                      "system packages were added while it ran: libkrb5-3; these changed version while it ran: "
+                      f"{said}; they stay on this computer, at those versions, when this tool leaves, because another "
+                      "program may come to use them", lines)
+        state = M.load_state(host)
+        self.assertEqual(state["dependency_packages"], ["libkrb5-3"])
+        self.assertEqual(state["dependency_packages_changed"], {"zlib1g": [old, new]})
+        self.assertIn("added to the system while the runner's dependency script ran: libkrb5-3", journal)
+        self.assertIn(f"changed version while the runner's dependency script ran: {said}", journal)
+        for x in lines + [journal]:  # the one that stayed: named nowhere
+            self.assertNotIn("5.2.21", x)
+        left = M.what_setup_left(setup_gh(sha), host, REPO)
+        self.assertIn("system packages whose version changed while the runner's own dependency script ran ("
+                      f"{said}; these stay at those versions after uninstall too, as another program may use them)",
+                      left)
+        # only a changed one
+        host, sha, lines, journal = setup_with(added=False)
+        self.assertIn("ok the runner's own dependency script ran (from root's checked copy of the download); no "
+                      f"system packages were added while it ran; these changed version while it ran: {said}; they "
+                      "stay at those versions when this tool leaves, because another program may come to use them",
+                      lines)
+        # nothing changed: said as before, and nothing of a change is kept
+        host, sha, lines, journal = setup_with(changed=False, added=False)
+        self.assertTrue(any(x.startswith("ok the runner's own dependency script ran")
+                            and x.endswith("no system packages were added while it ran") for x in lines), lines)
+        self.assertFalse([x for x in lines if "changed version" in x], lines)
+        self.assertNotIn("changed version", journal)
+        self.assertNotIn("dependency_packages_changed", M.load_state(host))
+        # the list after could not be read: said as could not be read, never as nothing changed
+        host, sha, lines, journal = setup_with(after_fails=True)
+        self.assertTrue(any(x.startswith("ok the runner's own dependency script ran")
+                            and x.endswith("which were added while it ran could not be read here") for x in lines),
+                        lines)
+        self.assertFalse([x for x in lines if "no system packages" in x or "changed version" in x], lines)
+        self.assertTrue(M.load_state(host)["dependency_packages_unread"])
+        # over two setups: the first version before and the latest after
+        M.record_packages(host, {"zlib1g": "1"}, {"zlib1g": "2"})
+        M.record_packages(host, {"zlib1g": "2"}, {"zlib1g": "3"})
+        self.assertEqual(M.load_state(host)["dependency_packages_changed"]["zlib1g"], ["1", "3"])
+        # uninstall --all's census names the changed one beside the added ones, kept, and removes nothing
+        for unread, added_said in ((None, f"libkrb5-3 (kept: {why})"),
+                                   (True, f"could not be read at setup (kept, whatever they are: {why})")):
+            gh, world, host = remove_setup()
+            d = M.load_state(host)
+            d["dependency_packages"] = [] if unread else ["libkrb5-3"]
+            d["dependency_packages_changed"] = {"zlib1g": [old, new]}
+            if unread:
+                d["dependency_packages_unread"] = True
+            M.save_state(host, d)
+            code, lines = run_uninstall(gh, host, everything=True)
+            self.assertIn(f"ok census: system packages added while the runner's dependency script ran: {added_said}",
+                          lines)
+            self.assertIn("ok census: system packages whose version changed while the runner's dependency script "
+                          f"ran: {said} (kept at those versions: {why})", lines)
+            self.assertFalse([x for x in lines if x.endswith("dependency script ran: none")], lines)
+            self.assertFalse([a for a in host.ran if {"apt", "apt-get", "dpkg", "rpm", "dnf", "yum", "zypper"} & set(a)])
+            self.assertTrue(lines[-1].startswith("ok census: your record of what this tool did"), lines[-1])
+
     def test_G2_15_every_root_step_is_on_the_list(self):
         # R135 (rule 28): docs/root-steps.md lists every place the tool runs a command as root, each with its answers
         # (runs a job's file? a job's path? what it creates, with mode and owner). A root step not on the list, or a
