@@ -351,6 +351,7 @@ class Report:
         self.here = False  # G7.15: the block is read by the person on their own screen, not relayed by an agent
         self.stayed: dict = {}  # R136 (rule 8): what a leave left because this tool did not make it, for the census
         self.not_off = False  # R210: uninstall --all ended with what carries its names still able to run: exit 1
+        self.user_made_at_start = False  # R222: uninstall's state, as the run began, says a setup made the runner user
 
     def _put(self, kind: str, text: str) -> None:
         self._flush_tells()
@@ -3656,6 +3657,14 @@ def kept_home_made(host: Host) -> bool:
     return bool(known.get("runner_user_made") or known.get("runner_home_left"))
 
 
+def kept_home_said_made(host: Host) -> bool:
+    """R222: for the words only (the why and its step, which never disagree), whether this tool's record says it made
+    the user whose home is kept: the state (kept_home_made), or the latest section of the person's list (the home's
+    entry, or the mark a leave wrote while the state still said so: uninstall --all deletes the state). Never a
+    reason to delete anything: the rmdir of an empty home reads kept_home_made alone, as before."""
+    return kept_home_made(host) or home_on_record(host) or home_made_on_record(host)
+
+
 def kept_home_why(host: Host) -> str:
     """Change 2: what was read, then how it came about, said only from this tool's record (rule 9)."""
     read = (f"the user {RUNNER_USER} is not on this computer, the folder is, and this tool deletes in a runner's home "
@@ -3664,7 +3673,7 @@ def kept_home_why(host: Host) -> str:
     if known.get("runner_home_left") or home_on_record(host):  # R136: named in the person's record, never deleted
         how = ("this tool made that user and removed it; the folder holds what the runner user did not make (the whole "
                f"list is in {os.path.join(host.record_dir(), 'left-behind.txt')}), so it stays")
-    elif known.get("runner_user_made"):
+    elif known.get("runner_user_made") or home_made_on_record(host):  # R222: or the mark, as the state said it then
         how = "this tool made that user and it is no longer here"
     else:
         how = "this tool's record does not say it made a user of that name"
@@ -3676,7 +3685,9 @@ def kept_home_next(host: Host, then: str = "", made: bool | None = None) -> str:
     said by what was read of it: if it is left from this tool's runner, that line; if it is something else of
     yours, move it away. `then` is what follows each (setup's "then run the same command again")."""
     after = f"; then {then}" if then else ""
-    if kept_home_made(host) if made is None else made:
+    # R222: the step is the form that belongs to the why printed beside it (kept_home_why): where the person's record
+    # says this tool made that user and removed it, the step is the made form too (uninstall --all deletes the state)
+    if kept_home_said_made(host) if made is None else made:
         return f"Your next step: delete that folder first: {kept_home_step(host)}{after}"
     return (f"If you know it is left from this tool's runner, your next step: delete that folder first: "
             f"{kept_home_step(host)}{after}. If it is something else of yours, move it away" + (f" first{after}" if then else ""))
@@ -4076,6 +4087,7 @@ def ensure_runner_user(host: Host, rep: Report) -> bool:
             return False
         known = load_state(host)  # R129 (rule 28): a user this tool made is recorded; only a recorded one is removed
         known["runner_user_made"] = True
+        known.pop("runner_home_left", None)  # R222: the home an earlier leave kept was not there for useradd
         save_state(host, known)
         rep.ok(f"made the user {RUNNER_USER}")
     elif not load_state(host).get("runner_user_made"):
@@ -5150,12 +5162,18 @@ def runner_env_read(host: Host, folder: str, rep: Report, repo: str = "") -> str
             if kind == "not readable" else cmd(f"sudo -u {RUNNER_USER} mv -n -T -- {path} {aside}"))
     if kind != "not readable":  # R209: the name it is moved to is read again at the folder's removal, as the .env is
         note_setting(host, repo, "env_aside", aside)
-    rep.stop(f"could not read {path} ({why}): the runner's own settings file, where setup adds the job hooks' two "
-             "lines and keeps every other line as it is, so it is not written over, and nothing of it was changed. "
-             + ("Your next step makes it the runner user's own and readable to it, its lines unchanged; then run "
-                "the same setup again" if kind == "not readable" else
-                "Your next step moves it aside under a dated name, its lines unchanged and yours to read; setup then "
-                "writes a new one with only its own lines, so run the same setup again")
+    # R221: the same setup again after this stop takes the half-made runner away and starts fresh (R71), and keeps a
+    # copy of the file in the person's record (R209); the stop says so, never that the lines stay in the runner's file
+    rep.stop(f"could not read {path} ({why}): the runner's own settings file, "
+             + ("so it is not written over, and nothing of it was changed. Your next step makes it the runner user's "
+                "own and readable to it, its lines unchanged; then run the same setup again: it takes this half-made "
+                "runner away and starts fresh, with a new settings file that holds only this tool's lines, and keeps "
+                f"a copy of this file in your record ({host.record_dir()}), named there; a line of your own in it is "
+                "yours to add to the new runner's file" if kind == "not readable" else
+                "where setup adds the job hooks' two lines and keeps every other line as it is, so it is not written "
+                "over, and nothing of it was changed. Your next step moves it aside under a dated name, its lines "
+                "unchanged and yours to read; setup then writes a new one with only its own lines, so run the same "
+                "setup again")
              + f": {step}")
     return False
 
@@ -7832,7 +7850,7 @@ def leave_folders(host: Host, rep: Report | None = None) -> list[tuple[str, str,
     # person's record) are still ours by name in this tool's two root-owned folders: in HOOKS_ROOT/<name>, the two
     # fixed hook files, and that folder; in RECORDS_ROOT, a folder of that name. Each folder only by rmdir (EMPTY); no
     # other file by that name (seen/<name> is not), and nothing in a folder a job could write
-    told = {os.path.basename(f) for f, k in ((f, stayed_shape(f)) for f in stayed_on_record(host)[0])
+    told = {os.path.basename(f) for f, k in ((f, stayed_shape(f)) for f in stayed_on_record(host, whole=True)[0])
             if f != f"/home/{RUNNER_USER}" and k == "runner" or os.path.dirname(f) == HOOKS_ROOT} - known
     bases = sorted(known.union(told))
     hooks = {"job-started.sh": "file", "job-completed.sh": "file"}
@@ -7948,11 +7966,21 @@ def left_behind_path(host: Host) -> str:
     return os.path.join(host.record_dir(), LEFT_BEHIND)
 
 
-def record_left_behind(host: Host, foreign: dict) -> str | None:
+def record_left_behind(host: Host, foreign: dict, carried: dict | None = None, mark: str = "") -> str | None:
     """R136: the whole list of what stayed, into the person's record (the screen shows up to LEFT_ON_SCREEN of each):
     a header line with the time, then one line per thing, "<folder>: <what>". Each line is cleaned as a printed line
-    and a journal line are (rule 31 B; the owner's item 4): a name a job chose may hold a line feed, a tab, anything."""
+    and a journal line are (rule 31 B; the owner's item 4): a name a job chose may hold a line feed, a tab, anything.
+    R222: every leave that reaches its census writes its own section, also when nothing stayed, and the list is read
+    by its latest section, so an entry ends. `carried` ({folder: (time, [what])}) is what this run said again from
+    an earlier section and itself tested as still there: written after "# as the uninstall of TIME found it", so
+    the time it was found travels with it; `mark` (HOME_MADE_MARK) ends the section when given. The file is only
+    added to: never cut, rewritten or deleted."""
     text = "".join(f"{p_}: {plain(w)[0]}\n" for p_ in sorted(foreign) for w in foreign[p_][1])
+    by_time: dict = {}
+    for p_, (stamp, what) in sorted((carried or {}).items()):
+        by_time.setdefault(stamp, []).extend(f"{p_}: {plain(w)[0]}\n" for w in what)
+    text += "".join(f"# as the uninstall of {stamp} found it\n" + "".join(rows) for stamp, rows in sorted(by_time.items()))
+    text += f"{mark}\n" if mark else ""
     try:
         host.keep_in_record(LEFT_BEHIND, f"# {host.now().strftime('%Y-%m-%dT%H:%M:%SZ')} uninstall: what stayed, not "
                                          f"made by this tool or its runner user\n{text}")
@@ -7982,21 +8010,27 @@ def stayed_shape(folder: str) -> str:
     return ""
 
 
-def stayed_on_record(host: Host) -> tuple[dict, str]:
+def stayed_on_record(host: Host, whole: bool = False) -> tuple[dict, str]:
     """R136 (the owner's fault 2, 2026-11-25): what stayed at an earlier uninstall, as left-behind.txt says it (this
     tool's own file in the person's record; uninstall --all deletes the state, the record stays): {folder: (time,
     [what])}, each folder as its latest uninstall named it, and why it could not be read (the third answer). A source
     of names (the owner's change 3): a line not of the shape of a folder this tool empties is not read; by a name read
     here root removes only the two fixed hook files (job-started.sh, job-completed.sh) and an EMPTY folder of that
     name, inside this tool's two root-owned folders (leave_folders); nothing in a folder a job could write. A file there
-    that could not be read stops the leave before anything changes (names_unread). No file: {} (today's words stand)."""
+    that could not be read stops the leave before anything changes (names_unread). No file: {} (today's words stand).
+    R222: what is SAID is read from the latest section only (a later section ends every entry before it); `whole`
+    reads every section, as before, for the names a leave acts by, so nothing more is deleted than before."""
     text, why = host.read_checked(left_behind_path(host))
     if why:
         return {}, why
     out, stamp = {}, ""
     for line in lines_of(text or ""):
         if line.startswith("# ") and " uninstall: " in line:
-            stamp = line[2:].split(" ", 1)[0]
+            out, stamp = ({} if not whole else out), line[2:].split(" ", 1)[0]  # R222: a later section ends the earlier
+            continue
+        carried = re.fullmatch(r"# as the uninstall of (\S+) found it", line)
+        if carried and stamp:  # R222: what that section's leave said again, with the time it was found
+            stamp = carried.group(1)
             continue
         folder, sep, what = line.partition(": ")
         if not sep or not stamp or not stayed_shape(folder):
@@ -8007,11 +8041,40 @@ def stayed_on_record(host: Host) -> tuple[dict, str]:
     return out, ""
 
 
+def stayed_still_said(host: Host, rep: Report | None = None) -> dict:
+    """R222: what the latest section of the list says stayed, less an entry at or inside the runner user's home where a
+    setup of this tool has made that user since. The state says so: runner_user_made, which the leave that keeps that
+    home takes away (remove_runner_user) and only setup's useradd sets again; setup stops while that home is there, so
+    the home was new. Read from the state as this run began (rep.user_made_at_start), as uninstall --all deletes the
+    state before its census."""
+    made = load_state(host).get("runner_user_made") or (rep is not None and rep.user_made_at_start)
+    home = f"/home/{RUNNER_USER}"
+    return {f: v for f, v in stayed_on_record(host)[0].items()
+            if not (made and (f == home or f.startswith(home + "/")))}
+
+
+HOME_MADE_MARK = "# the runner user's home stayed: this tool made that user and it is no longer here"
+
+
+def home_made_on_record(host: Host) -> bool:
+    """R222: the latest section of the person's list holds HOME_MADE_MARK: the leave that wrote it named the runner
+    user's home as kept, with this tool's record then saying this tool made that user and it is no longer here."""
+    text, why = host.read_checked(left_behind_path(host))
+    mark = False
+    for line in lines_of("" if why else text or ""):
+        if line.startswith("# ") and " uninstall: " in line:
+            mark = False
+        elif line == HOME_MADE_MARK:
+            mark = True
+    return mark
+
+
 def home_on_record(host: Host) -> bool:
     """R136 (fault 2): the person's record says an uninstall of this tool left the runner user's home, holding what that
     user did not make. Only a run that reached its census writes it, and the home is cleared only before this tool's
-    own userdel, so it says this tool made that user and removed it."""
-    return f"/home/{RUNNER_USER}" in stayed_on_record(host)[0]
+    own userdel, so it says this tool made that user and removed it. R222: only where that leave is the latest thing
+    this tool did with that user (stayed_still_said: not where a setup of this tool has made it since)."""
+    return f"/home/{RUNNER_USER}" in stayed_still_said(host)
 
 
 def foreign_stayed(rep: Report, path: str, kind: str, left: list[str]) -> None:
@@ -8179,7 +8242,7 @@ def remove_folders(host: Host, repo: str, mine: dict, rep: Report, for_setup: bo
         ours = ""
         if root_test(host, f"/home/{RUNNER_USER}") is not False:
             rep.stayed["home"] = kept_home_why(host)  # change 2: what stayed carries its own why
-            rep.stayed["home_made"] = kept_home_made(host)
+            rep.stayed["home_made"] = kept_home_said_made(host)
     paths = [x for x in (ours, hook_dir(repo), records) if x]
     rules = {p_: (k, n) for p_, k, n in leave_folders(host, rep)}
     left, linked = [], []
@@ -8655,7 +8718,7 @@ def remove_shared(host: Host, rep: Report) -> bool:
         # R136 (fault 2): a records folder an earlier uninstall left (it holds what the runner user did not make, the
         # person's record says) is said again from that record in the census, as it was said then; it is not taken
         # for jobs' records nobody could read, and nothing is tried in it as a user that is gone
-        earlier = stayed_on_record(host)[0]
+        earlier = stayed_on_record(host, whole=True)[0]  # R222: every section, as before: nothing more is deleted
         bases = {b for b in bases if f"{RECORDS_ROOT}/{b}" not in earlier}
     if names is None:
         rep.warn(f"{RECORDS_ROOT} could not be read, so the jobs' records in it are kept where they are, not deleted")
@@ -8806,7 +8869,7 @@ def remove_runner_user(host: Host, rep: Report) -> bool:
             rep.ok(f"the user {RUNNER_USER} and its home are not on this computer, read back")
             return True
         rep.stayed["home"] = kept_home_why(host)  # change 2: what stayed carries its own why
-        rep.stayed["home_made"] = kept_home_made(host)
+        rep.stayed["home_made"] = kept_home_said_made(host)
         if t and (load_state(host).get("runner_home_left") or home_on_record(host)):
             # R136: named with why, no command; a leave, not a warn. The record says so: the state, or (uninstall --all
             # deletes the state) left-behind.txt in the person's record (the owner's fault 2)
@@ -9319,10 +9382,14 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     # R136 (the owner's fault 2): what an earlier uninstall left, as the person's record says it (read before this
     # run's own lines are added to it), still there and not met by this run: said again as it was said then
     foreign_now = rep.stayed.get("foreign") or {}
-    earlier, _ = stayed_on_record(host)
-    again = {f: (stayed_shape(f), what, stamp) for f, (stamp, what) in earlier.items()
-             if f not in foreign_now and stayed_shape(f) != "public" and root_test(host, f) is not False}
-    if again or (PUBLIC_KEY in earlier and not rep.stayed.get("public")):
+    # R222: from the latest section only, less what a setup has made since, and only what root tests as there in this
+    # run (a place root does not read, as inside a gone user's home, which the home's own line names, and the public
+    # places, is not said again from the list): said again, and carried into this run's section with its first time
+    earlier = stayed_still_said(host, rep)
+    carried = {f: earlier[f] for f in earlier
+               if f not in foreign_now and stayed_shape(f) != "public" and root_test(host, f) is True}
+    again = {f: (stayed_shape(f), what, stamp) for f, (stamp, what) in carried.items()}
+    if again:
         rep.stayed["again"] = True  # what stayed is named below, so the leave's last line says so
     if theirs and home in folders:
         folders.remove(home)
@@ -9348,7 +9415,13 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
     foreign = foreign_now
     public = rep.stayed.get("public") or []
     every = dict(foreign, **({PUBLIC_KEY: ("public", [f"{p_} ({w})" for p_, w in public])} if public else {}))
-    listed = record_left_behind(host, every) if every else None
+    # R222: a leave that reaches its census ends the entries before it; where it named the kept home as made by this
+    # tool and no longer here, its section says so, for a later run whose state uninstall --all has deleted
+    why_home = rep.stayed.get("home")
+    home_mark = (HOME_MADE_MARK if isinstance(why_home, str) and why_home.endswith("; this tool made that user and it "
+                                                                                 "is no longer here") else "")
+    listed = (record_left_behind(host, every, carried, home_mark) if every or carried or home_mark
+              or host.read_checked(left_behind_path(host))[0] is not None else None)
     handed = rep.stayed.get("handed") or {}
     foreign = dict({f: (k, what) for f, (k, what, _) in again.items()}, **foreign)
     for path in sorted(foreign):  # R136 (the owner's word 2026-11-25): named with why, no command
@@ -9403,12 +9476,8 @@ def census(gh: GitHub, host: Host, repos: list[str], everything: bool, rep: Repo
         n = rep.stayed["public_gone"]
         rep.ok(f"census: in {PUBLIC_KEY}: {plural(n, 'thing')} of other programs went away while root's walk ran "
                f"(find said {'it was' if n == 1 else 'each was'} no longer there); the walk's list is taken as read")
-    if not (public or gave) and PUBLIC_KEY in earlier:  # R136 (fault 2): said again from the record; root reads nothing there to say it
-        stamp, what = earlier[PUBLIC_KEY]
-        more = f" and {len(what) - LEFT_ON_SCREEN} more" if len(what) > LEFT_ON_SCREEN else ""
-        rep.ok(f"census: in {PUBLIC_KEY}: kept: {', '.join(what[:LEFT_ON_SCREEN])}{more}; that stays (as the uninstall of "
-               f"{stamp} found it: this tool's list in {left_behind_path(host)}; not read again here, as root reads "
-               "nothing in a place every user writes)")
+    # R222: an earlier entry for the public places is not said again: root reads nothing in a place every user
+    # writes, so no run can say from the list alone that it stays
     line("folders", folders, "" if everything else f"kept; {C0}uninstall --all{C1} takes them", mark)
     if state_left is not None:
         foreign, aside = rep.stayed.get("state"), rep.stayed.get("aside")
@@ -9522,6 +9591,7 @@ def uninstall(repo: str | None, everything: bool = False, wait_s: int = DRAIN_WA
                  "tool wrote it, or readable by you); then run the same command again")
         return rep.code()
     data = load_state(host)
+    rep.user_made_at_start = bool(data.get("runner_user_made"))  # R222: read before --all deletes the state
     adopt_unfinished(host, data, None if everything or not repo else {repo})
     runners = data.get("runners") or {}
     if repo and repo not in runners and not everything and not user_left_to_finish(data):

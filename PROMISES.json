@@ -2077,7 +2077,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_22_the_way_back_in_is_walked",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0 (runner 2.338.2), seen once. After `uninstall --all` (its state folder gone, the person's record kept, no runner user): `look` ended 3, its one need the person's yes to a start test (its own words), and `setup` after it ended on its own check of both sides (GitHub lists the runner online and idle with only this tool's labels; its service is active), exit 0; one real job then ran on that runner and GitHub said it succeeded; the watch's next pass ran, and `status` ended 0. After `uninstall REPO` (the watch, the slice and the tool's folders kept, as its census said): `setup` again ended on the same check, exit 0; the watch's next pass ran, `status` ended 0, and `uninstall --all` then ended 0. The other forms are held by the test.",
    "issue": 342,
    "moved_why": "",
    "moved_by_person": ""
@@ -2161,7 +2161,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_23_what_will_refuse_is_asked_before_the_first_write_and_a_later_stop_names_what_it_left",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock ubuntu:24.04 container (podman 4.9.3) inside a stock Ubuntu 24.04.5 virtual machine, at the tag v0.1.0 as its README clones it, seen once, partial. The container held python3, sudo, git, gh and systemd's package, so systemctl was on the PATH while systemd was not its first process and /run/systemd/system was not there. `look` warned that systemd does not run this computer, saying what was read and the next step; `setup` then stopped with the same words and that nothing was changed, on this computer or on GitHub, exit 2, the one command alone on the last line. Read after: no runner user and none of this tool's folders in the container, and GitHub listed no runner before or after. Partial: a stop after the first write, `status` after a setup cut part-way and sudo's words were not walked in this run.",
    "issue": 314,
    "moved_why": "",
    "moved_by_person": ""
@@ -2329,7 +2329,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_27_every_unit_is_read_stopped_before_anything_is_removed",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0, seen once, steered and partial. Steered: with this tool set up and its runner idle, root stopped the system's message bus (dbus.socket and dbus.service), so systemctl answered \"Failed to connect to bus\". `uninstall --all` then stopped: what carries this tool's names could not be read (systemd's units and unit files, each with systemctl's code and words), so nothing was said to be there or not, nothing was changed and GitHub was asked nothing, exit 2; read after, the runner's service was still running and every unit still loaded. With the bus back, the same command ended 0: the units not found, the runner user gone, GitHub listing no runner. In a plain `uninstall --all` the same day, the runner was read stopped (service inactive, no process left) before anything was removed. Partial: a unit that does not read stopped after it is told to stop, and `status`'s and `doctor`'s reads with the bus down, were not walked.",
    "issue": 355,
    "moved_why": "",
    "moved_by_person": ""
@@ -2412,7 +2412,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_30_a_user_removed_outside_the_tool_leaves_its_home_named_and_the_leave_finishes",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0, seen once, steered and partial. Steered: after a setup of this tool and one job, the admin removed the runner user outside this tool (userdel ended 0; getent then ended 2), its home kept, holding only what that user was given or made (the runner's folder, a link it made, the files a new home is given), with a crontab line and an at job that user made left behind (row R181). Held: uninstall of the one repository, twice, and uninstall --all each ended 0, never a stop or a wait; the home was still there after them, holding the runner's folder and the link; it was named as what stayed in the last lines and the census, and uninstall --all ended \"this tool is off this computer; what stayed was not made by this tool or its runner user, or holds what was not, named above with why each stayed\". setup then stopped before any admin step (no unit, no useradd in the journal), exit 2, naming the folder, with `sudo rm -rf --one-file-system /home/minions-runner` alone on its own line; that command, typed as printed, ended 0 and the home was gone; setup run again stopped on what the user left (row R181), and after those steps ended 0. Did not hold, row R222: uninstall's lines and the census named the home with a why and a list read from an older leave's entry in the person's record, and so with no command, where this row names it with the command.",
    "issue": 361,
    "moved_why": "",
    "moved_by_person": ""
@@ -2510,7 +2510,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_30_a_home_left_by_this_tools_own_userdel_is_said_from_the_record",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0, seen once, steered and partial. Steered: after a setup of this tool and one job, the admin removed the runner user outside this tool (userdel ended 0; getent then ended 2), its home kept, holding only what that user was given or made (the runner's folder, a link it made, the files a new home is given), with a crontab line and an at job that user made left behind (row R181). Held: every line that named the kept home said first what was read: the user minions-runner is not on this computer, the folder is, and this tool deletes in a runner's home only as that user; and what stayed carried its why to the census. Did not hold, row R222: how it came about was said from an older leave's entry in the person's list, no longer true at that run: \"this tool made that user and removed it; the folder holds what the runner user did not make\", where the admin had removed that user and the home held only what it was given or made; and setup's step beside that why was the form for a home this tool's record does not know (\"If you know it is left from this tool's runner\"), so the why and its step disagreed.",
    "issue": 368,
    "moved_why": "",
    "moved_by_person": ""
@@ -2650,7 +2650,7 @@
    "ship_in": "0.1.0",
    "test": "test_G5_27_the_watch_unit_carries_its_values_whole_or_refuses",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine (systemd 255) and the private proof repository, at the tag v0.1.0, seen once for each character, steered (the planted parts) and partial. Steered: for each of a percent sign, a backslash, a double quote, a space and a dollar sign, one at a time, a folder whose name held it, made by root outside the person's home and holding a link to one of the watch's programs, put first on the person's PATH; each time from nothing of this tool's. `look` ended 3, its one need the person's yes to a start test (its own words), and `setup` after it ended 0, saying the watch's unit read back word for word as systemd holds it; the unit file carried the folder in systemd's own form (the percent sign written twice, the backslash and the quote each after a backslash), and what systemd parsed of it held the folder's name whole. After a real restart of the machine, the watch's first pass ran, systemd's value was the same, and `status` from that shell ended 0, saying the units read back word for word. With a line feed in the folder's name, `setup` stopped before its first write in one line naming the folder and the next step, exit 2, and nothing of this tool's was there after. `uninstall --all` ended 0 after each. Partial: the login name's half, a difference between the unit and what was meant, a setting of the person's own in a unit, a bus call past its time limit and a systemd older than 240 were not walked; the test holds them.",
    "issue": 378,
    "moved_why": "Moved into 0.1.0 by the maintainer's word, 2026-11-25: a first release never goes out with such a place.",
    "moved_by_person": "the maintainer"
@@ -2874,7 +2874,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_29_a_runner_env_that_could_not_be_read_is_never_written_over",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0 (runner 2.338.2), seen once, steered and partial. Steered: a file of root's, mode 600, holding three lines, put in place as the runner's settings file after the runner's configure ended; the kind seen: a file the runner user cannot read. setup stopped before the hooks' lines, exit 2, naming the file and why (the user minions-runner cannot read it), with its step; the step, taken as printed, ended 0, the file then the runner user's, mode 600, its three lines. The same setup again ended 0: it took the half-made runner away, started fresh and kept the file in the person's record; its lines were not in the new runner's file (row R221). uninstall --all then ended 0 with nothing of this tool's left and GitHub listing no runner. Neither of the two values of the person's own (the third line, the locale, is this tool's own too) was in what the tool printed in that run, in the files of the person's record other than the kept copy (its journal among them), or in the system journal from the tool: the only journal lines that held one were sudo's record of the test's own commands. Partial: the other kinds (a link, not a plain file, a read that fails) and their move step were not walked on a real machine; the test holds them with a stand-in. Earlier tries the same day, which put the file in place before the runner's configure, count for nothing: the runner's own configure read it and stopped first.",
    "issue": 394,
    "moved_why": "",
    "moved_by_person": ""
@@ -2902,7 +2902,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_37_a_line_the_person_added_to_an_installed_runner_s_env_is_kept_by_uninstall_never_deleted",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0, seen once, steered, in the same run as row R206's proven line, for the half \"setup run again after a setup that was cut\": the runner's settings file, made the runner user's by R206's step and with no sum kept, was kept in the person's record (mode 600, named by path, its three lines and their names), and the half-made runner's folder was deleted and a fresh one unpacked after. Not shown by this run: uninstall's road, the 1 MiB bound, a copy that cannot be made or does not compare, and the name R206's step moves a file to.",
    "issue": 396,
    "moved_why": "",
    "moved_by_person": ""
@@ -3058,6 +3058,34 @@
    "owner": "maintainer",
    "proven": "",
    "issue": 410,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R221",
+   "seen": "2026-11-27, seen once, steered, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0: a file of root's, mode 600, holding three lines, was put in place as the runner's settings file (.env) after the runner's configure ended. setup stopped on it as row R206 promises, naming the file and why, with its step. The stop said the file is where setup \"keeps every other line as it is\", and the step \"its lines unchanged; then run the same setup again\". The step, taken as printed, made the file the runner user's, mode 600, its three lines. The same setup again took the half-made runner away, started fresh and kept the file in the person's record (mode 600, named by its line count and names), and the new runner's file held only this tool's lines. Nothing of the person's was lost, and the second run said what it did; but the first stop reads as if the lines stay in the runner's file, and they did not.",
+   "promise": "R206's stop for a runner settings file the runner user cannot read says what the same setup again does with that file: it takes the half-made runner away and starts fresh, with a new settings file that holds only this tool's lines, and keeps a copy of the file in the person's record, named there; a line of the person's own in it is theirs to add to the new runner's file. The stop no longer reads as if the next setup kept the lines in place, and its command still stands alone on its own line, last. Only that stop's sentence changes: the part-way stop's own sentence stays, and no command, no option and nothing printed for the kept copy is added beyond what the second run already says. The stop for the kinds whose step moves the file aside (a link, not a plain file, a read that fails) keeps its words: none of them was walked on a real machine. A test reads the stop's words in the stand-in world, and that the outcome after the step and the same setup again is what they say: the kept copy holds the person's lines, the new file only this tool's.",
+   "codon": "G2.30",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "test_G2_30_the_unreadable_env_stop_says_what_the_same_setup_again_does_with_the_file",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 413,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R222",
+   "seen": "2026-11-27, seen once, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0. An uninstall left things that were not this tool's in the runner user's home, in the runner's folder and in a folder of the runner user's in a public place, and wrote them, as row R136 promises, to its list in the person's record (left-behind.txt). Those things were then removed. Two fresh setups and a whole `uninstall --all`, which ended saying the tool was off this computer, ran after. Then the runner user was removed outside this tool (`userdel`, by the admin), its home kept. `uninstall` and `setup` then said \"this tool made that user and removed it; the folder holds what the runner user did not make (the whole list is in .../left-behind.txt)\". Neither half was true at that run: the tool had not removed that user, and the home held nothing the runner user did not make. Beside that why, setup's step was the form for a home this tool's record does not know. Every census after that, through eleven real restarts, also said the public place's folder \"stays\", though it was no longer there. The cause, read in the code: the list is only added to; the reader keeps each folder as the latest leave that named it; a leave with nothing to list writes nothing, so an entry never ends.",
+   "promise": "what uninstall and setup say stayed, and why, is true of this computer at that run. \"This tool made that user and removed it\" and \"the folder holds what the runner user did not make\" are said only where the leave that wrote the home's entry is the latest thing this tool did with that user, not where a setup of this tool has made that user since; there the why says this tool made that user and it is no longer here, and setup's step is the form that belongs to the why printed beside it, so the two never disagree. An entry of the list ends: a later leave that reaches its census writes its own dated section, also when nothing stayed, and the list is read by its latest section. Nothing is said in the present tense as staying from the list alone: a place the run does not read again is not said again as staying. The three answers stay: a list that could not be read still stops the leave before anything changes. The list file in the person's record is never cut, rewritten or deleted by this tool; it is only added to. By a name read from the list, nothing more is deleted than today (only the two fixed hook files and an empty folder). No new command, and no other sentence of the census changes. A test reads the words and the outcome in the world that was seen (a leave that left things, a fresh setup, a whole leave that ended off, the user removed by the admin, then uninstall and setup), a leave that left nothing after one that did, and the public place's entry; it fails on the tag's tool first. Before 0.1.1's tag, the same sequence is seen on a stock machine at the cured head. How: a leave carries into its own section only what root tests as there in that run, with the time it was first found; an earlier entry in the public places, or inside the home of a runner user that is gone (root does not read inside it; the home's own line names what it holds), is not said again. A leave that names the kept home as made by this tool and no longer here says so in its section, and the why and its step read that where uninstall --all has deleted the state; no delete reads it. This narrows row R136's sentence that every later run says what stayed as the first run said it.",
+   "codon": "G6.45",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "test_G6_45_what_uninstall_and_setup_say_stayed_is_true_of_this_computer_at_that_run",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 414,
    "moved_why": "",
    "moved_by_person": ""
   }
