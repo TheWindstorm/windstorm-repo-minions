@@ -3503,8 +3503,13 @@ def check_fresh_look(host: Host, repo: str, rep: Report) -> dict | None:
     except (KeyError, ValueError):
         rep.stop(f"the last look of {repo} cannot be read: run {C0}look {repo}{C1} first; then setup again")
         return None
-    age = (host.now() - when).total_seconds()
-    if age > LOOK_MAX_AGE_S or age < -60:
+    now = host.now()
+    age = (now - when).total_seconds()
+    if age < 0:  # R213: stamped later than this clock (a clock moved back after it): never a negative age, never fresh
+        rep.stop(f"the last look of {repo} is stamped {entry['time']}, later than this computer's clock ({stamp(now)}), "
+                 f"so it is not taken for a fresh look: run {C0}look {repo}{C1} again; then setup again")
+        return None
+    if age > LOOK_MAX_AGE_S:
         rep.stop(f"the last look of {repo} is {int(age // 60)} minutes old: run {C0}look {repo}{C1} first; then setup again (setup needs one "
                  "under an hour old)")
         return None

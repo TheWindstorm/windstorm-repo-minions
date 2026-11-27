@@ -1314,6 +1314,30 @@ class G2(unittest.TestCase):
         self.assertIn("This version serves one repository per computer.", skill)
         self.assertNotIn("next version", skill)
 
+    def test_G6_41_a_look_stamped_later_than_the_clock_is_said_so(self):
+        # Row R213, seen 2026-11-26 in a stand-in trial: "the last look of ... is -4848 minutes old". A look stamped
+        # later than this computer's clock (a clock moved back after it) is said as such, with both times, never as a
+        # negative age, and is not taken for a fresh look: the step is a new look; nothing is touched.
+        for minutes in (-4848, -2, -1):
+            host, sha = setup_host()
+            fresh_look(host, minutes=minutes)
+            stamped = M.load_state(host)["looks"][REPO]["time"]
+            code, lines = run_setup(setup_gh(sha), host)
+            self.assertEqual((code, len(lines)), (M.EXIT_STOP, 1), lines)
+            line = lines[0]
+            self.assertNotRegex(line, r"-[0-9]+ minutes", line)
+            self.assertNotIn("minutes old", line)
+            self.assertIn(f"the last look of {REPO} is stamped {stamped}, later than this computer's clock (", line)
+            now = re.search(r"later than this computer's clock \(([0-9TZ:-]+)\)", line).group(1)
+            self.assertLess(now, stamped, line)
+            self.assertIn(f"`look {REPO}`", line)
+            self.assertEqual(admin_steps(host), [], "nothing is touched")
+        # a look within the hour, stamped before the clock, still passes this check (G2.1 holds the rest)
+        host, sha = setup_host()
+        fresh_look(host, minutes=5)
+        rep = M.Report(out=Out())
+        self.assertIsNotNone(M.check_fresh_look(host, REPO, rep), rep.lines)
+
     def test_G2_1_setup_needs_a_fresh_clean_look(self):
         host, sha = setup_host()
         code, lines = run_setup(setup_gh(sha), host)
