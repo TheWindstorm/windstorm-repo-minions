@@ -2830,7 +2830,7 @@
    "codon": "G3.12",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
-   "test": "",
+   "test": "test_G3_12_move_says_what_look_says_of_a_file_with_no_job",
    "owner": "maintainer",
    "proven": "",
    "issue": 391,

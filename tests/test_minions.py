@@ -2298,6 +2298,29 @@ class G3(unittest.TestCase):
         cannot = body.split("## Left as they are (they cannot run on this computer)")[1].split("##")[0]
         self.assertNotIn("not ours", cannot)
 
+    def test_G3_12_move_says_what_look_says_of_a_file_with_no_job(self):
+        # Row R203 (the maintainer's sighting on a copy of the tool, 2026-11-25): a workflow file whose plain jobs:
+        # key has no job under it. look said no job was read; move named it nowhere on the terminal. Now move says
+        # what look says; the file was read, so it is not on the page among the files not read, and nothing of it
+        # is written; the other file moves as before.
+        path = ".github/workflows/empty.yml"
+        for what, text in (("nothing after the key", "name: e\non: [push]\njobs:\n"),
+                           ("only a comment under it", "name: e\non: [push]\njobs:\n  # none yet\n")):
+            with self.subTest(empty=what):
+                self.assertEqual(M.read_workflow(text), [])
+                files = {".github/workflows/ci.yml": CI_YML, path: text}
+                gh = MoveGH(files)
+                code, lines = run_move(gh, move_host())
+                self.assertEqual(code, M.EXIT_NEED, lines)
+                self.assertEqual([x for x in lines if path in x], [f"warn {path}: no job read"], lines)
+                written = [e["path"] for m, p, b in gh.writes if p.endswith("/git/trees") for e in b["tree"]]
+                self.assertEqual(written, [".github/workflows/ci.yml"], lines)
+                self.assertNotIn(path, pr_body_of(gh))  # read, so never among the files not read
+                # look's own words for the same file, said the same way
+                rep = M.Report(Out())
+                M.check_workflows(MoveGH(files), REPO, {}, rep)
+                self.assertIn(f"warn {path}: no job read", folded(rep.lines))
+
     def test_G3_2_jobs_that_cannot_move_are_left_and_named(self):
         host, gh = move_host(), MoveGH(self.FILES)
         code, lines = run_move(gh, host)

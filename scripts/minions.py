@@ -7483,7 +7483,10 @@ def move(repo: str, verify: bool = False, include: list[str] | None = None, host
     for path, text in files:
         triggers = read_triggers(text)
         edits = []
-        for job in read_workflow(text):
+        jobs = read_workflow(text)
+        if not jobs:  # R203: what look says of it, never passed in silence; it was read, so not among the unread
+            rep.warn(f"{path}: no job read")
+        for job in jobs:
             kind, words, labels = plan_job(path, triggers, job, system, machine, mine["labels"], inc)
             row = (path, job["id"], words)
             {"move": moved, "left": left, "publish": publish, "here": here}[kind].append(row)
