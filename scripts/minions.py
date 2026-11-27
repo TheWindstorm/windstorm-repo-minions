@@ -4823,6 +4823,24 @@ def keep_jobs_record(host: Host, records: str, rep: Report) -> str | bool:
     return "kept"
 
 
+def journal_kept_already(host: Host, text: str) -> int:
+    """R212: how much of this journal already ends the person's record, in whole lines from its start: a run cut
+    after the journal was added and before journal.log was deleted added it then, and this run's own steps come
+    after it. 0 when the record holds no journal or it cannot be read: then the whole is added, nothing lost."""
+    if "journal.log" not in host.record_names():
+        return 0
+    try:
+        kept = host.read_private(os.path.join(host.record_dir(), "journal.log")).decode("utf-8", errors="replace")
+    except OSError:
+        return 0
+    k = len(text)
+    while k > 0:
+        if kept.endswith(text[:k]):
+            return k
+        k = text.rfind("\n", 0, k - 1) + 1
+    return 0
+
+
 def keep_journal_record(host: Host, rep: Report) -> bool:
     """G6.10: the journal of every step goes to the person's record before the tool's state folder is deleted."""
     path = os.path.join(host.state_dir(), "journal.log")
@@ -4836,7 +4854,7 @@ def keep_journal_record(host: Host, rep: Report) -> bool:
                  "where it is; the same command run again moves it to your record")
         return False
     try:
-        host.keep_in_record("journal.log", text)
+        host.keep_in_record("journal.log", text[journal_kept_already(host, text):])  # R212: once, after a cut too
         host.keep_in_record("README.txt", RECORD_README, append=False)
     except OSError as e:
         rep.warn(f"the journal could not be added to your record ({host.record_dir()}: {e.strerror or e}), so this "

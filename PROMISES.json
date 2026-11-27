@@ -2942,7 +2942,7 @@
    "codon": "G6.40",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
-   "test": "",
+   "test": "test_G6_40_a_cut_after_the_journal_is_kept_does_not_add_it_twice",
    "owner": "maintainer",
    "proven": "",
    "issue": 399,

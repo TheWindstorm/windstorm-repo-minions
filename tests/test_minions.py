@@ -5019,6 +5019,44 @@ class G6(unittest.TestCase):
             self.assertIn(REPO, M.load_state(h)["runners"])
             self.assertEqual(M.watch(host=h, gh=StatusGH(), out=Out()), M.EXIT_OK, form)
 
+    def test_G6_40_a_cut_after_the_journal_is_kept_does_not_add_it_twice(self):
+        # Row R212, seen 2026-11-26 in a stand-in trial: a cut after the journal was added to the person's record
+        # and before journal.log was deleted made the next uninstall --all add it again (59 lines for 34).
+        class Cut(BaseException):
+            pass
+        real = M.delete_ours
+        seen = {}
+
+        def cut_once(folder, names):
+            if folder == host.state_dir() and "first" not in seen:
+                with open(os.path.join(folder, "journal.log"), encoding="utf-8") as f:
+                    seen["first"] = f.read()
+                raise Cut()
+            if folder == host.state_dir():
+                with open(os.path.join(folder, "journal.log"), encoding="utf-8") as f:
+                    seen["second"] = f.read()
+            return real(folder, names)
+
+        gh, world, host = remove_setup()
+        rec = f"{host.record_dir()}/journal.log"
+        host.files[rec] = "2026-01-01T00:00:00Z an earlier setup's journal, the person's\n"
+        earlier = host.files[rec]
+        with mock.patch.object(M, "delete_ours", cut_once):
+            with self.assertRaises(Cut):
+                run_uninstall(gh, host, repo=None, everything=True)
+            self.assertEqual(host.files[rec], earlier + seen["first"], "the journal was added before the cut")
+            code, out = run_uninstall(gh, host, repo=None, everything=True)
+        self.assertTrue(seen["second"].startswith(seen["first"]), "the second run's own steps came after it")
+        self.assertGreater(len(seen["second"]), len(seen["first"]))
+        self.assertEqual(host.files[rec], earlier + seen["second"], "once: nothing doubled, nothing lost")
+        self.assertFalse(os.path.isdir(host.state_dir()))
+        # A journal that does not continue what the record ends with is added whole
+        host2 = linux_host()
+        host2.files[f"{host2.record_dir()}/journal.log"] = "x 1\ny 2\n"
+        self.assertEqual(M.journal_kept_already(host2, "y 2\nz 3\n"), len("y 2\n"))
+        self.assertEqual(M.journal_kept_already(host2, "q 9\n"), 0)
+        self.assertEqual(M.journal_kept_already(linux_host(), "q 9\n"), 0, "no journal in the record yet")
+
     def test_G6_10_uninstall_keeps_the_persons_record_in_one_folder_they_own(self):
         # Rule 8 and INV6 (plan 3.0, row R99): the record of what the tool did is the person's. It is moved into one
         # plain-text folder they own, named last by the census, and deleted only on a flag typed at a terminal.
