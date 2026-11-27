@@ -5777,25 +5777,30 @@ def survey_words(data: dict, repo: str) -> str:
     return f"{os_} {s.get('machine') or ''}".strip(BLANKS) + " (from this computer's own survey)"
 
 
-def computer_side(host: Host, mine: dict) -> tuple[str, list[int], dt.datetime]:
+def computer_side(host: Host, mine: dict) -> tuple[str, list[int] | None, dt.datetime, str]:
+    """G5.1: the service's word, the job processes (None when the read could not answer, R170, with why), when."""
     rc, active = host.run(systemctl("is-active", mine["unit"]))
     try:
-        worker = runner_pids(host, mine["folder"], "Runner.Worker")
-    except PidsUnread:  # status's road: said as no job process, as before R167 (its own row, due 0.1.1)
-        worker = []
-    return answer_or_words(active), worker, host.now()
+        worker, why = runner_pids(host, mine["folder"], "Runner.Worker"), ""
+    except PidsUnread as e:  # R170 (rule 6): never "no job process" from a read that could not answer
+        worker, why = None, str(e)
+    return answer_or_words(active), worker, host.now(), why
 
 
-def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int], at: dt.datetime,
-                     read: bool = True) -> tuple[str, str]:
+def both_sides_words(r: dict | None, gh_at: dt.datetime, active: str, worker: list[int] | None, at: dt.datetime,
+                     read: bool = True, worker_why: str = "") -> tuple[str, str]:
     """G5.1, G5.2: one line, both sides with the time each was read; "idle" only when both agree. R160 (rule 6): a
-    list that was not read is never "does not list it"."""
+    list that was not read is never "does not list it". R170: job processes that could not be read (worker None)
+    are said so, with what pgrep answered, and the word is that this computer's side could not be read."""
     if not read:
         gh_side = f"GitHub not read (at {hms(gh_at)})"
     elif r is None:
         gh_side = f"GitHub does not list it (read {hms(gh_at)})"
     else:
         gh_side = f"GitHub says {r.get('status', 'not read')}, {'busy' if r.get('busy') else 'not busy'} (read {hms(gh_at)})"
+    if worker is None:
+        here = f"this computer: service {active}, its job processes not read ({worker_why}) (at {hms(at)})"
+        return "this computer's side could not be read", f"{gh_side}; {here}"
     here = f"this computer: service {active}, {'a job process runs (' + str(worker[0]) + ')' if worker else 'no job process'} (read {hms(at)})"
     if r is not None and r.get("status") == "online" and not r.get("busy") and not worker and active == "active":
         word = "idle"
@@ -5977,7 +5982,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
                                   "public repository's runner for a job"))
         s_r, r = read_runner(gh, rp, mine["name"])
         gh_at = host.now()
-        active, worker, at = computer_side(host, mine)
+        active, worker, at, worker_why = computer_side(host, mine)
         if s_r != 200:
             first.append(("warn", f"GitHub could not be read for {rp}'s runners now "
                                   f"({getattr(gh, 'why', '') or 'HTTP 0' if not s_r else 'HTTP ' + str(s_r)}): what this says "
@@ -5985,7 +5990,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         elif r is None:
             if mine.get("gone_on_github") or active in ("active", "activating"):
                 first.append(("warn", gone_words(rp, mine)))
-        word, sides = both_sides_words(r, gh_at, active, worker, at, s_r == 200)
+        word, sides = both_sides_words(r, gh_at, active, worker, at, s_r == 200, worker_why)
         held = r is not None and sorted(x.get("name") for x in r.get("labels", [])) == [HELD_LABEL]
         hold_words = ""
         if held:
@@ -6004,7 +6009,7 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         asleep = (max(0.0, slept_now - slept_then)
                   if isinstance(slept_now, (int, float)) and isinstance(slept_then, (int, float)) else 0.0)
         awake = (now - since).total_seconds() - asleep if since else 0.0
-        if (since and r is not None and r.get("status") != "online" and active == "active" and not worker
+        if (since and r is not None and r.get("status") != "online" and active == "active" and worker == []
                 and awake > 2 * every):
             span = minutes((now - since).total_seconds()) + (f", {minutes(awake)} of it awake" if asleep else "")
             first.append(("warn", f"{mine['name']} for {rp}: GitHub has shown it offline at every watch pass "
@@ -8267,8 +8272,9 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         if not remove_one(gh, host, rp, data, rep, DRAIN_WAIT_S, 10, f"doctor {rp}"):
             return rep.code()
         rep.ok(f"{C0}setup {rp}{C1} sets it up again, fresh, when you want it")
+    not_read: list[str] = []
     for rp in [r for r in repos if r not in cut]:
-        broken += doctor_one(gh, host, rp, data["runners"][rp], rep)
+        broken += doctor_one(gh, host, rp, data["runners"][rp], rep, not_read)
     rc, active = host.run(systemctl("is-active", f"{WATCH_UNIT}.timer"))
     if active.strip(BLANKS) == "active":
         rep.ok("the watch's timer is active")
@@ -8283,12 +8289,15 @@ def doctor(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         rep.stop(f"{len(broken)} promise(s) not kept here: {', '.join(broken)}. Nothing was changed: run the command "
                  "each line above names, then doctor again")
     else:
-        rep.ok("every promise of the install read back as kept" + ("" if admin else ", of those that could be read"))
+        rep.ok("every promise of the install read back as kept" + ("" if admin and not not_read else
+                                                                   ", of those that could be read")
+               + (f" (not read: {', '.join(not_read)})" if not_read else ""))
     return rep.code()
 
 
-def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> list[str]:
-    """One runner's promises, each read now. Returns the names of those not kept."""
+def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report, not_read: list[str] | None = None) -> list[str]:
+    """One runner's promises, each read now. Returns the names of those not kept; adds to `not_read` the names of
+    those that could not be read (R171), which the last line never counts as kept."""
     broken: list[str] = []
     folder, unit, name = mine.get("folder") or "", mine.get("unit") or "", mine.get("name") or ""
     again = f"{C0}setup {repo}{C1} again after {C0}uninstall {repo}{C1}"
@@ -8412,8 +8421,11 @@ def doctor_one(gh: GitHub, host: Host, repo: str, mine: dict, rep: Report) -> li
     # G4.7: never two copies.
     try:
         listeners = runner_pids(host, folder, "Runner.Listener")
-    except PidsUnread:  # doctor's road: as before R167 (its own row, due 0.1.1)
+    except PidsUnread as e:  # R171 (rule 6): the one-copy check not read, with what pgrep answered; never passed
         listeners = []
+        rep.warn(f"{repo}: never two copies of the runner: not read ({e})")
+        if not_read is not None:
+            not_read.append(f"{repo} one copy")
     if len(listeners) > 1:
         bad("one copy", f"{len(listeners)} copies of the runner run ({', '.join(map(str, listeners))}): "
                         f"{C0}drain {repo} --stop{C1}, then {C0}resume {repo}{C1}")

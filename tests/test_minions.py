@@ -3357,6 +3357,24 @@ class G5(unittest.TestCase):
         gh = StatusGH()
         self.assertIn(f"ok queue for {REPO}: no job waiting for our runner", run_cmd(M.status, REPO, host=host, gh=gh)[1])
 
+    def test_G5_1_status_never_says_idle_from_a_job_process_read_that_could_not_answer(self):
+        # Row R170 (rule 6), read in the code 2026-11-24: status took a pgrep that could not answer (an exit other
+        # than 0 or 1) as no job process. Now this computer's side is said as not read, with what pgrep answered.
+        for bad in ((2, "pgrep: cannot read /proc\n"), (127, "Command timed out after 20 seconds"), (3, "")):
+            host, _ = g5_host(runs={("pgrep", "-u", "minions-runner", "-f"): bad})
+            code, lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())
+            line = next(x for x in lines if " minions-box-1 for " in x)
+            self.assertTrue(line.startswith("warn "), line)
+            self.assertIn(f"for {REPO}: this computer's side could not be read.", line)
+            self.assertIn(f"its job processes not read (pgrep answered code {bad[0]}", line)
+            self.assertIn("GitHub says online, not busy", line)
+            self.assertNotIn("idle", line)
+            self.assertNotIn("no job process", line)
+        # the read that answers is said as before
+        host, _ = g5_host()
+        line = next(x for x in run_cmd(M.status, REPO, host=host, gh=StatusGH())[1] if " minions-box-1 for " in x)
+        self.assertIn(f"for {REPO}: idle.", line)
+
     def test_G5_2_idle_only_when_both_sides_agree(self):
         cases = [(False, False, "idle"), (True, False, "the two sides disagree"),
                  (False, True, "the two sides disagree"), (True, True, "busy")]
@@ -7059,6 +7077,23 @@ class G8(unittest.TestCase):
         self.assertIn("Ubuntu 22.04 or newer, Debian 12 or newer", out.getvalue())
         self.assertEqual(host.ran, [])
         self.assertNotIn(" | {", src.replace(" ", " "))  # no dict union operator (3.9+) in the tool
+
+    def test_G4_7_doctor_never_passes_one_copy_from_a_read_that_could_not_answer(self):
+        # Row R171 (rule 6), read in the code 2026-11-24: doctor took a pgrep that could not answer as no copy of
+        # the runner running, so its one-copy check passed unread. Now it is named not read, with what pgrep
+        # answered, and the last line never counts it as kept.
+        host, sha = doctor_world()
+        host.runs[("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.Listener")] = (2, "pgrep: cannot read /proc\n")
+        code, lines = run_doctor(host, sha)
+        self.assertIn(f"warn {REPO}: never two copies of the runner: not read (pgrep answered code 2: pgrep: cannot "
+                      "read /proc)", lines)
+        self.assertEqual(lines[-1], "ok every promise of the install read back as kept, of those that could be read "
+                                    f"(not read: {REPO} one copy)")
+        # Two copies read: still a promise not kept
+        host, sha = doctor_world()
+        host.runs[("pgrep", "-u", "minions-runner", "-f", f"{FOLDER}/bin/Runner.Listener")] = (0, "11\n12\n")
+        code, lines = run_doctor(host, sha)
+        self.assertTrue(lines[-1].startswith("stop 1 promise(s) not kept here:"), lines[-1])
 
     def test_G8_4_doctor_checks_install_and_finishes_half_done_steps(self):
         # Every promise of G2 and G4 read back as kept, one line each, and nothing changed.
