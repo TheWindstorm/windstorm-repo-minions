@@ -3473,24 +3473,93 @@ class G5(unittest.TestCase):
             last = f.read().splitlines()[-1]
         self.assertEqual(last, f"2026-11-22T23:00:00Z watch {REPO}: online, not busy")
         # Within three intervals: ok. Older: "the watch is not running", as a warn.
+        T = "the watch's timer, read at {}: systemd reads it active and enabled; heartbeat: "  # R152: the timer read now first
         clock.sleep(14 * 60)
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
-        self.assertIn("ok the watch ran 14 min ago, at 23:00:00Z (every 5 min)", lines)
+        self.assertIn("ok " + T.format("23:14:00Z") + "the watch ran 14 min ago, at 23:00:00Z (every 5 min)", lines)
         clock.sleep(2 * 60)
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
-        self.assertIn("warn the watch is not running: its last heartbeat was 16 min ago, at 23:00:00Z (it runs every "
-                      "5 min)", lines)
+        self.assertIn("warn " + T.format("23:16:00Z") + "the watch is not running: its last heartbeat was 16 min ago, "
+                      "at 23:00:00Z (it runs every 5 min)", lines)
         # R83: the same 16 minutes, 12 of them asleep (seen on a stock machine): the timer counts only waking time,
         # so the watch is not called stopped, and no stop line comes first.
         host.slept = 12 * 60
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
-        self.assertIn("ok the watch ran 16 min ago, at 23:00:00Z; this computer slept 12 min since, and the watch's "
-                      "timer counts only waking time: its next pass comes within 5 min of waking time", lines)
+        self.assertIn("ok " + T.format("23:16:00Z") + "the watch ran 16 min ago, at 23:00:00Z; this computer slept 12 "
+                      "min since, and the watch's timer counts only waking time: its next pass comes within 5 min of "
+                      "waking time", lines)
         self.assertFalse([x for x in lines if "the watch is not running" in x], lines)
         # Asleep only 30 s of the 16 minutes: 15.5 minutes awake with no pass is still a stopped watch.
         host.slept = 30
         lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
         self.assertTrue(lines[0].startswith("stop the watch is not running"), lines)
+
+    def test_G5_22_status_reads_the_watch_timer_not_only_its_heartbeat(self):
+        # Row R152 (rule 24, A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE), read in the code 2026-11-24: the
+        # watch line came from the heartbeat alone, so a timer stopped or disabled was said ok for up to three
+        # intervals. Now the timer is read at that moment, in three answers, and the heartbeat is said beside it.
+        ACT, EN = ("systemctl", "is-active", "minions-watch.timer"), ("systemctl", "is-enabled", "minions-watch.timer")
+        beat = "heartbeat: the watch ran 2 min ago, at 22:58:00Z (every 5 min)"
+        for act, en, kind, words in (
+                ((0, "active\n"), (0, "enabled\n"), "ok", "systemd reads it active and enabled; " + beat),
+                ((3, "inactive\n"), (0, "enabled\n"), "warn", "systemd reads it inactive and enabled: the watch is not "
+                 "running now. `sudo systemctl start minions-watch.timer`, or setup again; " + beat),
+                ((3, "failed\n"), (1, "disabled\n"), "warn", "systemd reads it failed and disabled: the watch is not running"),
+                ((0, "active\n"), (1, "disabled\n"), "warn", "systemd reads it active and disabled: it runs now, and does not "
+                 "start again when this computer restarts. Setup again turns it back on; " + beat),
+                # never "ok" from a read that could not answer (its last line is named: under test_G6_28, a warning)
+                ((1, "Failed to connect to bus: No such file or directory\n"), (0, "enabled\n"), "warn",
+                 "whether it runs could not be read (systemctl answered code 1: "),
+                ((0, "active\n"), (0, ""), "warn", "systemd reads it active; whether it starts when this computer restarts "
+                 "could not be read (systemctl answered code 0: ")):
+            host, clock = g5_host(runs={ACT: act, EN: en})
+            lines = run_cmd(M.status, REPO, host=host, gh=StatusGH())[1]
+            line = next((x for x in lines if "the watch's timer, read at" in x), None)
+            self.assertIsNotNone(line, lines)
+            self.assertTrue(line.startswith(f"{kind} the watch's timer, read at 23:00:00Z: "), line)
+            self.assertIn(words, folded([line])[0], (act, en))
+            if act[0] == 1:
+                self.assertIn("; systemd reads it enabled: so whether the watch runs is not said; status again later; ",
+                              line)
+            if en == (0, ""):
+                self.assertIn("): so whether the watch runs is not said; status again later; ", line)
+            self.assertIn(beat, line)  # the heartbeat's time beside it, fresh in every case
+            self.assertIn(tuple(M.systemctl("is-active", "minions-watch.timer")), host.ran)
+            self.assertIn(tuple(M.systemctl("is-enabled", "minions-watch.timer")), host.ran)
+
+    def test_G5_23_lifts_by_itself_is_said_only_with_the_timer_enabled(self):
+        # Row R153 (rule 24), read in the code 2026-11-24: `drain --restart` and status's held-for-a-restart line said
+        # "the hold lifts by itself once this computer has restarted" without reading whether the watch's timer starts
+        # after the restart. Now is-enabled is read at that moment; otherwise what was read and what lifts it instead.
+        EN = ("systemctl", "is-enabled", "minions-watch.timer")
+        for en, kind, words in (
+                ((0, "enabled\n"), "ok", "lifts by itself once this computer has restarted and GitHub reads the runner "
+                 "online again (the watch does it; its timer is read enabled now)"),
+                ((1, "disabled\n"), "warn", "does not lift by itself: the watch's timer is read disabled now, so it does "
+                 f"not start when this computer restarts. After the restart, `resume {REPO}` lifts it (setup again turns "
+                 "the watch back on)"),
+                ((0, "enabled-runtime\n"), "warn", "does not lift by itself: the watch's timer is read enabled-runtime now"),
+                ((1, "Failed to connect to bus: No such file or directory\n"), "warn",
+                 "is lifted by the watch after the restart only if its timer starts then, and whether it starts when this "
+                 "computer restarts could not be read (systemctl answered code 1: ")):
+            host, clock = g5_host(runs={EN: en})
+            host.files["/proc/sys/kernel/random/boot_id"] = "boot-one\n"
+            gh = StatusGH()
+            code, lines = run_cmd(M.drain, None, host=host, gh=gh, restart=True)
+            self.assertEqual(code, M.EXIT_OK, lines)
+            self.assertTrue(lines[-1].startswith(f"{kind} online and idle: safe to restart now. The hold on {REPO} "), lines[-1])
+            self.assertIn(words, folded([lines[-1]])[0], en)
+            self.assertEqual(M.load_state(host)["restart_hold"]["repos"], [REPO])  # the hold is set either way
+            line = next(x for x in run_cmd(M.status, REPO, host=host, gh=gh)[1]
+                        if x.split(" ", 1)[1].startswith("held for a restart since"))
+            self.assertTrue(line.startswith(kind + " "), line)
+            self.assertIn("the hold " + words, folded([line])[0], en)
+            if en[0] == 1 and "disabled" not in en[1]:
+                self.assertTrue(folded([line])[0].endswith(f"). If the hold stays after the restart, `resume {REPO}` "
+                                                           "lifts it"), line)
+            if kind == "warn":
+                self.assertNotIn("lifts by itself", line)
+                self.assertNotIn("lifts by itself", lines[-1])
 
     def test_G5_4_a_repository_no_longer_private_gets_no_job_here_and_our_runner_leaves_it(self):
         # Plan 2.0: the watch has no admin rights (G9.7). A job still runs: it finishes (GitHub refuses to remove a

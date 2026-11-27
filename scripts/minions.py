@@ -5593,8 +5593,9 @@ def drain(repo: str | None, stop: bool = False, wait_s: int = DRAIN_WAIT_S, poll
             data.pop("restart_hold", None)
         save_state(host, data)
         if ours:
-            rep.ok("online and idle: safe to restart now. The hold on " + ", ".join(ours) + " lifts by itself once "
-                   "this computer has restarted and GitHub reads the runner online again (the watch does it)")
+            lift = hold_lift_words(host, ours)  # R153: from the watch's timer read now
+            (rep.ok if lift.startswith("lifts by itself") else rep.warn)(
+                "online and idle: safe to restart now. The hold on " + ", ".join(ours) + " " + lift)
         else:
             rep.ok("online and idle: safe to restart now. Every runner here was already held before this, and stays "
                    "held after the restart until you resume it")
@@ -5924,6 +5925,66 @@ def skill_folder_line(host: Host, data: dict) -> tuple[str, str] | None:
     return "warn", f"the skill's folder ({root}) is gone: {goes_on}"
 
 
+def watch_timer_now(host: Host) -> tuple[str, str, str, str]:
+    """R152, R153 (rule 24: A SETTING SAYS WHAT WAS ASKED FOR, NOT WHAT IS THERE; rule 6's three answers): the
+    watch's timer as systemd reads it at this moment. Returns (runs, boot, words): runs is "yes" (is-active active),
+    "no" (inactive or failed) or "unread"; boot is "yes" (is-enabled enabled), "no" (disabled, masked, masked-runtime,
+    or enabled-runtime, which does not outlast a restart) or "unread"; words say both as read; the last, is-enabled's
+    part alone. Any other word, or no word, is not read: never taken for on or off."""
+    timer = f"{WATCH_UNIT}.timer"
+    rc, out = host.run(systemctl("is-active", timer))
+    w = (words_of(out) or [""])[0]
+    runs = "yes" if w == "active" else "no" if w in ("inactive", "failed") else "unread"
+    run_w = "" if runs != "unread" else f"whether it runs could not be read ({first_words(rc, out)})"
+    rc, out = host.run(systemctl("is-enabled", timer))
+    e = (words_of(out) or [""])[0]
+    boot = ("yes" if e == "enabled" else
+            "no" if e in ("disabled", "masked", "masked-runtime", "enabled-runtime") else "unread")
+    boot_w = ("" if boot != "unread" else
+              f"whether it starts when this computer restarts could not be read ({first_words(rc, out)})")
+    if runs != "unread" and boot != "unread":
+        words = f"systemd reads it {w} and {e}"
+    elif runs != "unread":
+        words = f"systemd reads it {w}; {boot_w}"
+    elif boot != "unread":
+        words = f"{run_w}; systemd reads it {e}"
+    else:
+        words = f"{run_w}; {boot_w}"
+    return runs, boot, words, boot_w or f"read {e}"
+
+
+def watch_timer_line(host: Host, now: dt.datetime) -> tuple[str, str]:
+    """R152: status says the watch runs only from its timer read now (active and enabled); otherwise what was read,
+    with the one step. The heartbeat's time is said beside it by the caller."""
+    runs, boot, words, _ = watch_timer_now(host)
+    head = f"the watch's timer, read at {hms(now)}: {words}"
+    if runs == "yes" and boot == "yes":
+        return "ok", head
+    if runs == "no":
+        return "warn", (f"{head}: the watch is not running now. {C0}sudo systemctl start {WATCH_UNIT}.timer{C1}, "
+                        "or setup again")
+    if runs == "yes" and boot == "no":
+        return "warn", (f"{head}: it runs now, and does not start again when this computer restarts. Setup again "
+                        "turns it back on")
+    return "warn", f"{head}: so whether the watch runs is not said; status again later"
+
+
+def hold_lift_words(host: Host, repos: list[str]) -> str:
+    """R153: "lifts by itself once this computer has restarted" only with the watch's timer read enabled now (the
+    watch lifts the hold); otherwise what was read, and what lifts the hold instead (resume, by name)."""
+    _, boot, _, boot_w = watch_timer_now(host)
+    if boot == "yes":
+        return ("lifts by itself once this computer has restarted and GitHub reads the runner online again (the watch "
+                "does it; its timer is read enabled now)")
+    steps = " and ".join(f"{C0}resume {rp}{C1}" for rp in repos) or f"{C0}resume REPO{C1}"
+    if boot == "no":
+        return (f"does not lift by itself: the watch's timer is {boot_w} now, so it does not "
+                f"start when this computer restarts. After the restart, {steps} lifts it (setup again turns the "
+                "watch back on)")
+    return (f"is lifted by the watch after the restart only if its timer starts then, and {boot_w}. "
+            f"If the hold stays after the restart, {steps} lifts it")
+
+
 def watch_heartbeat(data: dict, now: dt.datetime, slept_now: float | None = None) -> tuple[bool, str]:
     """G5.3: a heartbeat older than three intervals of waking time is "the watch is not running". R83: the watch's
     timer counts only waking time, so time this computer slept since the last pass is not counted against it."""
@@ -6053,7 +6114,8 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
         first.extend(summary)
         rest.extend(name_cut_jobs(gh, host, rp, mine, data, rerun))
     ok_, words = watch_heartbeat(data, now, host.slept_s())
-    rest.append(("ok" if ok_ else "warn", words))
+    kind, timer = watch_timer_line(host, now)  # R152: the timer read now; the heartbeat's time beside it
+    rest.append(("ok" if ok_ and kind == "ok" else "warn", f"{timer}; heartbeat: {words}"))
     held = held_passes(host)  # R208: how many passes were skipped since the last whole one
     if held:
         rest.append(("warn", f"the watch's last whole pass was at {last_whole_pass(host)}; {held} pass(es) skipped "
@@ -6095,8 +6157,9 @@ def status(repo: str | None = None, host: Host | None = None, gh: GitHub | None 
             save_state(host, fresh)
     rh = data.get("restart_hold")
     if rh:
-        rest.append(("ok", f"held for a restart since {rh['time']} ({', '.join(rh.get('repos') or [])}): the hold lifts by itself once this computer has "
-                           "restarted and GitHub reads the runner online"))
+        lift = hold_lift_words(host, list(rh.get("repos") or []))  # R153: from the timer read now
+        rest.append(("ok" if lift.startswith("lifts by itself") else "warn",
+                     f"held for a restart since {rh['time']} ({', '.join(rh.get('repos') or [])}): the hold {lift}"))
     for kind, text in first + rest:
         {"ok": rep.ok, "warn": rep.warn, "stop": rep.stop, "need": rep.need}[kind](text)
     if any("stopped by this computer's memory limit" in text for _, text in first + rest):
