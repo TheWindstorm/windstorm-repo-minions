@@ -14,6 +14,7 @@ import ast
 import atexit
 import collections
 import contextlib
+import datetime
 import json
 import os
 import re
@@ -156,6 +157,70 @@ def v(s):
     return tuple(int(x) for x in s.split("."))
 
 
+# A filed row (G9.20): kept, due in no version while 'filed' holds text. The one question every check asks of it.
+FILED_LEAD = re.compile(r"By the (maintainer|owner)'s word, (\d{4}-\d{2}-\d{2}): ")
+
+
+def filed(r) -> bool:
+    return bool(str(r.get("filed") or "").strip())
+
+
+def due_not_built(rows, version, ran, plan) -> list:
+    """Rows due in this version or before with no test that ran and passed, or whose test the plan does not name.
+    An unbuilt filed row is due in no version, whatever 'ship_in' says."""
+    out = []
+    for r in rows:
+        if filed(r) and not r.get("test"):
+            continue
+        if v(r["ship_in"]) <= version:
+            if r.get("test") not in ran:
+                out.append(f"{r['id']} ({r['promise'][:60]}...) is due in {r['ship_in']} and has no test that ran and "
+                           "passed. Build it, or have its date moved (see how_to_use in PROMISES.json).")
+            elif f"`{r['test']}`" not in plan:
+                out.append(f"{r['id']}: its test is not named in the plan")
+    return out
+
+
+def built_not_passed(rows, ran, plan) -> list:
+    """A row marked built, filed or not, points at a test that ran and passed today and that the plan names."""
+    out = []
+    for r in rows:
+        if r.get("test"):
+            if r["test"] not in ran:
+                out.append(f"{r['id']}: its test {r['test']} was not collected or did not pass")
+            elif f"`{r['test']}`" not in plan:
+                out.append(f"{r['id']}: its test is not named in the plan")
+    return out
+
+
+def not_proven_after(rows, version) -> list:
+    """Rows of an earlier version with no proven line. A filed row is not asked for one while it is filed."""
+    return [f"{r['id']} shipped in {r['ship_in']} and no real machine has proven it yet"
+            for r in rows if not filed(r) and v(r["ship_in"]) < version and not r.get("proven")]
+
+
+def filed_text_faults(rows) -> list:
+    """A filed row's text opens with whose word and the day (the gate reads those first words only); a person's
+    row is filed only by the owner's word."""
+    out = []
+    for r in rows:
+        if not filed(r):
+            continue
+        m = FILED_LEAD.match(r["filed"])
+        day = None
+        if m:
+            try:
+                day = datetime.date.fromisoformat(m.group(2))
+            except ValueError:
+                day = None
+        if not m or day is None:
+            out.append(f"{r['id']}: 'filed' must begin \"By the maintainer's word, YYYY-MM-DD: \" or "
+                       "\"By the owner's word, YYYY-MM-DD: \", a real day")
+        elif r.get("owner") == "person" and m.group(1) != "owner":
+            out.append(f"{r['id']}: a person's row is filed only by the owner's word")
+    return out
+
+
 class Promises(unittest.TestCase):
     """A lesson is a gate, not a note."""
 
@@ -180,24 +245,66 @@ class Promises(unittest.TestCase):
             self.assertTrue(d.get("heard") and d.get("why"), "a declined lesson needs what was heard and why it was not taken")
 
     def test_PROMISES_no_version_ships_while_a_promise_due_in_it_is_not_built(self):
-        for r in self.rows:
-            if v(r["ship_in"]) <= self.version:
-                self.assertIn(r.get("test"), self.tests,
-                              f"{r['id']} ({r['promise'][:60]}...) is due in {r['ship_in']} and has no test that ran and passed. "
-                              "Build it, or have its date moved (see how_to_use in PROMISES.json).")
-                self.assertIn(f"`{r['test']}`", self.plan, f"{r['id']}: its test is not named in the plan")
+        self.assertEqual(due_not_built(self.rows, self.version, self.tests, self.plan), [])
 
     def test_PROMISES_every_built_row_names_a_test_that_ran_at_any_version(self):
         """A row marked built points at a test that ran and passed today, not only once its version is due."""
-        for r in self.rows:
-            if r.get("test"):
-                self.assertIn(r["test"], self.tests, f"{r['id']}: its test {r['test']} was not collected or did not pass")
-                self.assertIn(f"`{r['test']}`", self.plan, f"{r['id']}: its test is not named in the plan")
+        self.assertEqual(built_not_passed(self.rows, self.tests, self.plan), [])
 
     def test_PROMISES_the_version_after_needs_proof_on_a_real_machine(self):
-        for r in self.rows:
-            if v(r["ship_in"]) < self.version:
-                self.assertTrue(r.get("proven"), f"{r['id']} shipped in {r['ship_in']} and no real machine has proven it yet")
+        self.assertEqual(not_proven_after(self.rows, self.version), [])
+
+    def test_G9_20_a_filed_row_says_whose_word_and_the_day(self):
+        """The file's own rows: every filed text opens with whose word and the day."""
+        self.assertEqual(filed_text_faults(self.rows), [])
+
+    def test_G9_20_the_gate_asks_a_filed_row_one_question(self):
+        """Planted rows, each case refused first and the same row filed then passes where it should."""
+        plan = "`test_built_one`"
+        lead = "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading."
+
+        def row(**k):
+            r = {"id": "R9", "promise": "a promise", "owner": "maintainer", "ship_in": "0.1.1", "first_ship_in": "0.1.1"}
+            r.update(k)
+            return r
+        with self.subTest("1. a filed text without its opening or its date fails"):
+            for bad in ("waits for a real report. A what-if.", "By the maintainer's word: waits for a real report. x",
+                        "By the maintainer's word, 2026-13-40: waits for a real report. x",
+                        "By someone's word, 2026-11-27: waits for a real report. x",
+                        "by the maintainer's word, 2026-11-27: waits for a real report. x"):
+                self.assertEqual(len(filed_text_faults([row(filed=bad)])), 1, bad)
+            self.assertEqual(filed_text_faults([row(filed=lead)]), [])
+        with self.subTest("2. a person's row filed by the maintainer's word fails"):
+            self.assertEqual(len(filed_text_faults([row(owner="person", filed=lead)])), 1)
+            self.assertEqual(filed_text_faults([row(owner="person", filed=lead.replace("maintainer's", "owner's"))]), [])
+        with self.subTest("3. an unbuilt row due in the version under test fails; the same row filed passes"):
+            self.assertEqual(len(due_not_built([row()], v("0.1.1"), set(), plan)), 1)
+            self.assertEqual(len(due_not_built([row(filed="   ")], v("0.1.1"), set(), plan)), 1)
+            self.assertEqual(due_not_built([row(filed=lead)], v("0.1.1"), set(), plan), [])
+            self.assertEqual(due_not_built([row(filed=lead)], v("0.2.0"), set(), plan), [])
+        with self.subTest("4. a built filed row whose test did not pass fails"):
+            built = row(filed=lead, test="test_built_one")
+            self.assertEqual(len(built_not_passed([built], set(), plan)), 1)              # missing
+            self.assertEqual(len(due_not_built([built], v("0.1.1"), set(), plan)), 1)
+            self.assertEqual(built_not_passed([built], {"test_built_one"}, plan), [])
+            probe = ("import unittest\n\nclass T(unittest.TestCase):\n"
+                     "    @unittest.skip('a planted skip')\n    def test_built_one(self):\n        pass\n\n"
+                     "    def test_built_two(self):\n        self.fail('the real body')\n\n"
+                     "    def test_built_two(self):\n        pass\n")
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
+                    f.write(probe)
+                before = len(NOT_RUN_HERE)
+                ran = names_that_ran(d)
+                twice = defined_twice(os.path.join(d, "test_probe.py"))
+                del NOT_RUN_HERE[before:]
+            self.assertEqual(len(built_not_passed([built], ran, plan)), 1)                # skipped
+            self.assertEqual(twice, ["test_built_two"])                                     # named twice
+        with self.subTest("5. a built row with no proven line where one is asked fails; the same row filed passes"):
+            old = row(test="test_built_one", ship_in="0.1.0", first_ship_in="0.1.0")
+            self.assertEqual(len(not_proven_after([old], v("0.1.1"))), 1)
+            self.assertEqual(not_proven_after([dict(old, filed=lead)], v("0.1.1")), [])
+            self.assertEqual(not_proven_after([dict(old, filed=lead)], v("0.2.0")), [])
 
     def test_PROMISES_a_date_moves_only_with_a_reason_and_a_persons_row_only_by_their_word(self):
         for r in self.rows:

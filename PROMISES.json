@@ -6,7 +6,8 @@
   "When it has been seen to work on a real machine: say which kind of machine, which version and when in 'proven'.",
   "'ship_in' moves only with a reason in 'moved_why'. A row whose owner is 'person' was seen by the person the skill is for, on their own machine: its date moves only by their word, restated in 'moved_by_person'.",
   "A row is never deleted. A promise that turns out wrong is closed by a row that says why.",
-  "A lesson that was heard and not taken goes under 'declined' with the reason, so that nothing is dropped without a word."
+  "A lesson that was heard and not taken goes under 'declined' with the reason, so that nothing is dropped without a word.",
+  "'filed' holds text only by the maintainer's word or the owner's, beginning \"By the maintainer's word, \" or \"By the owner's word, \" with the date: the row waits for a real report. A filed row is kept and is due in no version, whatever 'ship_in' says; if it names a test, the test must still pass, and 'proven' is not asked of it. When a real report or a real sighting comes, 'filed' is emptied in the commit that gives the row its version or its 'proven' line."
  ],
  "rows": [
   {
@@ -19,6 +20,7 @@
    "ship_in": "0.1.1",
    "test": "test_G1_4_the_start_test_leaves_nothing_and_names_a_zero_job_startup_failure",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; not seen by us on a real machine: its world needs an account or repository whose Actions GitHub has locked.",
    "issue": 7,
    "moved_why": "Moved to 0.1.1 by the maintainer's word, 2026-11-23, with the reason: the check is built and tested, but seeing it needs an account whose GitHub Actions start no jobs and the right to delete the repository made for it, neither of which this release had; the README's 'Not seen yet' part says so.",
    "moved_by_person": ""
@@ -271,6 +273,7 @@
    "ship_in": "0.1.1",
    "test": "test_G11_1_a_laptop_is_named_and_its_limits_said_before_setup",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; not seen by us on a real machine: its world is a laptop (battery, lid, sleep, heat), and no laptop has walked it.",
    "issue": 25,
    "moved_why": "Moved to 0.1.1 by the maintainer's word, 2026-11-23, with the reason: built and tested, but a battery, a lid and a laptop's heat are hardware a virtual machine lacks, and no real laptop was in this release's sittings; the README's 'Not seen yet' part says so.",
    "moved_by_person": ""
@@ -635,6 +638,7 @@
    "ship_in": "0.1.1",
    "test": "test_G4_9_the_inhibitor_never_holds_a_sleep_the_person_or_hardware_asks_for",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; not seen by us on a real machine: a design read, whose world is a laptop's lid, battery and a sleep the person chose.",
    "issue": 69,
    "moved_why": "Moved to 0.1.1 by the maintainer's word, 2026-11-23, with the reason: built and tested, but a lid switch, a low battery and a sleep the person asks for are a real laptop's, which a virtual machine lacks; the README's 'Not seen yet' part says so.",
    "moved_by_person": ""
@@ -1041,6 +1045,7 @@
    "ship_in": "0.1.1",
    "test": "test_G11_4_after_a_wake_or_network_change_the_runner_is_seen_back",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; seen in part on a virtual machine (a network cut and a suspend), not on a real laptop's wake.",
    "issue": 143,
    "moved_why": "Made smaller by ruling, 2026-11-23, with the reason: the codon promised a restart, but the watch runs with no admin rights and cannot restart anything, a root unit that restarts after a wake would be a privileged moving part added for a case nobody has seen, and the runner was seen coming back by itself three times with no restart. Then moved to 0.1.1 by the maintainer's word, 2026-11-23: seen only in a virtual machine, and a real laptop's own sleep and change of network were not in this release's sittings; the README's 'Not seen yet' part says so.",
    "moved_by_person": ""
@@ -1434,6 +1439,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A feature, not built: one command to update the skill; until then the same setup again refreshes the copy the watch runs.",
    "issue": 231,
    "moved_why": "",
    "moved_by_person": ""
@@ -1714,6 +1720,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: each running part saying the version it runs; no machine has shown a part running older code here.",
    "issue": 305,
    "moved_why": "",
    "moved_by_person": ""
@@ -1728,6 +1735,7 @@
    "ship_in": "0.1.1",
    "test": "test_G5_19_a_watch_pass_in_the_same_second_as_the_last_is_still_seen",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; not seen by us on a real machine: the same-second case it guards did not happen in steered tries.",
    "issue": 311,
    "moved_why": "",
    "moved_by_person": ""
@@ -1742,6 +1750,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from a sister skill's machine; no step of this skill tells anyone to remove a plugin catalog.",
    "issue": 318,
    "moved_why": "",
    "moved_by_person": ""
@@ -1756,6 +1765,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading: no machine has shown this skill's Python leave a cache beside its code.",
    "issue": 319,
    "moved_why": "",
    "moved_by_person": ""
@@ -1924,6 +1934,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A design, not built: setup refusing the runner user cron and at by a line of its own; the README says what a job can leave scheduled.",
    "issue": 331,
    "moved_why": "",
    "moved_by_person": ""
@@ -1952,6 +1963,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A design, not built: a safe way, per system, to take away only the packages the dependency script added; they stay, and that is said.",
    "issue": 333,
    "moved_why": "",
    "moved_by_person": ""
@@ -1966,6 +1978,7 @@
    "ship_in": "0.1.1",
    "test": "",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: a test in the suite for the home's listing before and after a leave, beside the walk on a stock machine.",
    "issue": 334,
    "moved_why": "",
    "moved_by_person": ""
@@ -2064,6 +2077,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading the code: no computer that reaches GitHub only through a proxy has been tried.",
    "issue": 341,
    "moved_why": "",
    "moved_by_person": ""
@@ -2092,6 +2106,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: setup after an uninstall cut part-way, walked once on a stock machine.",
    "issue": 343,
    "moved_why": "",
    "moved_by_person": ""
@@ -2106,6 +2121,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: the census saying what a later setup will do with each thing kept.",
    "issue": 344,
    "moved_why": "",
    "moved_by_person": ""
@@ -2120,6 +2136,7 @@
    "test": "test_G5_22_status_reads_the_watch_timer_not_only_its_heartbeat",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; a what-if from reading the code: no machine has shown the watch's timer stopped while its heartbeat reads fresh.",
    "issue": 345,
    "moved_why": "",
    "moved_by_person": ""
@@ -2134,6 +2151,7 @@
    "test": "test_G5_23_lifts_by_itself_is_said_only_with_the_timer_enabled",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; a what-if from reading the code: no machine has shown a drain before a restart with the watch's timer not enabled.",
    "issue": 346,
    "moved_why": "",
    "moved_by_person": ""
@@ -2176,6 +2194,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: two reads asked before the first write; a setup cut there already says what it left and the step.",
    "issue": 315,
    "moved_why": "",
    "moved_by_person": ""
@@ -2190,6 +2209,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: the census naming a runner that is not this computer's, with GitHub's own step to remove it.",
    "issue": 316,
    "moved_why": "",
    "moved_by_person": ""
@@ -2204,6 +2224,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A longer soak, not run: no 72-hour soak; the README says what 12 hours showed.",
    "issue": 317,
    "moved_why": "",
    "moved_by_person": ""
@@ -2274,6 +2295,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading the code: no machine has shown a stored program gone or moved by a version manager.",
    "issue": 351,
    "moved_why": "",
    "moved_by_person": ""
@@ -2288,6 +2310,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: every printed step counted and taken by a test exactly as printed.",
    "issue": 352,
    "moved_why": "",
    "moved_by_person": ""
@@ -2302,6 +2325,7 @@
    "test": "test_G1_22_a_stopped_look_changes_only_its_own_entry",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; a what-if from reading the code: no machine has shown a stopped look change more of the record than its own entry.",
    "issue": 353,
    "moved_why": "",
    "moved_by_person": ""
@@ -2316,6 +2340,7 @@
    "test": "test_G6_33_the_census_names_ghs_plain_text_login",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; its world, a login gh keeps as plain text beside a keyring, was seen only with the keyring started by hand, off the README's road.",
    "issue": 354,
    "moved_why": "",
    "moved_by_person": ""
@@ -2371,6 +2396,7 @@
    "test": "test_G5_1_status_never_says_idle_from_a_job_process_read_that_could_not_answer",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; a what-if from reading the code: no machine has shown the read of a job process fail to answer at status.",
    "issue": 358,
    "moved_why": "",
    "moved_by_person": ""
@@ -2385,6 +2411,7 @@
    "test": "test_G4_7_doctor_never_passes_one_copy_from_a_read_that_could_not_answer",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; a what-if from reading the code: no machine has shown the read of the runner's copies fail to answer at doctor.",
    "issue": 359,
    "moved_why": "",
    "moved_by_person": ""
@@ -2455,6 +2482,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A design, not built: uninstall finishing a home left by a runner user removed outside this tool; the person's step is printed.",
    "issue": 364,
    "moved_why": "",
    "moved_by_person": ""
@@ -2469,6 +2497,7 @@
    "test": "test_G9_15_the_tests_close_every_file_they_open",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; it is about the tests' own files, not about what a person's machine does.",
    "issue": 365,
    "moved_why": "",
    "moved_by_person": ""
@@ -2483,6 +2512,7 @@
    "test": "test_G6_30_doctor_with_the_runner_user_gone_tries_nothing_as_it_and_names_why",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; a what-if from reading the code: no machine has shown the read of the runner user fail to answer at doctor.",
    "issue": 366,
    "moved_why": "",
    "moved_by_person": ""
@@ -2567,6 +2597,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: one field for proof still owed, read by one function.",
    "issue": 370,
    "moved_why": "",
    "moved_by_person": ""
@@ -2581,6 +2612,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from one hand-made workflow file holding an invisible line separator; no repository of a person's has shown it.",
    "issue": 373,
    "moved_why": "",
    "moved_by_person": ""
@@ -2609,6 +2641,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading the code: no machine has shown a value the tool did not write change what the runner's unit runs.",
    "issue": 375,
    "moved_why": "",
    "moved_by_person": ""
@@ -2623,6 +2656,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading the code: no machine has shown a value the tool did not write become part of the drop-in's shell text.",
    "issue": 376,
    "moved_why": "",
    "moved_by_person": ""
@@ -2637,6 +2671,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading the code: no machine has shown the hooks' values arrive cut.",
    "issue": 377,
    "moved_why": "",
    "moved_by_person": ""
@@ -2665,6 +2700,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: the phrases test following every answer read from another program, whatever its name.",
    "issue": 372,
    "moved_why": "",
    "moved_by_person": ""
@@ -2679,6 +2715,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Seen once after an uninstall cut short on purpose: status's words were true, its step could not be taken as printed, and nothing was lost.",
    "issue": 380,
    "moved_why": "",
    "moved_by_person": ""
@@ -2735,6 +2772,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading the code: no machine has shown a person's own drop-in that sets the watch's variable.",
    "issue": 384,
    "moved_why": "",
    "moved_by_person": ""
@@ -2763,6 +2801,7 @@
    "test": "test_G8_24_a_step_never_carries_a_name_no_command_may_and_every_step_runs_as_printed",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; seen only on a copy of the tool, with workflow file names (a leading dash, a backtick) no repository of ours holds.",
    "issue": 386,
    "moved_why": "",
    "moved_by_person": ""
@@ -2777,6 +2816,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form, not built: the version test reading every spelling of a clone line.",
    "issue": 387,
    "moved_why": "",
    "moved_by_person": ""
@@ -2805,6 +2845,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from a copy of the tool: no repository of a person's has shown a value in its workflow file that is live text on the move pull request's page.",
    "issue": 389,
    "moved_why": "",
    "moved_by_person": ""
@@ -2833,6 +2874,7 @@
    "test": "test_G3_12_move_says_what_look_says_of_a_file_with_no_job",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; seen only on a copy of the tool, with a workflow file whose jobs key holds no job.",
    "issue": 391,
    "moved_why": "",
    "moved_by_person": ""
@@ -2931,6 +2973,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A feature, not built: taking on again or taking off an earlier setup whose record is lost; what is there is said, and the way out is by hand.",
    "issue": 398,
    "moved_why": "",
    "moved_by_person": ""
@@ -2945,6 +2988,7 @@
    "test": "test_G6_40_a_cut_after_the_journal_is_kept_does_not_add_it_twice",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; seen only in a stand-in trial with a cut placed between two removals; no machine has shown that cut.",
    "issue": 399,
    "moved_why": "",
    "moved_by_person": ""
@@ -2959,6 +3003,7 @@
    "test": "test_G6_41_a_look_stamped_later_than_the_clock_is_said_so",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; seen only in a stand-in trial; no machine has shown a clock moved back after a look.",
    "issue": 400,
    "moved_why": "",
    "moved_by_person": ""
@@ -2973,6 +3018,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading: no computer has shown this tool set up from two accounts.",
    "issue": 401,
    "moved_why": "",
    "moved_by_person": ""
@@ -2987,6 +3033,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A what-if from reading: no machine has shown an is-enabled answer of systemd that this tool does not know, for a service of its form.",
    "issue": 402,
    "moved_why": "",
    "moved_by_person": ""
@@ -3000,7 +3047,7 @@
    "ship_in": "0.1.1",
    "test": "test_G6_44_a_wait_with_no_answer_read_never_says_an_answer_came",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, seen once, not steered, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at main 26fd53f (this row's cure), in one whole run of the three sightings this version owes. The tool: scripts/minions.py, sha256 904aa9ad2d018878d3db75b858e6e60cb58a5b72015cc0aa7eecd4319244a3fa. The walk: typed by a script, sha256 2d0979c9d62c5a1771d4c351f0878e6d304060ac1171abc43c35eb8d2f7b7102, under a driver, sha256 37d041ab4da8a409cdb1efa196dd194eb0fdf37fa5a7238e943bdb3053a4c8dc. After look with its start test (exit 0), setup ran under a terminal with its input closed. At its Enter it printed 'stop no Enter was read: nothing was changed. Run the same command again in your own terminal' and no line saying an answer came, and ended 2; nothing of this tool was on the machine after it. The first sighting was on Ubuntu 22.04, this one on 24.04.5. Not reached: only setup's Enter was walked with no answer; the other waits for the person (sudo's password prompt, uninstall's Enter) were not.",
    "issue": 403,
    "moved_why": "",
    "moved_by_person": ""
@@ -3015,6 +3062,7 @@
    "test": "test_G8_25_setup_says_the_command_below_only_where_it_hands_over_a_step",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; seen once where an agent's harness took a template command for the step: setup refused it, and nothing was changed or lost.",
    "issue": 407,
    "moved_why": "",
    "moved_by_person": ""
@@ -3029,6 +3077,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A stricter form of the walk before a tag, not taken: the README's road is still walked before each tag, typed by a script.",
    "issue": 408,
    "moved_why": "",
    "moved_by_person": ""
@@ -3043,6 +3092,7 @@
    "test": "test_G9_19_the_suite_runs_with_the_tag_at_its_head_before_the_push",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. Built and tested; it is about how a version's tag is pushed, not about what a person's machine does.",
    "issue": 409,
    "moved_why": "",
    "moved_by_person": ""
@@ -3057,6 +3107,7 @@
    "test": "",
    "owner": "maintainer",
    "proven": "",
+   "filed": "By the maintainer's word, 2026-11-27: waits for a real report. A catalog install, not yet seen: the family catalog names this skill only once it is.",
    "issue": 410,
    "moved_why": "",
    "moved_by_person": ""
@@ -3070,7 +3121,7 @@
    "ship_in": "0.1.1",
    "test": "test_G2_30_the_unreadable_env_stop_says_what_the_same_setup_again_does_with_the_file",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, seen once, steered, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at main 26fd53f (this row's cure; runner 2.338.2), in one whole run of the three sightings this version owes. The tool: scripts/minions.py, sha256 904aa9ad2d018878d3db75b858e6e60cb58a5b72015cc0aa7eecd4319244a3fa. The walk: typed by a script, sha256 f52439bfe136a516828b6126cea435bf7864be04be1f3b7f5ada7aea75714b41, under a driver, sha256 37d041ab4da8a409cdb1efa196dd194eb0fdf37fa5a7238e943bdb3053a4c8dc. Steered by a planted file: a file of root's, mode 600, holding three lines, put in place as the runner's settings file after the runner's configure ended. setup stopped on it, exit 2, naming the file and why (the user minions-runner cannot read it). Its stop said the next step makes the file the runner user's own and readable to it, its lines unchanged, and that the same setup again takes the half-made runner away and starts fresh, with a new settings file that holds only this tool's lines, keeps a copy of the file in the person's record, named there, and that a line of the person's own is theirs to add to the new runner's file; the earlier words that the file keeps every other line as it is were not there. The step stood alone on the next line, last in that stop, and the part-way stop's own sentence followed it. The step, taken as printed, ended 0: the file the runner user's, mode 600, its three lines. The same setup again ended 0: the new file held only this tool's two lines; one copy, the person's own, mode 600, holding the person's two lines, was in the record, and that setup named it. uninstall --all ended 0, with nothing of this tool left on the machine, no runner on GitHub, and the kept copy still in the record. Not reached: the kinds whose step moves the file aside (a link, not a plain file, a read that fails), as the row says.",
    "issue": 413,
    "moved_why": "",
    "moved_by_person": ""
@@ -3084,7 +3135,7 @@
    "ship_in": "0.1.1",
    "test": "test_G6_45_what_uninstall_and_setup_say_stayed_is_true_of_this_computer_at_that_run",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, seen once, steered, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at main 26fd53f (this row's cure; runner 2.338.2), in one whole run of the three sightings this version owes. The tool: scripts/minions.py, sha256 904aa9ad2d018878d3db75b858e6e60cb58a5b72015cc0aa7eecd4319244a3fa. The walk: typed by a script, sha256 84c449877d02679b809f7a03822f1cd90bc2692cb819d481da840a444e436e19, under a driver, sha256 37d041ab4da8a409cdb1efa196dd194eb0fdf37fa5a7238e943bdb3053a4c8dc. Steered by the administrator's hand: a file of root's put in the runner user's home and in a folder of the runner user's in a public place, both later removed; later the runner's service stopped and the runner user removed with its home kept (userdel). What was seen: after a setup, uninstall --all named the home and the public folder as what stayed, and the list's latest section named both; uninstall --all again said nothing of the public folder, and said the home again as the first leave found it. After both were removed, a fresh setup and uninstall --all ended 0 saying nothing of the runner user's stays, and the list gained a section with no entry. After a setup and the user's removal, uninstall REPO twice and uninstall --all each ended 0 and said 'this tool made that user and it is no longer here', never that this tool removed it, and nothing of the public folder. setup then stopped, exit 2, with that why and the step that belongs to it ('Your next step: delete that folder first'); the step, taken as printed, ended 0, setup again ended 0, and the last uninstall --all ended 0, with nothing of this tool left and no runner on GitHub. At every step the list in the person's record was only added to, each copy the start of the next, byte for byte. Not reached: the runner's folder as a place that stayed (only the home and one public folder were planted); real restarts; a list that could not be read; that nothing more is deleted by a name read from the list (not read on its own).",
    "issue": 414,
    "moved_why": "",
    "moved_by_person": ""
