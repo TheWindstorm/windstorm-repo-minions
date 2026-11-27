@@ -535,6 +535,32 @@ class G1(unittest.TestCase):
         self.assertTrue(lines[-1].startswith("stop ") and "is public" in lines[-1], lines)
         self.assertEqual(gh.calls, [("GET", "repos/" + REPO)], "nothing more is read or written after the stop")
 
+    def test_G1_22_a_stopped_look_changes_only_its_own_entry(self):
+        # Row R165, read in the code 2026-11-24 with R160's cure: on a computer that already holds the tool's record,
+        # a look that stops writes that repository's look entry, marked stopped with an empty survey, over the
+        # earlier one, as designed. Held here: every other byte of the record, and of its copy, is the same.
+        import json
+        host, _ = doctor_world()
+        data = M.load_state(host)
+        data["looks"]["other-org/other-repo"] = {"time": "2026-01-01T00:00:00Z", "stopped": False,
+                                                 "survey": {"system": "Linux", "cores": 2}}
+        M.save_state(host, data)
+        path, copy = M.state_path(host), M.copy_path(host)
+        before = open(path, encoding="utf-8").read()
+        self.assertEqual(before, json.dumps(json.loads(before), indent=1, sort_keys=True))  # the writer's own form
+        self.assertFalse(json.loads(before)["looks"][REPO]["stopped"])
+        rows = with_repo(self.recent, lambda d: d.update(visibility="public", private=False))
+        code, lines = look(StandIn(rows), host)
+        self.assertEqual(code, M.EXIT_STOP, lines)
+        after = open(path, encoding="utf-8").read()
+        entry = json.loads(after)["looks"][REPO]
+        self.assertTrue(entry["stopped"], entry)  # so setup asks for a new look
+        self.assertEqual(entry["survey"], {})
+        want = json.loads(before)
+        want["looks"][REPO] = entry
+        self.assertEqual(after, json.dumps(want, indent=1, sort_keys=True))  # byte for byte, but for that entry
+        self.assertEqual(open(copy, encoding="utf-8").read(), after)
+
     def test_G1_2_look_names_account_kind_and_runner_scope(self):
         _, lines = look(StandIn(self.recent), linux_host())
         self.assertIn("ok organisation: this version gives this one repository its own runner on this computer; "

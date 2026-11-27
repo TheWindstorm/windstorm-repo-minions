@@ -2299,7 +2299,7 @@
    "codon": "G1.22",
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
-   "test": "",
+   "test": "test_G1_22_a_stopped_look_changes_only_its_own_entry",
    "owner": "maintainer",
    "proven": "",
    "issue": 353,
