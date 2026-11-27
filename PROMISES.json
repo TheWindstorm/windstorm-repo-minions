@@ -2874,7 +2874,7 @@
    "ship_in": "0.1.0",
    "test": "test_G2_29_a_runner_env_that_could_not_be_read_is_never_written_over",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0 (runner 2.338.2), seen once, steered and partial. Steered: a file of root's, mode 600, holding three lines, put in place as the runner's settings file after the runner's configure ended; the kind seen: a file the runner user cannot read. setup stopped before the hooks' lines, exit 2, naming the file and why (the user minions-runner cannot read it), with its step; the step, taken as printed, ended 0, the file then the runner user's, mode 600, its three lines. The same setup again ended 0: it took the half-made runner away, started fresh and kept the file in the person's record; its lines were not in the new runner's file (row R221). uninstall --all then ended 0 with nothing of this tool's left and GitHub listing no runner. Neither of the two values of the person's own (the third line, the locale, is this tool's own too) was in what the tool printed in that run, in the files of the person's record other than the kept copy (its journal among them), or in the system journal from the tool: the only journal lines that held one were sudo's record of the test's own commands. Partial: the other kinds (a link, not a plain file, a read that fails) and their move step were not walked on a real machine; the test holds them with a stand-in. Earlier tries the same day, which put the file in place before the runner's configure, count for nothing: the runner's own configure read it and stopped first.",
    "issue": 394,
    "moved_why": "",
    "moved_by_person": ""
@@ -2902,7 +2902,7 @@
    "ship_in": "0.1.0",
    "test": "test_G6_37_a_line_the_person_added_to_an_installed_runner_s_env_is_kept_by_uninstall_never_deleted",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the tag v0.1.0, seen once, steered, in the same run as row R206's proven line, for the half \"setup run again after a setup that was cut\": the runner's settings file, made the runner user's by R206's step and with no sum kept, was kept in the person's record (mode 600, named by path, its three lines and their names), and the half-made runner's folder was deleted and a fresh one unpacked after. Not shown by this run: uninstall's road, the 1 MiB bound, a copy that cannot be made or does not compare, and the name R206's step moves a file to.",
    "issue": 396,
    "moved_why": "",
    "moved_by_person": ""
