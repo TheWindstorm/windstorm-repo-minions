@@ -2626,7 +2626,7 @@
    "ship_in": "0.1.1",
    "test": "test_G2_25_a_version_the_dependency_step_changed_is_recorded",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-27, seen once, not steered, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at main ea5d9ad (this row's cure; runner 2.338.2), in one whole run. The tool: scripts/minions.py, sha256 c1fbd96220eddd5ced65ddafdfb3fe65891d524857d514a7efb22cf25f1a5189. The walk: typed by a script, sha256 da504a4b9c97d7513d680a2b4c533515e87774c1a165a144776400423af30c11, under a driver, sha256 f1e04c8616d43e96114d910b5382c89e26405378494239e564d6b2829d4047a7. The system's package list was read apart from the tool before setup, after it and after uninstall --all. The runner's own dependency script added 3 packages and moved 6 already there to a newer version: five Kerberos packages (krb5-locales, libgssapi-krb5-2, libk5crypto3, libkrb5-3, libkrb5support0) from 1.20.1-6ubuntu2.10 to 1.20.1-6ubuntu2.12, and zlib1g from 1:1.3.dfsg-3.1ubuntu2.2 to 1:1.3.dfsg-3.1ubuntu2.3. setup's line named those 6 and no other, each with its version before and after, beside the 3 added; the tool's journal named the same 6. uninstall --all ended 0, and its census named the same 6, kept at those versions; the person's record named them. The package list after the leave was the list after setup: nothing was put back or removed. Not reached: a package list that could not be read; two setups in a row (the first version before, the latest after).",
    "issue": 374,
    "moved_why": "",
    "moved_by_person": ""
