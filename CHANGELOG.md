@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.1.1 (2026-11-28)
+
+Five rows due in 0.1.1 were cured and each was seen on a stock Ubuntu 24.04.5 virtual machine or in this
+repository's own CI; 19 more are built and tested and wait for a real report (listed on the release page); the
+rest of what was planned for 0.1.1 is kept, due in no version, until a real report or a real sighting comes.
+A sixth row, found by this release's own walk of the README's road on a stock machine, is cured in it (row
+R224, the last line below).
+
+- A package the runner's dependency script moves to another version is named: setup, the journal, your record
+  and `uninstall --all`'s census name each one with its version before and after, beside the packages it added;
+  they stay at those versions when the tool leaves. A package list that could not be read is said so (row R186).
+- At a wait for you that ends with no answer read, no line says an answer came: the stop says none was read and
+  nothing was changed (row R216).
+- The stop for a runner settings file the runner user cannot read says what the same setup again does: it takes
+  the half-made runner away, starts fresh with only this tool's lines, and keeps a copy of the file in your
+  record; a line of your own is yours to add again (row R221).
+- What uninstall and setup say stayed is true of this computer at that run: a runner user this tool made and
+  that is no longer here is said so, and each leave that reaches its census writes its own dated section in the
+  list of what stayed (row R222).
+- The public tests check only shapes (a home folder, an email address, a private network address); the names
+  of our own are checked in private before every push (row R159).
+- This repository's own release check, built and tested: a release branch differs from main only in what names
+  its version. Beside the README, the changelog and the manifest, only the tool's VERSION line, naming the
+  version, and the skill's clone line, naming its tag, may differ; a pull request into a release branch is
+  checked as that branch, whatever its own name (row R223).
+- `move --verify` only reads: it starts nothing on GitHub. It reads every moved workflow's runs before it says
+  anything of it: a finished run since the merge is taken, whoever started it, you by hand too; a run not yet
+  finished is watched until the deadline; a workflow with no run is said with what starts it and with what verify
+  reads (only the base branch's runs, so a run a pull request starts from a branch of another name is not among
+  them); a runs list that could not be read is said as not read. This release's own walk of the README's road on
+  a stock machine found that verify could start a moved workflow by hand when it did not yet see the merge's run,
+  so the moved job ran a second time and no line said so; 0.1.0 has it (row R224).
+
 ## 0.1.0 (2026-11-26)
 
 The first release. Linux with systemd; one private repository per computer. Every row due in 0.1.0 in

@@ -44,7 +44,7 @@ import time
 import unicodedata
 import urllib.request
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 # Family rule 31 (B), (iv), (v), 2026-11-24: no line this tool prints or logs carries
 # a backtick or a dollar-parenthesis; a command the person is to type stands alone on a line of its own, its last
