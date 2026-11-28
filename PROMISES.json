@@ -3153,6 +3153,35 @@
    "issue": 420,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R224",
+   "seen": "2026-11-28, seen once, on a stock Ubuntu 24.04.5 virtual machine at the 0.1.1 release head, the README's road typed as printed, when verify ran two seconds after the merge. GitHub had not yet listed the run the merge started, so verify started the workflow by hand: the person's moved job ran twice on their computer, and no line said the tool had started a run (only the tool's journal held it). Read in the code: verify started a workflow by hand wherever no run since the merge was listed, every job in it was moved and it could be started by hand, so a moved job could run at a moment nobody asked for (a publish or deploy moved by --include-job too), and a second time where the merge had started one; a runs list that could not be read was taken for no run. All of it is in 0.1.0.",
+   "promise": "move --verify only reads: it starts nothing on GitHub, ever. It reads every moved workflow's runs list before it says anything of that workflow. A finished run since the merge is taken and named, whoever started it, the person by hand too. A run listed and not finished is watched until the deadline. Where no run since the merge is listed and the workflow starts on a push, verify watches for the run the merge started to appear and finish, until the deadline. Where none is listed and no push starts it, that is said at once, with no wait. A workflow with no run is said as which, with what starts it (its events as read and, where it can be started by hand, that the person can start it on its page under the repository's Actions tab), and with what verify reads: only the runs GitHub lists for the base branch, named, so a run a pull request starts from a branch of another name is not among them; the closing line says the same. Nothing is called moved before a real run listed there finished on a runner of ours. A runs list that could not be read is said as not read, with GitHub's status, never as no run. The earlier test test_G3_6_moved_is_said_only_after_a_real_job_ran, which held that verify started such a workflow, is changed to hold the opposite, and the stand-in GitHub fails any test whose run of the tool asks GitHub to start a workflow.",
+   "codon": "G3.6",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "test_G3_6_b_verify_starts_no_run_and_waits_for_the_merges_own",
+   "owner": "maintainer",
+   "proven": "",
+   "issue": 421,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "R225",
+   "seen": "2026-11-28, read in the code and in GitHub's own runs list of a public repository: verify reads only the runs GitHub lists for the base branch, and a run a pull request starts is listed under the pull request's own branch, so verify does not see it. 0.1.0 told the person, for a workflow with no run since the merge, to run verify again after the next push or pull request, as if such a run would show it.",
+   "promise": "move --verify sees a run that a pull request starts, so a moved workflow that starts only on pull requests can be called moved once such a run finished on a runner of the person's.",
+   "codon": "G3.13",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "",
+   "proven": "",
+   "filed": "By the maintainer's word, 2026-11-28: waits for a real report. verify does not see a run that a pull request starts from a branch of another name than the base branch, so a workflow that starts only on pull requests is not called moved by it.",
+   "issue": 422,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []
