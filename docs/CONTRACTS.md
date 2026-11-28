@@ -156,6 +156,8 @@ repository, and `move` run there.
   found that run and did not have to start one.
 - Both runs: `billable: {}`.
 
+From 0.1.1, `move --verify` starts no run at all: it only reads (row R224).
+
 ## C7 Linux, keeping the runner ready (seen 2026-11-22, 23:21Z to 23:30Z)
 
 Where: the same kind of fresh disk, 4 cores, 8 GB; and a second one with 3 GB for the memory floor.
@@ -223,6 +225,8 @@ Where: the same kind of fresh disk, 4 cores, 8 GB; and a second one with 3 GB fo
   `billable: {}`.
 - This is G1.4's dispatch test. Its workflow file must be on the default branch for the dispatch to be accepted.
   Not seen yet: the answer when Actions is turned off for the repository.
+
+What GitHub was seen to do stays above; from 0.1.1 the tool makes this call nowhere (row R224).
 
 ### C9, the start test (G1.4), 2026-11-22 18:05Z to 18:12Z
 

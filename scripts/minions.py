@@ -7630,10 +7630,7 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
             all_ok = False
             continue
         text = files.get(path, "")
-        jobs_now = read_workflow(text)
-        every_job_moved = {j["id"] for j in jobs_now} <= {w["id"] for w in wanted_jobs}
-        run = find_or_start_run(gh, host, repo, path, mv.get("base"), merged_at, read_triggers(text),
-                                every_job_moved, rep, wait_s, poll_s)
+        run = find_run(gh, host, repo, path, mv.get("base"), merged_at, read_triggers(text), rep, wait_s, poll_s)
         if run is None:
             all_ok = False
             continue
@@ -7680,8 +7677,11 @@ def move_verify(gh: GitHub, host: Host, repo: str, rep: Report, wait_s: int, pol
             rep.wait(f"on our runner {mine['name']}: GitHub shows it {seen}, so the moved jobs wait for it; nothing is "
                      f"called moved before one has run here. Next: {C0}resume {repo}{C1}, then {C0}move {repo} --verify{C1} again")
         else:
-            rep.wait(f"for one finished run of each moved workflow of {repo}; nothing is called moved before that. "
-                     f"Next: {C0}move {repo} --verify{C1} again after the next push or pull request")
+            rep.wait(f"for one finished run of each moved workflow of {repo}; this tool reads only the runs GitHub "
+                     f"lists for the branch {mv.get('base')}, and a run a pull request starts from a branch of another "
+                     "name is not among them, so nothing is called moved before one listed there has finished. "
+                     f"Next: {C0}move {repo} --verify{C1} again once each has run there (what starts each is named "
+                     "above)")
         return
     if all_ok and not rep.stopped:
         data = load_state(host)
@@ -7712,38 +7712,48 @@ def runner_of_ours(listed: dict | None, name: str) -> bool | None:
     return "minions" in labels and all(x == "minions" or x.startswith("minions-") for x in labels)
 
 
-def find_or_start_run(gh: GitHub, host: Host, repo: str, path: str, base: str, merged_at: str, triggers: dict,
-                      every_job_moved: bool, rep: Report, wait_s: int, poll_s: float) -> dict | None:
+def find_run(gh: GitHub, host: Host, repo: str, path: str, base: str, merged_at: str, triggers: dict, rep: Report,
+             wait_s: int, poll_s: float) -> dict | None:
+    """G3.6 (R224): verify only reads; it starts nothing on GitHub, ever. Every moved workflow's runs list is read
+    before anything is said of it, and has three answers: a run, no run, or not read (said with GitHub's status, never
+    as no run). A finished run since the merge is taken, whoever started it; a run listed and not finished is watched
+    until the deadline, whatever started it. Only where none is listed and no push starts the workflow is the line
+    that the merge started none said, at once. The list read is the one GitHub keeps for the base branch, so a run a
+    pull request starts from a branch of another name is not in it (R225, filed)."""
     wf = os.path.basename(path)
     runs_path = f"repos/{repo}/actions/workflows/{wf}/runs?branch={base}&per_page=20"
-
-    def after_merge():
-        s, d = gh.api("GET", runs_path)
-        runs = (d or {}).get("workflow_runs", []) if s == 200 else []
-        return sorted((r for r in runs if r.get("created_at", "") >= merged_at), key=lambda r: r["created_at"])
-
-    runs = after_merge()
+    events = sorted(triggers["events"])
+    starts = f"it starts on: {', '.join(events) or 'no event this tool could read'}" + (
+        ("; you can start it yourself" if events == ["workflow_dispatch"] else "; you can also start it yourself")
+        + ", on its page under the repository's Actions tab" if "workflow_dispatch" in triggers["events"] else "")
+    reads = (f"This tool starts no run, and it reads only the runs GitHub lists for the branch {base}: a run a pull "
+             "request starts from a branch of another name is not among them. Nothing is called moved before one "
+             "listed there has finished")
     deadline = (host.now() + dt.timedelta(seconds=wait_s)).strftime("%H:%MZ")
-    if not runs:
-        if "workflow_dispatch" in triggers["events"] and every_job_moved:
-            journal(host, "verify-dispatch", f"{repo} {path}")
-            s, d = gh.api("POST", f"repos/{repo}/actions/workflows/{wf}/dispatches",
-                          {"ref": base, "return_run_details": True})
-            if s not in (200, 204):
-                rep.warn(f"{path}: GitHub refused to start it (HTTP {s})")
-        else:
-            why = ("some of its jobs stay on GitHub's machines, so the tool does not start it"
-                   if "workflow_dispatch" in triggers["events"] else "it cannot be started by hand")
-            rep.wait(f"{path}: no run since the merge yet, and {why}; its next push or pull request run will show "
-                     "it")
-            return None
-    rep.ok(f"{path}: watching for its run to finish, until {deadline} at the latest")
-    left = wait_s
+    left, first = wait_s, True
     while True:
-        runs = after_merge()
+        s, d = gh.api("GET", runs_path)
+        if s != 200:
+            rep.stop(f"{path}: its runs could not be read (HTTP {s}), so whether one ran since the merge is not known; "
+                     "it is not called moved. " + github_next(s, repo, f"run {C0}move {repo} --verify{C1} again", gh=gh))
+            return None
+        runs = sorted((r for r in (d or {}).get("workflow_runs", []) if r.get("created_at", "") >= merged_at),
+                      key=lambda r: r["created_at"])
         done = [r for r in runs if r.get("status") == "completed"]
         if done:
             return done[0]
+        if first:
+            first = False
+            if not runs and "push" not in triggers["events"]:
+                rep.wait(f"{path}: no run of it since the merge is listed, and no push starts it, so the merge started "
+                         f"none here to wait for ({starts}). {reads}")
+                return None
+            if runs:
+                rep.ok(f"{path}: watching its run since the merge (run {runs[0]['id']}, {runs[0].get('status')}) "
+                       f"until it finishes, until {deadline} at the latest; this tool starts no run")
+            else:
+                rep.ok(f"{path}: watching for the run the merge started to appear and finish, until {deadline} at "
+                       "the latest; this tool starts no run")
         if gh.limited():  # G8.14: never poll into a spent limit
             rep.wait(f"{path}: {gh.why}. Run {C0}move {repo} --verify{C1} again after that time")
             return None
@@ -7751,8 +7761,11 @@ def find_or_start_run(gh: GitHub, host: Host, repo: str, path: str, base: str, m
             break
         host.sleep(poll_s)
         left -= poll_s
-    state = runs[0].get("status") if runs else "not seen"
-    rep.wait(f"{path}: its run since the merge was still {state} at the deadline ({deadline})")
+    if runs:
+        rep.wait(f"{path}: its run since the merge was still {runs[0].get('status')} at the deadline ({deadline}). "
+                 f"{reads}")
+    else:
+        rep.wait(f"{path}: no run since the merge by the deadline ({deadline}); {starts}. {reads}")
     return None
 
 
