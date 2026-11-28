@@ -2,9 +2,9 @@
 
 **Your repository's automated jobs (GitHub Actions) run on a computer you own.**
 
-## Status: 0.1.0, released 2026-11-26
+## Status: 0.1.1, released 2026-11-28
 
-This is release 0.1.0, tag `v0.1.0`. It is built in the open, in the order its plan,
+This is release 0.1.1, tag `v0.1.1`. It is built in the open, in the order its plan,
 [`DNA-STRAND-MASTER-PLAN.md`](DNA-STRAND-MASTER-PLAN.md), sets: every claim the skill makes has a test, and each
 part is seen on a fresh machine before a release. What a release has and has not been seen to do is written in
 [`CHANGELOG.md`](CHANGELOG.md).
@@ -16,7 +16,7 @@ Tell your coding agent:
 > Go to https://github.com/TheWindstorm/windstorm-repo-minions and set it up for my repository OWNER/NAME.
 
 **If you are the agent that was sent here:**
-1. Clone this repository into the person's home folder: `cd ~ && git clone --branch v0.1.0 https://github.com/TheWindstorm/windstorm-repo-minions`.
+1. Clone this repository into the person's home folder: `cd ~ && git clone --branch v0.1.1 https://github.com/TheWindstorm/windstorm-repo-minions`.
    If `git` is not installed (a stock Debian has none), installing it is the person's step: ask them to run
    `sudo apt update && sudo apt install git` (Debian, Ubuntu) in their own terminal.
 2. Read `skills/repo-minions/SKILL.md` and follow it, in its order.
@@ -103,12 +103,12 @@ nothing on this computer refuses a job, and a job already running finishes.
   GitHub publishes it. It lives in its own folder in the home of a new user, `minions-runner`. The runner keeps
   its own logs there for 30 days (as its own source reads at the version `setup` installs), so that folder grows
   with how busy your repository is. Its own dependency script, run as root from the checked download, may install
-  system packages (on Ubuntu 24.04: `liblttng-ust1t64` and two it needs); `setup` names the packages added while it
-  ran, and they stay when the tool leaves, because another program may come to use them. `uninstall --all` names
-  them again. That dependency script is GitHub's own, run with the administrator's rights you give `setup`; besides
-  adding packages, it can move a package already on your computer to the newer version in Ubuntu's archive (seen:
-  `zlib1g`, on two fresh installs of the same Ubuntu 24.04 image), and 0.1.0's record names only the packages it
-  added.
+  system packages (on Ubuntu 24.04: `liblttng-ust1t64` and two it needs), and it can move a package already on your
+  computer to the newer version in Ubuntu's archive (seen: `zlib1g`, on fresh installs of the same Ubuntu 24.04
+  image). `setup` names the packages added while it ran, and each one already there whose version changed, with its
+  version before and after; they stay when the tool leaves, at those versions, because another program may come to
+  use them. `uninstall --all` names them again. That dependency script is GitHub's own, run with the administrator's
+  rights you give `setup`.
 - **That user.** It has no admin rights, and it cannot open your home folder.
 - **A boot service** that runs the runner as that user. It is capped by default at half your processors and 60 % of
   your memory; on a computer with one processor that is all of it, and `look` says so plainly. `setup` tells you the real numbers before it installs, and `setup OWNER/NAME --limits PROCESSORS,MEMORY%` changes
@@ -131,8 +131,9 @@ The admin password is used to make the user, install the service, its limits, th
 typed into your computer's own password prompt, and the tool never sees or keeps it.
 
 **Leaving.** After `uninstall --all`, nothing of this tool is left installed or running, except the system packages
-added while the runner's dependency script ran, which uninstall names; your record of what it did
-is kept in one folder you own, and uninstall tells you where (`~/repo-minions-record`: every step it took and each
+the runner's dependency script added or moved to another version while it ran, which uninstall names; your record
+of what it did is kept in one folder you own, and uninstall tells you where (`~/repo-minions-record`: every step
+it took and each
 job's start and end, plain text, nothing secret). `uninstall --all --delete-record` deletes that record too, once you
 type delete at your own terminal. If you remove the skill with Claude Code's own `plugin uninstall`, only the skill
 leaves Claude Code: the runner, its service, the check and the limits stay and go on taking your repository's jobs.
