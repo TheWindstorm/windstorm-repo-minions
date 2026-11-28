@@ -42,15 +42,60 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install words live only on a release branch, and it differs from main only in README, changelog and manifest
+      - name: Install words live only on a release branch, and it differs from main only in README, changelog, manifest and the lines that name its version
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           case "$BRANCH" in
             release-*)
-              git fetch -q origin main
-              other=$(git diff --name-only origin/main HEAD | grep -vxE 'README\.md|CHANGELOG\.md|\.claude-plugin/plugin\.json' || true)
-              if [ -n "$other" ]; then echo "::error::$BRANCH differs from main outside README, changelog and manifest:"; echo "$other"; exit 1; fi
+              # The maintainer's ruling of 2026-11-27: a release line differs from main only in what names the version,
+              # never in what the tool does. Beside the README, the changelog and the manifest, two files may differ by
+              # one line each: the tool's VERSION line and the skill's clone line, each naming this branch's version.
+              ver=${BRANCH#release-}
+              if ! printf '%s\n' "$ver" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+'; then echo "::error::$BRANCH does not name a version (release-X.Y.Z), so it is refused"; exit 1; fi
+              vre=$(printf '%s' "$ver" | sed 's/\./\\./g')
+              if ! git fetch -q origin main; then echo "::error::main could not be read, so $BRANCH is refused"; exit 1; fi
+              if ! raw=$(git diff --raw --no-renames origin/main HEAD); then echo "::error::the difference from main could not be read, so $BRANCH is refused"; exit 1; fi
+              bad=0
+              # one changed line of a file, as "old<TAB>new"; anything else is said and refused
+              one_line() {
+                local d n_old n_new
+                if ! d=$(git diff --no-renames --no-color -U0 origin/main HEAD -- "$1"); then echo "::error::$1: the difference from main could not be read" >&2; return 1; fi
+                n_old=$(printf '%s\n' "$d" | awk '/^@@/{h=1; next} h && /^-/' | wc -l)
+                n_new=$(printf '%s\n' "$d" | awk '/^@@/{h=1; next} h && /^\+/' | wc -l)
+                if [ "$n_old" -ne 1 ] || [ "$n_new" -ne 1 ]; then { printf '%s\n' "$d" | awk '/^@@/{h=1} h'; echo "::error::$1 differs from main in more than its one version line"; } >&2; return 1; fi
+                printf '%s\t%s\n' "$(printf '%s\n' "$d" | awk '/^@@/{h=1; next} h && /^-/{print substr($0, 2)}')" "$(printf '%s\n' "$d" | awk '/^@@/{h=1; next} h && /^\+/{print substr($0, 2)}')"
+              }
+              while IFS= read -r x; do
+                [ -n "$x" ] || continue
+                meta=${x%%$'\t'*}; f=${x#*$'\t'}
+                set -- $meta; om=${1#:}; nm=$2; st=$5
+                if [ "$st" != M ] && ! { [ "$st" = A ] && [ "$f" = .claude-plugin/plugin.json ]; }; then echo "::error::$f is $([ "$st" = D ] && echo deleted || echo "changed in kind ($st)") on $BRANCH; a release line only edits what names its version"; bad=1; continue; fi
+                if [ "$st" = M ] && [ "$om" != "$nm" ]; then echo "::error::$f changed its mode ($om to $nm) on $BRANCH"; bad=1; continue; fi
+                case "$f" in
+                  README.md|CHANGELOG.md|.claude-plugin/plugin.json) ;;
+                  scripts/minions.py)
+                    if ! pair=$(one_line "$f"); then bad=1; continue; fi
+                    o=${pair%%$'\t'*}; n=${pair#*$'\t'}
+                    if ! printf '%s\n' "$o" | grep -qxE 'VERSION = "[0-9]+\.[0-9]+\.[0-9]+"' || ! printf '%s\n' "$n" | grep -qxE "VERSION = \"$vre\""; then
+                      echo "-$o"; echo "+$n"; echo "::error::$f: its one changed line is not the tool's VERSION line naming $ver, and nothing else"; bad=1; fi ;;
+                  skills/repo-minions/SKILL.md)
+                    if ! pair=$(one_line "$f"); then bad=1; continue; fi
+                    o=${pair%%$'\t'*}; n=${pair#*$'\t'}
+                    on=$(printf '%s\n' "$o" | sed -E 's/--branch v[0-9]+\.[0-9]+\.[0-9]+([^0-9.]|$)/--branch v@\1/g')
+                    nn=$(printf '%s\n' "$n" | sed -E "s/--branch v$vre([^0-9.]|\$)/--branch v@\\1/g")
+                    if [ "$nn" = "$n" ] || [ "$on" != "$nn" ]; then
+                      echo "-$o"; echo "+$n"; echo "::error::$f: its one changed line differs from main's in more than the clone's --branch v$ver"; bad=1; fi ;;
+                  *) echo "::error::$f differs from main on $BRANCH; a release line differs only in README, changelog, manifest and the lines that name its version"; bad=1 ;;
+                esac
+              done <<< "$raw"
+              # its clones name the tag, never the branch (the README that is tagged)
+              if grep -qE 'git clone' README.md; then
+                clones=$({ grep -oE 'git clone' README.md || true; } | wc -l)
+                pinned=$({ grep -oE "git clone --branch v$vre https://github\.com/TheWindstorm/windstorm-repo-minions(\.git)?([^A-Za-z0-9_.-]|\$)" README.md || true; } | wc -l)
+                if [ "$clones" -ne "$pinned" ]; then grep -nE 'git clone' README.md; echo "::error::README on $BRANCH: every clone names this version's tag (--branch v$ver)"; bad=1; fi
+              fi
+              [ "$bad" = 0 ] || exit 1
               echo "ok $BRANCH differs from main only in: $(git diff --name-only origin/main HEAD | tr '\n' ' ')" ;;
             *)
               # Before a release, install lines live on the release branch only (rule 15). After it, main's README
