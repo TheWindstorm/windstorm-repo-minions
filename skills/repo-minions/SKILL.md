@@ -83,6 +83,8 @@ The exit code is the worst line's:
 Tell them what is being waited for, that nothing is broken, and when the wait ends: the line carries its own
 deadline. Then run the command the line names, at that time or when the person asks. For example: "GitHub has not
 shown the runner online yet. Nothing is broken; it is waiting until 21:40 UTC. I will check again then."
+A waiting `move --verify` starts no run, and neither do you: where its line says the person can start the workflow
+on its Actions page, pass that on as theirs.
 
 ## The person's steps
 

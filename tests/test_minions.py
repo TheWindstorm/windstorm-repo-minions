@@ -84,6 +84,20 @@ HOOKS: list = []  # (test id, lines): what the job hooks printed into a job's lo
 REF = re.compile(r"the (?:(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+th) )?command below")
 
 
+NESTED_HEADS = 10  # R226: at most this many of a red nested run's FAIL:/ERROR: lines in its message's last line
+
+
+def nested_red_message(stderr: str) -> str:
+    """R226: a red nested run's message: the last 40 lines of its standard error, then ONE closing line naming each
+    test of it that did not pass (its own "FAIL: " and "ERROR: " lines, at most NESTED_HEADS, and how many more), so
+    a cut from the end keeps every name whatever the length of a failure's block."""
+    heads = [x for x in stderr.splitlines() if x.startswith(("FAIL: ", "ERROR: "))]
+    more = len(heads) - NESTED_HEADS
+    close = ("the nested run's tests that did not pass: " + ("; ".join(heads[:NESTED_HEADS]) or "none named")
+             + (f"; and {more} more" if more > 0 else ""))
+    return "\n".join(stderr.splitlines()[-40:] + [close])
+
+
 def unfold(lines):
     """Each printed sentence with the command lines that follow it, as many as it names."""
     out, i = [], 0
@@ -2232,6 +2246,7 @@ class MoveGH(StandIn):
         self.runs, self.jobs = runs if runs is not None else [], jobs or {}
         self.runner_status = runner_status
         self.others = []  # G3.7: other self-hosted runners GitHub lists for the repository
+        self.runs_status, self.run_reads = 200, {}  # R224: the runs list's answer, and its reads per workflow
 
     def api(self, method, path, body=None):
         self.calls.append((method, path))
@@ -2268,11 +2283,14 @@ class MoveGH(StandIn):
             return 200, self.pr
         if method == "GET" and "/actions/workflows/" in path and "/runs" in path:
             wf = path.split("/actions/workflows/")[1].split("/")[0]
-            return 200, {"workflow_runs": [r for r in self.runs if r["wf"] == wf]}
+            if self.runs_status != 200:
+                return self.runs_status, {"message": "Server Error"}
+            self.run_reads[wf] = self.run_reads.get(wf, 0) + 1  # R224: a run GitHub lists only from a later read
+            return 200, {"workflow_runs": [r for r in self.runs if r["wf"] == wf
+                                           and self.run_reads[wf] >= r.get("from_read", 1)]}
         if method == "POST" and path.endswith("/dispatches"):
-            wf = path.split("/actions/workflows/")[1].split("/")[0]
-            self.runs.append({"id": 99, "wf": wf, "status": "completed", "created_at": "2026-11-22T23:59:00Z"})
-            return 200, {"workflow_run_id": 99}
+            # R224: no world of move or verify starts a person's workflow; a call here fails the test that made it
+            raise AssertionError(f"the tool posted to {path}: verify starts no run")
         if method == "GET" and path.endswith("/jobs"):
             rid = int(path.split("/runs/")[1].split("/")[0])
             return 200, {"jobs": self.jobs.get(rid, [])}
@@ -2762,20 +2780,22 @@ class G3(unittest.TestCase):
         job = lambda name, runner, labels, c="success": {"name": name, "runner_name": runner, "labels": labels,
                                                           "conclusion": c, "html_url": "https://example.invalid/j"}
         runs = [{"id": 5, "wf": "ci.yml", "status": "completed", "created_at": "2026-11-22T23:10:00Z"},
-                {"id": 4, "wf": "ci.yml", "status": "completed", "created_at": "2026-11-22T22:00:00Z"}]
+                {"id": 4, "wf": "ci.yml", "status": "completed", "created_at": "2026-11-22T22:00:00Z"},
+                {"id": 8, "wf": "lint.yml", "status": "completed", "created_at": "2026-11-22T23:00:03Z", "from_read": 3}]
         jobs = {5: [job("Unit tests", OURS, ["minions"]), job("build", OURS, ["minions", "minions-medium"]),
                     job("mac", "GitHub Actions 3", ["macos-latest"])],
                 4: [job("Unit tests", "GitHub Actions 1", ["ubuntu-latest"])],
-                99: [job("lint", OURS, ["minions"])]}
+                8: [job("lint", OURS, ["minions"])]}
         gh = MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=runs, jobs=jobs)
         code, lines = run_move(gh, host, verify=True)
         self.assertEqual(code, M.EXIT_OK, lines)
         self.assertIn(f"ok moved: .github/workflows/ci.yml job test ran on {OURS} (this computer) and succeeded (run 5)", lines)
         self.assertIn(f"ok moved: every moved job of {REPO} ran on this computer", lines[-1])
-        # lint.yml had no run since the merge, every one of its jobs moved and it can be started by hand: started
-        self.assertIn(("POST", f"repos/{REPO}/actions/workflows/lint.yml/dispatches"), gh.calls)
-        # ci.yml has a job that stays on GitHub's machines: never started by the tool
-        self.assertNotIn(("POST", f"repos/{REPO}/actions/workflows/ci.yml/dispatches"), gh.calls)
+        # R224 (this test, changed: it held that verify started lint.yml by hand): lint.yml's run is the merge's own,
+        # listed by GitHub only at the third read; verify waits for it, names it, and writes nothing on GitHub
+        self.assertIn(f"ok moved: .github/workflows/lint.yml job lint ran on {OURS} (this computer) and succeeded (run 8)", lines)
+        self.assertEqual(gh.run_reads["lint.yml"], 3)
+        self.assertEqual(gh.writes, [])
         # a moved job that ran on another runner is a stop
         jobs2 = {**jobs, 5: [job("Unit tests", "GitHub Actions 2", ["ubuntu-latest"])]}
         host2 = move_host()
@@ -2813,6 +2833,93 @@ class G3(unittest.TestCase):
                                     f"`move {REPO} --verify` again")
         self.assertFalse([x for x in lines if x.startswith("ok moved")])
 
+    def test_G3_6_b_verify_starts_no_run_and_waits_for_the_merges_own(self):
+        # R224 (seen 2026-11-28 on a stock Ubuntu 24.04.5 virtual machine at the 0.1.1 release head): verify ran two
+        # seconds after the merge, before GitHub listed the merge's run, and started the workflow by hand, so the
+        # person's job ran twice and no line said so. Verify only reads: it starts nothing on GitHub, ever.
+        with open(os.path.join(ROOT, "scripts", "minions.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn("/dispatches", src)
+        self.assertNotIn("verify-dispatch", src)
+        lint = ("name: lint\non: [push, workflow_dispatch]\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - run: ./lint.sh\n")
+        by_hand = ("name: by-hand\non: workflow_dispatch\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n"
+                   "      - run: ./lint.sh\n")
+        job = {"name": "lint", "runner_name": OURS, "labels": ["minions"], "conclusion": "success",
+               "html_url": "https://example.invalid/j"}
+
+        def verify(name, text, runs, runs_status=200, **kw):
+            files = {f".github/workflows/{name}": text}
+            host, gh = move_host(), MoveGH(files)
+            run_move(gh, host)
+            merged = {p: next(c for c in gh.blobs() if c.splitlines()[0] == x.splitlines()[0]) for p, x in files.items()}
+            gh = MoveGH(merged, pr_state="closed", merged_at="2026-11-22T23:00:00Z", runs=runs, jobs={8: [job]})
+            gh.runs_status = runs_status
+            code, lines = run_move(gh, host, verify=True, **kw)
+            self.assertEqual(gh.writes, [], lines)  # nothing is written on GitHub by verify, in any of these
+            return code, lines, gh
+
+        # the merge's run, listed only at GitHub's second read: one run, named; nothing else is started
+        code, lines, gh = verify("lint.yml", lint, [{"id": 8, "wf": "lint.yml", "status": "completed",
+                                                     "created_at": "2026-11-22T23:00:02Z", "from_read": 2}])
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(f"ok moved: .github/workflows/lint.yml job lint ran on {OURS} (this computer) and succeeded (run 8)", lines)
+        self.assertIn("ok .github/workflows/lint.yml: watching for the run the merge started to appear and finish, until ", "\n".join(lines))
+        self.assertTrue([x for x in lines if x.endswith("at the latest; this tool starts no run")], lines)
+        # no run by the deadline: which, what starts it (by hand: the person, on its Actions page), what is read
+        reads = ("This tool starts no run, and it reads only the runs GitHub lists for the branch main: a run a pull "
+                 "request starts from a branch of another name is not among them. Nothing is called moved before one "
+                 "listed there has finished")
+        code, lines, gh = verify("lint.yml", lint, [], wait_s=30, poll_s=10)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertTrue([x for x in lines if re.fullmatch(
+            r"waiting \.github/workflows/lint\.yml: no run since the merge by the deadline \(\d\d:\d\dZ\); it starts on: "
+            r"push, workflow_dispatch; you can also start it yourself, on its page under the repository's Actions tab\. "
+            + re.escape(reads), x)], lines)
+        self.assertIn("this tool reads only the runs GitHub lists for the branch main, and a run a pull request starts "
+                      "from a branch of another name is not among them", "\n".join(lines[-3:]), lines)
+        self.assertIn(f"`move {REPO} --verify` again once each has run there", lines[-1])
+        self.assertFalse([x for x in lines if x.startswith("ok moved")])
+        # a workflow no push starts, nothing listed: its runs list is read exactly once, then said at once, no wait
+        code, lines, gh = verify("by-hand.yml", by_hand, [], wait_s=30, poll_s=10)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertIn("waiting .github/workflows/by-hand.yml: no run of it since the merge is listed, and no push starts "
+                      "it, so the merge started none here to wait for (it starts on: workflow_dispatch; you can start it "
+                      "yourself, on its page under the repository's Actions tab). " + reads, lines)
+        self.assertEqual(gh.run_reads, {"by-hand.yml": 1})
+        self.assertFalse([x for x in lines if "watching" in x], lines)
+        self.assertIn(f"`move {REPO} --verify` again", lines[-1])
+        # the same workflow with a run since the merge listed and finished on our runner: taken, whoever started it
+        code, lines, gh = verify("by-hand.yml", by_hand, [{"id": 8, "wf": "by-hand.yml", "status": "completed",
+                                                           "created_at": "2026-11-22T23:04:00Z"}])
+        self.assertEqual(code, M.EXIT_OK, lines)
+        self.assertIn(f"ok moved: .github/workflows/by-hand.yml job lint ran on {OURS} (this computer) and succeeded (run 8)", lines)
+        self.assertEqual(gh.run_reads, {"by-hand.yml": 1})
+        self.assertFalse([x for x in lines if "watching" in x], lines)  # a finished run at the first read: no watch line
+        # a run listed and not finished is watched until the deadline, whatever the events
+        code, lines, gh = verify("by-hand.yml", by_hand, [{"id": 8, "wf": "by-hand.yml", "status": "queued",
+                                                           "created_at": "2026-11-22T23:04:00Z"}], wait_s=30, poll_s=10)
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertIn("ok .github/workflows/by-hand.yml: watching its run since the merge (run 8, queued) until it "
+                      "finishes, until ", "\n".join(lines))
+        self.assertTrue([x for x in lines if re.fullmatch(
+            r"waiting \.github/workflows/by-hand\.yml: its run since the merge was still queued at the deadline "
+            r"\(\d\d:\d\dZ\)\. " + re.escape(reads), x)], lines)
+        self.assertEqual(gh.run_reads, {"by-hand.yml": 4})
+        # the pull-request-only world: no run is listed, and the line says what the read does not see
+        on_pr = by_hand.replace("by-hand", "on-pr").replace("on: workflow_dispatch", "on: pull_request")
+        code, lines, gh = verify("on-pr.yml", on_pr, [])
+        self.assertEqual(code, M.EXIT_WAIT, lines)
+        self.assertIn("waiting .github/workflows/on-pr.yml: no run of it since the merge is listed, and no push starts "
+                      "it, so the merge started none here to wait for (it starts on: pull_request). " + reads, lines)
+        self.assertEqual(gh.run_reads, {"on-pr.yml": 1})
+        # the runs list not read: said as not read, with GitHub's status; never as no run or not seen; by hand too
+        for name, text in (("lint.yml", lint), ("by-hand.yml", by_hand)):
+            code, lines, gh = verify(name, text, [], runs_status=502)
+            self.assertEqual(code, M.EXIT_STOP, lines)
+            self.assertTrue([x for x in lines if x.startswith(f"stop .github/workflows/{name}: its runs could not be read "
+                                                             "(HTTP 502), so whether one ran since the merge is not known")], lines)
+            self.assertFalse([x for x in lines if "no run" in x or "not seen" in x or x.startswith("ok moved")], lines)
 
 FAKE_INHIBIT = """#!/bin/bash
 # a stand-in for systemd-inhibit: writes down its options, then runs the rest as the real one does
@@ -7181,8 +7288,26 @@ class G6(unittest.TestCase):
         p = subprocess.run([sys.executable, "-m", "unittest", "test_minions"], cwd=os.path.dirname(
             os.path.abspath(__file__)), env=env, capture_output=True, text=True, timeout=900)
         last = [x for x in p.stderr.splitlines() if x.strip()][-3:]
-        self.assertEqual(p.returncode, 0, "\n".join(p.stderr.splitlines()[-40:]))
+        self.assertEqual(p.returncode, 0, nested_red_message(p.stderr))
         self.assertTrue(last and last[-1].startswith("OK"), last)
+
+    def test_G6_28_b_a_red_nested_run_names_its_inner_tests_last(self):
+        # R226: the red nested run's names stand in the message's last line, past a failure block of 60 lines
+        block = ["FAIL: test_inner_one (test_minions.G3.test_inner_one)", "-" * 70, "Traceback (most recent call last):"]
+        block += [f"  a line of its traceback, {i}" for i in range(60)] + ["AssertionError: " + "y" * 7000]
+        text = "\n".join(["." * 50, "=" * 70] + block + ["=" * 70, "ERROR: test_inner_two (test_minions.G4.test_inner_two)",
+                                                     "RuntimeError: two", "-" * 70, "Ran 271 tests in 480.0s", "",
+                                                     "FAILED (failures=1, errors=1)"])
+        msg = nested_red_message(text)
+        self.assertNotIn("test_inner_one", "\n".join(text.splitlines()[-40:]))  # the name the old message lost
+        self.assertEqual(msg.splitlines()[-1], "the nested run's tests that did not pass: FAIL: test_inner_one "
+                         "(test_minions.G3.test_inner_one); ERROR: test_inner_two (test_minions.G4.test_inner_two)")
+        self.assertTrue(msg.endswith("ERROR: test_inner_two (test_minions.G4.test_inner_two)"))
+        self.assertTrue(msg.startswith("\n".join(text.splitlines()[-40:])))
+        many = "\n".join(f"FAIL: test_n{i} (test_minions.X.test_n{i})" for i in range(13))
+        self.assertTrue(nested_red_message(many).endswith("FAIL: test_n9 (test_minions.X.test_n9); and 3 more"))
+        self.assertNotIn("test_n10", nested_red_message(many).splitlines()[-1])
+        self.assertEqual(nested_red_message("OK\n").splitlines()[-1], "the nested run's tests that did not pass: none named")
 
     def test_G6_27_stopped_is_said_only_from_a_word_seen_after_a_real_stop(self):
         # R167 (rule 30): after the stop and no process left, the service's is-active word decides: "inactive" (every

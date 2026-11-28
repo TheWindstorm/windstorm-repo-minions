@@ -104,7 +104,16 @@ def names_that_ran(tests_dir: str = TESTS) -> set:
         for test, why in got["skipped"]:  # an honest skip is "not run here", never a pass
             NOT_RUN_HERE.append(f"{name}: {test} ({why})")
         LEFT_OPEN.extend(f"{name}: {x}" for x in got.get("left_open", []))  # R177
+        for test, where, text, cut in got.get("failed", []):  # R226: why a test of that file did not pass, kept
+            FAILED_THERE.setdefault(test, []).append(f"{name}: {where} did not pass; the last {cut} characters of "
+                                                     f"its message:\n{text}")
     return ran
+
+
+def why_not_passed(names) -> str:
+    """R226: for each name that did not pass, what its own file's run said of it (empty where it failed nowhere)."""
+    parts = [x for n in sorted(names) for x in FAILED_THERE.get(n, [])]
+    return "".join(f"\n{x}" for x in parts)
 
 
 OUTCOME_RUNNER = """
@@ -120,19 +129,25 @@ class Passed(unittest.TestResult):
         super().addSuccess(test)
         self.passed.append(test._testMethodName)
 res = Passed()
+TAIL = 6000  # R226: one fixed count, from the end of each message
 with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn), \
         warnings.catch_warnings(record=True) as seen:  # R177: every file a test leaves open is named
     warnings.simplefilter("always", ResourceWarning)
     suite.run(res)
     gc.collect()
 left_open = [str(w.message) for w in seen if issubclass(w.category, ResourceWarning)]
+def who(t):  # a subtest's failure is its test's; an error outside any test keeps its own description
+    case = getattr(t, "test_case", t)
+    return getattr(case, "_testMethodName", None) or str(t)
+failed = [[who(t), str(t), text[-TAIL:], TAIL] for t, text in res.failures + res.errors]  # R226
 with open(out, "w") as f:
     json.dump({"passed": res.passed, "skipped": [[t._testMethodName, w] for t, w in res.skipped],
-               "run": res.testsRun, "left_open": left_open}, f)
+               "run": res.testsRun, "left_open": left_open, "failed": failed}, f)
 """
 
 
 NOT_RUN_HERE: list = []
+FAILED_THERE: dict = {}  # R226: test name -> what each other file's own run said of it when it failed or errored
 LEFT_OPEN: list = []  # R177: the ResourceWarnings each other test file's own run raised
 
 
@@ -245,11 +260,13 @@ class Promises(unittest.TestCase):
             self.assertTrue(d.get("heard") and d.get("why"), "a declined lesson needs what was heard and why it was not taken")
 
     def test_PROMISES_no_version_ships_while_a_promise_due_in_it_is_not_built(self):
-        self.assertEqual(due_not_built(self.rows, self.version, self.tests, self.plan), [])
+        self.assertEqual(due_not_built(self.rows, self.version, self.tests, self.plan), [],
+                         why_not_passed({r.get("test") for r in self.rows} - self.tests))
 
     def test_PROMISES_every_built_row_names_a_test_that_ran_at_any_version(self):
         """A row marked built points at a test that ran and passed today, not only once its version is due."""
-        self.assertEqual(built_not_passed(self.rows, self.tests, self.plan), [])
+        self.assertEqual(built_not_passed(self.rows, self.tests, self.plan), [],
+                         why_not_passed({r.get("test") for r in self.rows} - self.tests))
 
     def test_PROMISES_the_version_after_needs_proof_on_a_real_machine(self):
         self.assertEqual(not_proven_after(self.rows, self.version), [])
@@ -319,7 +336,9 @@ class Strand(unittest.TestCase):
         plan = plan_text()
         named = set(re.findall(r"`(test_[A-Za-z0-9_]+)`", plan))
         real = {t for t in all_test_names() if re.match(r"test_(?:G|INV)[0-9]", t)}
-        self.assertEqual(named - ran_here(), set(), "the plan names tests that were not collected or did not pass")
+        missing = named - ran_here()
+        self.assertEqual(missing, set(), "the plan names tests that were not collected or did not pass"
+                         + why_not_passed(missing))
         self.assertEqual(real - named, set(), "tests with no codon in the plan")
 
     def test_G9_6_the_gate_counts_only_tests_that_ran(self):
@@ -364,6 +383,46 @@ class Strand(unittest.TestCase):
         self.assertEqual(twice, ["test_probe_shadowed"])
         self.assertTrue(any("test_probe_skipped (a planted skip)" in x for x in NOT_RUN_HERE[before:]), NOT_RUN_HERE)
         del NOT_RUN_HERE[before:]
+
+    def test_G9_6_b_why_a_test_did_not_pass_reaches_the_gates_message(self):
+        """R226 (seen once, 2026-11-28, in this repository's own CI on one of four Python versions): in the gate's run
+        of another test file a test did not pass that had passed minutes before in the same job, and the gate's
+        failure named it with nothing of why. Each file's own run now writes every test that failed or errored with
+        the last part of its message, a fixed count it names, and the gate's failure prints them under the names."""
+        words = "the planted reason " + "x" * 7000 + " its very last words"
+        probe = ("import unittest\n\nclass T(unittest.TestCase):\n"
+                 "    def test_probe_fails_with_words(self):\n"
+                 f"        self.fail({words!r})\n\n"
+                 "    def test_probe_errors(self):\n"
+                 "        raise RuntimeError('a planted error')\n\n"
+                 "    def test_probe_sub(self):\n"
+                 "        with self.subTest('one part'):\n"
+                 "            self.assertEqual(1, 2, 'a planted subtest')\n\n"
+                 "    def test_probe_passes(self):\n"
+                 "        pass\n")
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "test_probe.py"), "w", encoding="utf-8") as f:
+                f.write(probe)
+            ran = names_that_ran(d)
+        planted = {"test_probe_fails_with_words", "test_probe_errors", "test_probe_sub"}
+        try:
+            self.assertEqual(ran, {"test_probe_passes"})  # what counts as passed is untouched
+            with self.assertRaises(AssertionError) as caught:
+                self.assertEqual(planted - ran, set(), "the plan names tests that were not collected or did not pass"
+                                 + why_not_passed(planted - ran))
+            said = str(caught.exception)
+            for name in planted:
+                # Python 3.10 names a test "NAME (test_probe.T)", 3.11 and later "NAME (test_probe.T.NAME)"
+                self.assertRegex(said, rf"\ntest_probe\.py: {name} \(test_probe\.T(\.{name})?\)( \[one part\])? did not "
+                                       r"pass; the last 6000 characters of its message:\n")
+            self.assertIn("its very last words", said)
+            self.assertNotIn("the planted reason", said)  # cut at the fixed count, and the line says so
+            self.assertIn("RuntimeError: a planted error", said)
+            self.assertIn("AssertionError: 1 != 2 : a planted subtest", said)
+            self.assertEqual(why_not_passed({"test_probe_passes", "test_no_such"}), "")
+        finally:
+            for name in planted:
+                FAILED_THERE.pop(name, None)
 
     def test_G9_15_the_tests_close_every_file_they_open(self):
         """R177: a full run printed 24 ResourceWarning lines (files the tests opened and left to the collector). Each
