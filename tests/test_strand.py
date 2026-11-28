@@ -547,8 +547,9 @@ class Hygiene(unittest.TestCase):
     def test_G9_21_a_release_line_differs_from_main_only_in_what_names_its_version(self):
         # Row R223 (the maintainer's ruling of 2026-11-27): the release-place step on a release branch passes a branch
         # whose only differences from main are the README, the changelog, the manifest, the tool's VERSION line and
-        # the skill's clone line, each naming the branch's own version; every other difference fails, said. Runs the
-        # CI step itself, as written, on a made repository with an origin of its own.
+        # the skill's clone line, each naming the branch's own version; every other difference fails, said. A pull
+        # request into a release line is checked as that line, whatever its head is called. Runs the CI step
+        # itself, as written, on a made repository with an origin of its own.
         url = "https://github.com/TheWindstorm/windstorm-repo-minions"
         labels = {
             "README.md": f"## Status: 0.1.1, released 2026-12-01\n\n`cd ~ && git clone --branch v0.1.1 {url}`\n",
@@ -587,7 +588,17 @@ class Hygiene(unittest.TestCase):
             ("a third path", {**labels, "tests/x.py": "x = 2\n"}, False, "tests/x.py differs from main", {}),
             ("a mode change", labels, False, "scripts/minions.py changed its mode", {"chmod": "scripts/minions.py"}),
             ("a deleted file", {**labels, "CHANGELOG.md": None}, False, "CHANGELOG.md is deleted", {}),
-            ("a renamed file", labels, False, "README.md is deleted", {"rename": ("README.md", "READ-ME.md")}),
+            ("a renamed file", labels, False, "READ-ME.md is added", {"rename": ("README.md", "READ-ME.md")}),
+            ("an added file", {**labels, "docs/new.md": "new\n"}, False, "docs/new.md is added", {}),
+            # a pull request into a release line is checked as that line, whatever its head is called
+            ("a release-sync-1 head into release-0.1.1, the labels only", labels, True,
+             "ok release-0.1.1 differs from main only in: ", {"branch": "release-sync-1", "base": "release-0.1.1"}),
+            ("a release-sync-1 head into release-0.1.1 with one code line",
+             {**labels, "scripts/minions.py": tool.replace("return 0", "return 1")}, False,
+             "scripts/minions.py differs from main in more than its one version line",
+             {"branch": "release-sync-1", "base": "release-0.1.1"}),
+            ("a head named for nothing into release-0.1.1, the labels only", labels, True,
+             "ok release-0.1.1 differs from main only in: ", {"branch": "fix-readme", "base": "release-0.1.1"}),
             ("a branch that names no version", labels, False, "does not name a version",
              {"branch": "release-next"}),
             ("origin not readable, an older copy of main at hand", labels, False, "main could not be read",
@@ -676,7 +687,7 @@ def release_place(readme, tags):
     script = "set -e\n" + "\n".join(body) + "\n"  # GitHub runs a step with no shell named as bash -e
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
                                                                                      "GIT_CONFIG_NOSYSTEM")}
-    env.update(BRANCH="main", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+    env.update(BRANCH="main", BASE_REF="", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
                GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
     with tempfile.TemporaryDirectory() as d:
         with open(os.path.join(d, "README.md"), "w", encoding="utf-8") as f:
@@ -705,10 +716,11 @@ RELEASE_MAIN = {  # main's files in the made repository of test_G9_21 (row R223)
 }
 
 
-def release_line(changes, branch="release-0.1.1", origin=True, chmod=None, rename=None):
+def release_line(changes, branch="release-0.1.1", base="", origin=True, chmod=None, rename=None):
     """Run the release-place CI step, as written in tests.yml, on a release branch made from RELEASE_MAIN with these
     changes (a path's new text, or None to delete it); main is on an origin of its own and already fetched once, as
-    the checkout leaves it, and with origin False that origin can no longer be read."""
+    the checkout leaves it, and with origin False that origin can no longer be read. branch is the pull request's
+    head or the pushed branch; base is the pull request's base, empty for a push."""
     text = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
     job = text[text.index("\n  release-place:"):]
     lines = job.splitlines()
@@ -722,7 +734,7 @@ def release_line(changes, branch="release-0.1.1", origin=True, chmod=None, renam
     script = "set -e\n" + "\n".join(body) + "\n"  # GitHub runs a step with no shell named as bash -e
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in ("GIT_CONFIG_GLOBAL",
                                                                                      "GIT_CONFIG_NOSYSTEM")}
-    env.update(BRANCH=branch, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+    env.update(BRANCH=branch, BASE_REF=base, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
                GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
     with tempfile.TemporaryDirectory() as d:
         work = os.path.join(d, "work")
