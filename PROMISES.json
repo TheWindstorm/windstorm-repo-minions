@@ -3182,6 +3182,21 @@
    "issue": 422,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "R226",
+   "seen": "2026-11-28, seen once, in this repository's own CI on one of four Python versions (run 46141190194, job 140967274700): in the gate's second run of the suite the whole-suite test with a warning at every command did not pass where it had passed minutes before in the same job, and the cause could not be read: the gate keeps the other file's output quiet and wrote only the name that did not pass.",
+   "promise": "Where a test of another file does not pass in the gate's own run of it, the gate's failure says why: that file's own run writes every test that failed or errored with the last part of its message, a fixed count of characters that the line names, and the gate prints them under the names that did not pass. The whole-suite test with a warning at every command, when its nested run is red, ends its message with one line naming each test of that run that did not pass (at most a fixed number, and how many more), so a cut from the end keeps every name. What counts as passed is unchanged, and nothing is run again.",
+   "codon": "G9.6",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.1",
+   "ship_in": "0.1.1",
+   "test": "test_G9_6_b_why_a_test_did_not_pass_reaches_the_gates_message",
+   "proven": "",
+   "filed": "",
+   "issue": 424,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": []

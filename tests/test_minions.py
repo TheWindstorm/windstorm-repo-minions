@@ -84,6 +84,20 @@ HOOKS: list = []  # (test id, lines): what the job hooks printed into a job's lo
 REF = re.compile(r"the (?:(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+th) )?command below")
 
 
+NESTED_HEADS = 10  # R226: at most this many of a red nested run's FAIL:/ERROR: lines in its message's last line
+
+
+def nested_red_message(stderr: str) -> str:
+    """R226: a red nested run's message: the last 40 lines of its standard error, then ONE closing line naming each
+    test of it that did not pass (its own "FAIL: " and "ERROR: " lines, at most NESTED_HEADS, and how many more), so
+    a cut from the end keeps every name whatever the length of a failure's block."""
+    heads = [x for x in stderr.splitlines() if x.startswith(("FAIL: ", "ERROR: "))]
+    more = len(heads) - NESTED_HEADS
+    close = ("the nested run's tests that did not pass: " + ("; ".join(heads[:NESTED_HEADS]) or "none named")
+             + (f"; and {more} more" if more > 0 else ""))
+    return "\n".join(stderr.splitlines()[-40:] + [close])
+
+
 def unfold(lines):
     """Each printed sentence with the command lines that follow it, as many as it names."""
     out, i = [], 0
@@ -7274,8 +7288,26 @@ class G6(unittest.TestCase):
         p = subprocess.run([sys.executable, "-m", "unittest", "test_minions"], cwd=os.path.dirname(
             os.path.abspath(__file__)), env=env, capture_output=True, text=True, timeout=900)
         last = [x for x in p.stderr.splitlines() if x.strip()][-3:]
-        self.assertEqual(p.returncode, 0, "\n".join(p.stderr.splitlines()[-40:]))
+        self.assertEqual(p.returncode, 0, nested_red_message(p.stderr))
         self.assertTrue(last and last[-1].startswith("OK"), last)
+
+    def test_G6_28_b_a_red_nested_run_names_its_inner_tests_last(self):
+        # R226: the red nested run's names stand in the message's last line, past a failure block of 60 lines
+        block = ["FAIL: test_inner_one (test_minions.G3.test_inner_one)", "-" * 70, "Traceback (most recent call last):"]
+        block += [f"  a line of its traceback, {i}" for i in range(60)] + ["AssertionError: " + "y" * 7000]
+        text = "\n".join(["." * 50, "=" * 70] + block + ["=" * 70, "ERROR: test_inner_two (test_minions.G4.test_inner_two)",
+                                                     "RuntimeError: two", "-" * 70, "Ran 271 tests in 480.0s", "",
+                                                     "FAILED (failures=1, errors=1)"])
+        msg = nested_red_message(text)
+        self.assertNotIn("test_inner_one", "\n".join(text.splitlines()[-40:]))  # the name the old message lost
+        self.assertEqual(msg.splitlines()[-1], "the nested run's tests that did not pass: FAIL: test_inner_one "
+                         "(test_minions.G3.test_inner_one); ERROR: test_inner_two (test_minions.G4.test_inner_two)")
+        self.assertTrue(msg.endswith("ERROR: test_inner_two (test_minions.G4.test_inner_two)"))
+        self.assertTrue(msg.startswith("\n".join(text.splitlines()[-40:])))
+        many = "\n".join(f"FAIL: test_n{i} (test_minions.X.test_n{i})" for i in range(13))
+        self.assertTrue(nested_red_message(many).endswith("FAIL: test_n9 (test_minions.X.test_n9); and 3 more"))
+        self.assertNotIn("test_n10", nested_red_message(many).splitlines()[-1])
+        self.assertEqual(nested_red_message("OK\n").splitlines()[-1], "the nested run's tests that did not pass: none named")
 
     def test_G6_27_stopped_is_said_only_from_a_word_seen_after_a_real_stop(self):
         # R167 (rule 30): after the stop and no process left, the service's is-active word decides: "inactive" (every
