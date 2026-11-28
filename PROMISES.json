@@ -3149,7 +3149,7 @@
    "ship_in": "0.1.1",
    "test": "test_G9_21_a_release_line_differs_from_main_only_in_what_names_its_version",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-28 (UTC), this repository's CI on GitHub's standard runners (image ubuntu-24.04, image version 20261122.23.1, runner 2.338.2, each read in its own job's log), run 46151950072, the push of release-0.1.1 at 94ef239, its final head. Job release-place (141000294629), checked as that branch by its own name: `ok release-0.1.1 differs from main only in: CHANGELOG.md README.md scripts/minions.py skills/repo-minions/SKILL.md`. In each test leg, Python 3.10.22 (job 141000294585), 3.11.18 (job 141000294395), 3.12.16 (job 141000294613) and 3.13.18 (job 141000294592): `test_G9_21_a_release_line_differs_from_main_only_in_what_names_its_version (__main__.Hygiene) ... ok` on 3.10, and the same test named with its method, ... ok, on 3.11, 3.12 and 3.13.",
    "issue": 420,
    "moved_why": "",
    "moved_by_person": ""
@@ -3163,7 +3163,7 @@
    "ship_in": "0.1.1",
    "test": "test_G3_6_b_verify_starts_no_run_and_waits_for_the_merges_own",
    "owner": "maintainer",
-   "proven": "",
+   "proven": "2026-11-28 (UTC), seen once, not steered, on a stock Ubuntu 24.04.5 virtual machine and the private proof repository, at the release line's head 94ef239 (this row's cure; runner 2.338.2), in one whole run of the README's road typed as printed, from a form of that head whose only change is the ref in the README's clone line (a branch made for the walk and deleted after it, never merged). The tool: scripts/minions.py, sha256 9f0fe130186d8e1056c7d348b438712c4c33f1ba6cc32882cbc572cb58a5ee3e, the same on the machine. The walk: typed by a script, sha256 65f7fe76f3a31d3dc7e203893b48ad2a616041e43371b801bc8fd74f8f314f32. The merge of move's pull request was the walk's own act, standing for the person's click. `move --verify` was typed 2 seconds after that merge; it printed its watching line, ending \"this tool starts no run\", then the ok moved line for the moved job, naming the run the merge started, and exited 0 about 15 seconds after it was typed. Typed a second time, as before, it printed the same ok moved line naming the same run, with no watching line, and exited 0. GitHub's list of the repository's runs since the merge, read after each verify, by event: push 1, started by hand 0, all 1; the run verify named was that push run. The tool's journal on the machine: 0 lines with a dispatch word, both times. Hosted jobs in the whole road: 1, the put-back's merge.",
    "issue": 421,
    "moved_why": "",
    "moved_by_person": ""
@@ -3192,7 +3192,7 @@
    "first_ship_in": "0.1.1",
    "ship_in": "0.1.1",
    "test": "test_G9_6_b_why_a_test_did_not_pass_reaches_the_gates_message",
-   "proven": "",
+   "proven": "2026-11-28 (UTC), this repository's CI on GitHub's standard runners (image ubuntu-24.04, image version 20261122.23.1, runner 2.338.2, each read in its own job's log), run 46151950072, the push of release-0.1.1 at 94ef239 (this row's cure, merged there from main). Python 3.10.22 (job 141000294585), 3.11.18 (job 141000294395), 3.12.16 (job 141000294613) and 3.13.18 (job 141000294592). 3.10: `test_G9_6_b_why_a_test_did_not_pass_reaches_the_gates_message (__main__.Strand)` ... ok and `test_G6_28_b_a_red_nested_run_names_its_inner_tests_last (__main__.G6) ... ok`; 3.11, 3.12 and 3.13 the same two tests, each named with its method, ... ok. Each leg's own lines: `Ran 272 tests`, `Ran 23 tests`, `Ran 21 tests`, each with `OK`, and `gate: passed: 21 test(s) of the gate, every other test file run in its own process to its end`. The kind of red this row is for, a red in the gate's own run whose message did not say which test did not pass, has not come again: no leg of this run was red.",
    "filed": "",
    "issue": 424,
    "moved_why": "",
